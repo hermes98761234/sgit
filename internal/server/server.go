@@ -73,6 +73,7 @@ func New(cfg Config, st *store.Store, log *slog.Logger) (*Server, error) {
 // NewGRPC returns a gRPC server with sgit's message limits and auth interceptors.
 func NewGRPC(st *store.Store, extra ...grpc.ServerOption) *grpc.Server {
 	opts := append(rpc.ServerOptions(),
+		grpc.InTapHandle(auth.TapHandle),
 		grpc.ChainUnaryInterceptor(auth.UnaryInterceptor(st)),
 		grpc.ChainStreamInterceptor(auth.StreamInterceptor(st)),
 	)

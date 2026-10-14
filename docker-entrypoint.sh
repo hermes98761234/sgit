@@ -2,9 +2,8 @@
 set -eu
 DATA="${SG_DATA_DIR:-/data}"
 
-if [ ! -f "$DATA/sg.db" ]; then
-  sg-server init --data "$DATA"
-fi
+# init is idempotent; running it always recovers a half-initialised sg.db.
+sg-server init --data "$DATA"
 
 if [ -z "${SG_TLS_CERT:-}" ] && [ "${SG_TLS_SELF_SIGNED:-0}" = "1" ]; then
   mkdir -p "$DATA/tls"

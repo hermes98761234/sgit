@@ -12,7 +12,7 @@ RUN apk add --no-cache git openssh-client ca-certificates \
  && adduser -D -u 10001 -h /home/sg sg \
  && mkdir -p /data && chown sg:sg /data
 COPY --from=build /out/sg-server /usr/local/bin/sg-server
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY --chmod=0755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 USER sg
 ENV SG_DATA_DIR=/data SG_LISTEN=:7419
 VOLUME /data

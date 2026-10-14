@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/grpc/tap"
 )
 
 type fakeACL map[string]store.Level
@@ -134,5 +135,27 @@ func TestStreamInterceptor(t *testing.T) {
 	}
 	if err := run(metadata.MD{}, "/grpc.health.v1.Health/Watch"); err != nil || !called {
 		t.Fatalf("health must skip auth: err=%v called=%v", err, called)
+	}
+}
+
+func TestTapHandle(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name   string
+		method string
+		md     metadata.MD
+		ok     bool
+	}{
+		{"missing", "/sgit.v1.Repo/ResolveRev", metadata.MD{}, false},
+		{"basic", "/sgit.v1.Repo/ResolveRev", metadata.Pairs("authorization", "Basic xyz"), false},
+		{"bearer without prefix", "/sgit.v1.Repo/ResolveRev", metadata.Pairs("authorization", "Bearer abc"), false},
+		{"bearer sgt", "/sgit.v1.Repo/ResolveRev", metadata.Pairs("authorization", "Bearer sgt_abc"), true},
+		{"health", "/grpc.health.v1.Health/Check", metadata.MD{}, true},
+	}
+	for _, c := range cases {
+		_, err := TapHandle(ctx, &tap.Info{FullMethodName: c.method, Header: c.md})
+		if c.ok != (err == nil) || (err != nil && status.Code(err) != codes.Unauthenticated) {
+			t.Errorf("%s: err=%v", c.name, err)
+		}
 	}
 }

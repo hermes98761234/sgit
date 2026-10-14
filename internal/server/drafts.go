@@ -82,10 +82,12 @@ func (r *repoService) createDraft(ctx context.Context, h *repoHandle, u store.Us
 	if err != nil {
 		return store.Draft{}, err
 	}
-	if err := h.git.UpdateRef(ctx, headRef(id), c, ""); err != nil {
+	// From the first ref write on, a cancelled client must not leave a partial draft.
+	bg := context.WithoutCancel(ctx)
+	if err := h.git.UpdateRef(bg, headRef(id), c, ""); err != nil {
 		return store.Draft{}, err
 	}
-	if err := h.git.UpdateRef(ctx, versionRef(id, 1), c, ""); err != nil {
+	if err := h.git.UpdateRef(bg, versionRef(id, 1), c, ""); err != nil {
 		return store.Draft{}, err
 	}
 	if title == "" {
@@ -94,7 +96,7 @@ func (r *repoService) createDraft(ctx context.Context, h *repoHandle, u store.Us
 	now := r.s.cfg.Now()
 	d := store.Draft{ID: id, Repo: h.name, OwnerID: u.ID, OwnerName: u.Name, Title: title, Base: base, Head: c,
 		Version: 1, Status: store.DraftOpen, CreatedAt: now, UpdatedAt: now}
-	return d, r.s.store.InsertDraft(ctx, d)
+	return d, r.s.store.InsertDraft(bg, d)
 }
 
 func (r *repoService) loadOwnedOpenDraft(ctx context.Context, h *repoHandle, u store.User, id string) (store.Draft, error) {
@@ -131,12 +133,14 @@ func (r *repoService) updateDraft(ctx context.Context, h *repoHandle, u store.Us
 		}
 		return d, err
 	}
+	// The head ref moved; finish the bookkeeping even if the client went away.
+	bg := context.WithoutCancel(ctx)
 	d.Version++
-	if err := h.git.UpdateRef(ctx, versionRef(id, d.Version), c, ""); err != nil {
+	if err := h.git.UpdateRef(bg, versionRef(id, d.Version), c, ""); err != nil {
 		return d, err
 	}
 	d.Base, d.Head, d.UpdatedAt = base, c, r.s.cfg.Now()
-	return d, r.s.store.UpdateDraft(ctx, d)
+	return d, r.s.store.UpdateDraft(bg, d)
 }
 
 func (r *repoService) CreateDraft(ctx context.Context, req *sgitv1.CreateDraftRequest) (*sgitv1.Draft, error) {

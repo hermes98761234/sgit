@@ -114,3 +114,18 @@ func TestServeTLSAndHealth(t *testing.T) {
 		t.Fatal("serve did not stop")
 	}
 }
+
+func TestServeRejectsBadMaxBlob(t *testing.T) {
+	dir := t.TempDir()
+	run(t, "init", "--data", dir)
+	for _, v := range []string{"abc", "0", "-5"} {
+		t.Setenv("SG_MAX_BLOB_MB", v)
+		if code, _, errs := run(t, "serve", "--data", dir, "--listen", "127.0.0.1:0", "--dev-insecure"); code != 2 || !strings.Contains(errs, "MAX_BLOB") {
+			t.Errorf("env %q: code=%d err=%q", v, code, errs)
+		}
+	}
+	t.Setenv("SG_MAX_BLOB_MB", "100")
+	if code, _, errs := run(t, "serve", "--data", dir, "--listen", "127.0.0.1:0", "--dev-insecure", "--max-blob-mb", "0"); code != 2 || !strings.Contains(errs, "MAX_BLOB") {
+		t.Errorf("flag 0: code=%d err=%q", code, errs)
+	}
+}

@@ -332,3 +332,45 @@ func TestUpdateDuringLandCannotReopen(t *testing.T) {
 		t.Fatal("update leaked onto main")
 	}
 }
+
+func TestLandRejectsInconsistentDraft(t *testing.T) {
+	e := testenv.Start(t)
+	main := e.CreateRepo("web")
+	alice := e.NewUser("alice", "web", "write")
+	c := e.Repo(alice)
+	ctx := context.Background()
+	sha := e.Upload(alice, "web", []byte("1\n"))[0]
+	d := testenv.Must(c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Repo: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("x.txt", sha)}, Message: "x"}))
+	g := e.Git("web")
+	defer g.Close()
+	// simulate a half-applied update: the head ref moved but the DB did not
+	if err := g.UpdateRef(ctx, "refs/sg/drafts/"+d.Id+"/head", main, d.Head); err != nil {
+		t.Fatal(err)
+	}
+	_, err := c.Land(ctx, &sgitv1.LandRequest{Repo: "web", Id: d.Id})
+	if status.Code(err) != codes.Aborted {
+		t.Fatalf("want Aborted, got %v", err)
+	}
+	if got := testenv.Must(g.ReadRef(ctx, "refs/heads/main")); got != main {
+		t.Fatalf("main moved: %s != %s", got, main)
+	}
+}
+
+func TestLandRejectsEmptyCommit(t *testing.T) {
+	e := testenv.Start(t)
+	main := e.CreateRepo("web")
+	alice := e.NewUser("alice", "web", "write")
+	c := e.Repo(alice)
+	ctx := context.Background()
+	sha := e.Upload(alice, "web", []byte("1\n"))[0]
+	mk := func() *sgitv1.Draft {
+		return testenv.Must(c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Repo: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("x.txt", sha)}, Message: "x"}))
+	}
+	a, b := mk(), mk()
+	testenv.Must(c.Land(ctx, &sgitv1.LandRequest{Repo: "web", Id: a.Id}))
+	_, err := c.Land(ctx, &sgitv1.LandRequest{Repo: "web", Id: b.Id})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("want FailedPrecondition, got %v", err)
+	}
+	assertLinear(t, e, 2)
+}

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
+	"github.com/hermes98761234/sgit/internal/rpc"
 	"github.com/hermes98761234/sgit/internal/testenv"
 	"google.golang.org/grpc/codes"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
@@ -89,5 +90,17 @@ func TestTokensAndACL(t *testing.T) {
 	}
 	if _, err := adm.RevokeToken(ctx, &sgitv1.RevokeTokenRequest{Id: tok.Id}); status.Code(err) != codes.NotFound {
 		t.Fatalf("revoke twice: want NotFound, got %v", err)
+	}
+}
+
+func TestUnauthenticatedRejectedBeforeBody(t *testing.T) {
+	e := testenv.Start(t)
+	e.CreateRepo("web")
+	ctx := context.Background()
+	if _, err := e.Repo("").ResolveRev(ctx, &sgitv1.ResolveRevRequest{Repo: "web"}); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("unary: want Unauthenticated, got %v", err)
+	}
+	if _, err := rpc.UploadBlobs(ctx, e.Repo(""), "web", [][]byte{[]byte("x")}); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("stream: want Unauthenticated, got %v", err)
 	}
 }

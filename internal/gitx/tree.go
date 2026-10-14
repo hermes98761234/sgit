@@ -66,10 +66,10 @@ func (r *Repo) BuildTree(ctx context.Context, baseCommit string, changes []Chang
 			if mode == "" {
 				mode = "100644"
 			}
-			fmt.Fprintf(&info, "%s %s\t%s\n", mode, c.BlobSHA, c.Path)
+			fmt.Fprintf(&info, "%s %s\t%s\x00", mode, c.BlobSHA, c.Path)
 		case OpDelete:
 			deletes = append(deletes, c.Path)
-			fmt.Fprintf(&info, "0 %s\t%s\n", ZeroSHA, c.Path)
+			fmt.Fprintf(&info, "0 %s\t%s\x00", ZeroSHA, c.Path)
 		default:
 			return "", fmt.Errorf("%w: unknown op %d for %q", ErrInvalid, c.Op, c.Path)
 		}
@@ -94,7 +94,7 @@ func (r *Repo) BuildTree(ctx context.Context, baseCommit string, changes []Chang
 	if _, err := r.run(ctx, nil, env, "read-tree", baseCommit); err != nil {
 		return "", err
 	}
-	if _, err := r.run(ctx, &info, env, "update-index", "--replace", "--index-info"); err != nil {
+	if _, err := r.run(ctx, &info, env, "update-index", "-z", "--replace", "--index-info"); err != nil {
 		return "", err
 	}
 	out, err := r.run(ctx, nil, env, "write-tree")

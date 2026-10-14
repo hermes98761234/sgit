@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/grpc/tap"
 )
 
 const TokenPrefix = "sgt_"
@@ -132,6 +133,20 @@ func withRequestID(ctx context.Context) context.Context {
 }
 
 const healthPrefix = "/grpc.health.v1.Health/"
+
+// TapHandle rejects, before any message body is read, calls that carry no
+// well-formed bearer token. Token validity is still checked by the interceptors.
+func TapHandle(ctx context.Context, info *tap.Info) (context.Context, error) {
+	if strings.HasPrefix(info.FullMethodName, healthPrefix) {
+		return ctx, nil
+	}
+	for _, v := range info.Header.Get("authorization") {
+		if strings.HasPrefix(v, "Bearer "+TokenPrefix) {
+			return ctx, nil
+		}
+	}
+	return nil, status.Error(codes.Unauthenticated, "missing or malformed token")
+}
 
 func authenticate(ctx context.Context, lk TokenLookup) (context.Context, error) {
 	md, _ := metadata.FromIncomingContext(ctx)

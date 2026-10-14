@@ -13,11 +13,13 @@ import (
 
 const (
 	MaxMsgSize = 256 << 20
-	ChunkSize  = 1 << 20
+	// MaxRecvMsgSize bounds what the server will read per message.
+	MaxRecvMsgSize = 64 << 20
+	ChunkSize      = 1 << 20
 )
 
 func ServerOptions() []grpc.ServerOption {
-	return []grpc.ServerOption{grpc.MaxRecvMsgSize(MaxMsgSize), grpc.MaxSendMsgSize(MaxMsgSize)}
+	return []grpc.ServerOption{grpc.MaxRecvMsgSize(MaxRecvMsgSize), grpc.MaxSendMsgSize(MaxMsgSize), grpc.MaxConcurrentStreams(256)}
 }
 
 // TokenCreds sends "authorization: Bearer <token>" on every call.

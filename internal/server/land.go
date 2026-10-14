@@ -65,6 +65,9 @@ func (r *repoService) land(ctx context.Context, h *repoHandle, id string) (strin
 	if d.Status != store.DraftOpen {
 		return "", status.Errorf(codes.FailedPrecondition, "draft %s is %s", id, d.Status)
 	}
+	if cur, err := h.git.ReadRef(ctx, headRef(d.ID)); err != nil || cur != d.Head {
+		return "", status.Errorf(codes.Aborted, "draft %s is inconsistent (head ref moved); update it and retry", id)
+	}
 	dc, err := h.git.ReadCommit(ctx, d.Head)
 	if err != nil {
 		return "", err
@@ -84,6 +87,13 @@ func (r *repoService) land(ctx context.Context, h *repoHandle, id string) (strin
 				return "", conflictStatus(d.ID, mainOld, mr.Conflicts)
 			}
 			tree = mr.Tree
+		}
+		mc, err := h.git.ReadCommit(ctx, mainOld)
+		if err != nil {
+			return "", err
+		}
+		if tree == mc.Tree {
+			return "", status.Errorf(codes.FailedPrecondition, "draft %s changes are already on main", id)
 		}
 		committer := dc.Committer
 		committer.When = r.s.cfg.Now()

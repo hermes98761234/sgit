@@ -136,3 +136,26 @@ func TestDraftOwnership(t *testing.T) {
 		t.Errorf("bad draft id: want InvalidArgument, got %v", err)
 	}
 }
+
+func TestCreateDraftQuotedPathCannotSmuggleSgDir(t *testing.T) {
+	e := testenv.Start(t)
+	main := e.CreateRepo("web")
+	alice := e.NewUser("alice", "web", "write")
+	sha := e.Upload(alice, "web", []byte("x\n"))[0]
+	const p = `"\056sg/config"`
+	d, err := e.Repo(alice).CreateDraft(context.Background(), &sgitv1.CreateDraftRequest{
+		Repo: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add(p, sha)}, Message: "sneaky"})
+	if err != nil {
+		if status.Code(err) != codes.InvalidArgument {
+			t.Fatalf("want success or InvalidArgument, got %v", err)
+		}
+		return
+	}
+	files := e.Files("web", d.Head)
+	if _, ok := files[".sg/config"]; ok {
+		t.Fatalf(".sg/config smuggled in: %v", files)
+	}
+	if _, ok := files[p]; !ok {
+		t.Fatalf("literal name missing: %v", files)
+	}
+}

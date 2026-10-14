@@ -160,10 +160,18 @@ func runServe(ctx context.Context, args []string, _ io.Writer, stderr io.Writer)
 	certFile := fs.String("tls-cert", env("SG_TLS_CERT", ""), "TLS certificate (PEM)")
 	keyFile := fs.String("tls-key", env("SG_TLS_KEY", ""), "TLS key (PEM)")
 	insecureDev := fs.Bool("dev-insecure", envBool("SG_DEV_INSECURE"), "plaintext; loopback listen address only")
-	maxBlobMB, _ := strconv.Atoi(env("SG_MAX_BLOB_MB", "100"))
+	maxBlobEnv := env("SG_MAX_BLOB_MB", "100")
+	maxBlobMB, envErr := strconv.Atoi(maxBlobEnv)
+	if envErr != nil {
+		maxBlobMB = 0 // reported below unless --max-blob-mb overrides it
+	}
 	fs.IntVar(&maxBlobMB, "max-blob-mb", maxBlobMB, "max blob size in MiB")
 	logLevel := fs.String("log-level", env("SG_LOG_LEVEL", "info"), "debug|info|warn|error")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if maxBlobMB < 1 {
+		fmt.Fprintf(stderr, "serve: SG_MAX_BLOB_MB / --max-blob-mb must be an integer >= 1 (got %q)\n", maxBlobEnv)
 		return 2
 	}
 	log := slog.New(slog.NewJSONHandler(stderr, &slog.HandlerOptions{Level: parseLevel(*logLevel)}))

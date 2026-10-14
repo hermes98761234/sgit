@@ -112,3 +112,30 @@ func TestRawTreeParsesWithObjfmt(t *testing.T) {
 		t.Fatal("objfmt.BlobSHA disagrees with git")
 	}
 }
+
+func TestBuildTreeLiteralQuotePath(t *testing.T) {
+	ctx := context.Background()
+	r := newRepo(t)
+	a := blob(t, r, "a\n")
+	for _, p := range []string{`"q".txt`, `"\056sg/config"`} {
+		commitChanges(t, r, []Change{{Path: p, Op: OpAdd, BlobSHA: a}})
+	}
+	files, err := r.ListFiles(ctx, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{`"q".txt`, `"\056sg/config"`} {
+		if _, ok := files[p]; !ok {
+			t.Errorf("literal path %q missing: %v", p, files)
+		}
+	}
+	if _, ok := files[".sg/config"]; ok {
+		t.Fatal("C-unquoted path leaked into tree")
+	}
+	// delete of a quoted path must also be literal
+	commitChanges(t, r, []Change{{Path: `"q".txt`, Op: OpDelete}})
+	files, _ = r.ListFiles(ctx, "main")
+	if _, ok := files[`"q".txt`]; ok {
+		t.Fatal("quoted path not deleted")
+	}
+}

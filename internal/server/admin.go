@@ -101,6 +101,9 @@ func (a *adminService) setACL(ctx context.Context, user, repo string, lvl store.
 }
 
 func (a *adminService) GrantACL(ctx context.Context, req *sgitv1.GrantACLRequest) (*sgitv1.GrantACLResponse, error) {
+	if _, err := a.requireAdmin(ctx); err != nil {
+		return nil, err
+	}
 	var lvl store.Level
 	switch req.Level {
 	case "read":
