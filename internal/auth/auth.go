@@ -201,3 +201,9 @@ func StreamInterceptor(lk TokenLookup) grpc.StreamServerInterceptor {
 		return handler(srv, &wrappedStream{ServerStream: ss, ctx: ctx})
 	}
 }
+
+// ProjectNotFound is the one error for a project that does not exist and a
+// project the caller cannot read; the two must be indistinguishable (§8).
+func ProjectNotFound(ref string) error {
+	return status.Errorf(codes.NotFound, "project %q not found or no access", ref)
+}

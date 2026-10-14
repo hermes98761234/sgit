@@ -14,6 +14,7 @@ import (
 	"github.com/hermes98761234/sgit/internal/auth"
 	"github.com/hermes98761234/sgit/internal/gitx"
 	"github.com/hermes98761234/sgit/internal/mirror"
+	"github.com/hermes98761234/sgit/internal/project"
 	"github.com/hermes98761234/sgit/internal/rpc"
 	"github.com/hermes98761234/sgit/internal/store"
 	"github.com/klauspost/compress/zstd"
@@ -56,12 +57,13 @@ func (c *Config) defaults() {
 }
 
 type Server struct {
-	cfg    Config
-	store  *store.Store
-	log    *slog.Logger
-	repos  *repoManager
-	zenc   *zstd.Encoder
-	mirror *mirror.Manager
+	cfg      Config
+	store    *store.Store
+	log      *slog.Logger
+	repos    *repoManager
+	projects *project.Engine
+	zenc     *zstd.Encoder
+	mirror   *mirror.Manager
 }
 
 func New(cfg Config, st *store.Store, log *slog.Logger) (*Server, error) {
@@ -82,6 +84,12 @@ func New(cfg Config, st *store.Store, log *slog.Logger) (*Server, error) {
 		repos: newRepoManager(root, st, cfg.AllowLocalRemotes),
 		zenc:  enc,
 	}
+	s.projects = project.New(project.Config{
+		Root:    filepath.Join(cfg.DataDir, "projects"),
+		Store:   st,
+		Sources: s.repos,
+		Now:     cfg.Now,
+	})
 	s.mirror = mirror.New(mirror.Config{
 		RepoDir:    s.repos.path,
 		AllowLocal: cfg.AllowLocalRemotes,
@@ -119,6 +127,7 @@ func (s *Server) Register(g *grpc.Server) {
 
 func (s *Server) Close() {
 	s.mirror.Close()
+	s.projects.CloseAll()
 	s.repos.closeAll()
 	_ = s.zenc.Close()
 }
@@ -143,6 +152,8 @@ func (s *Server) toStatus(ctx context.Context, err error) error {
 		return status.Error(codes.InvalidArgument, err.Error())
 	case errors.Is(err, store.ErrExists):
 		return status.Error(codes.AlreadyExists, err.Error())
+	case errors.Is(err, store.ErrMounted):
+		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, context.Canceled):
 		return status.Error(codes.Canceled, err.Error())
 	case errors.Is(err, context.DeadlineExceeded):

@@ -161,6 +161,9 @@ func TestMountsAndRepoDeleteGuard(t *testing.T) {
 	if names, _ := s.ProjectsMounting(ctx, "core"); !reflect.DeepEqual(names, []string{"web"}) {
 		t.Fatalf("ProjectsMounting = %v", names)
 	}
+	if names, _ := s.ProjectsUsing(ctx, "core"); !reflect.DeepEqual(names, []string{"web"}) {
+		t.Fatalf("ProjectsUsing = %v", names)
+	}
 	if err := s.DeleteRepo(ctx, "core"); !errors.Is(err, ErrMounted) {
 		t.Fatalf("DeleteRepo while mounted = %v, want ErrMounted", err)
 	}
@@ -201,6 +204,12 @@ func TestRepoDeleteGuardCoversProjectHistory(t *testing.T) {
 		if err := s.DeleteRepo(ctx, r); !errors.Is(err, ErrMounted) {
 			t.Fatalf("DeleteRepo(%s) referenced by project history = %v, want ErrMounted", r, err)
 		}
+		if names, err := s.ProjectsUsing(ctx, r); err != nil || !reflect.DeepEqual(names, []string{"web"}) {
+			t.Fatalf("ProjectsUsing(%s) = %v, %v", r, names, err)
+		}
+	}
+	if names, err := s.ProjectsUsing(ctx, "free"); err != nil || len(names) != 0 {
+		t.Fatalf("ProjectsUsing(free) = %v, %v", names, err)
 	}
 	if err := s.DeleteRepo(ctx, "free"); err != nil {
 		t.Fatal(err)

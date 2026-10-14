@@ -243,6 +243,15 @@ func (m *repoManager) rollbackNew(name, dir string) {
 	os.RemoveAll(dir)
 }
 
+// Source opens a source repo for the projection engine.
+func (m *repoManager) Source(ctx context.Context, repo string) (*gitx.Repo, error) {
+	h, err := m.get(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
+	return h.git, nil
+}
+
 func (m *repoManager) closeAll() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -294,6 +303,12 @@ func (m *repoManager) deleteRepo(ctx context.Context, name, deletedRoot string, 
 		if rerr := os.Rename(dst, src); rerr != nil {
 			return "", errors.Join(err, rerr)
 		}
+		// h.git is closed: drop it so the next get reopens the repo.
+		m.mu.Lock()
+		if m.open[name] == h {
+			delete(m.open, name)
+		}
+		m.mu.Unlock()
 		return "", err
 	}
 	m.mu.Lock()

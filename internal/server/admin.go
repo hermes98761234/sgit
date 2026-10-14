@@ -5,6 +5,8 @@ import (
 	"errors"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strings"
 
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
 	"github.com/hermes98761234/sgit/internal/auth"
@@ -319,11 +321,43 @@ func (a *adminService) DeleteRepo(ctx context.Context, req *sgitv1.DeleteRepoReq
 	if _, err := a.requireAdmin(ctx); err != nil {
 		return nil, err
 	}
+	// Message only: the store refuses inside the delete transaction. Checking
+	// first also keeps the repo directory and handle untouched.
+	if err := a.refuseInUse(ctx, req.Name); err != nil {
+		return nil, err
+	}
 	dst, err := a.s.repos.deleteRepo(ctx, req.Name, filepath.Join(a.s.cfg.DataDir, "deleted"), a.s.cfg.Now())
+	if errors.Is(err, store.ErrMounted) { // mounted since the check above
+		if rerr := a.refuseInUse(ctx, req.Name); rerr != nil {
+			return nil, rerr
+		}
+	}
 	if err != nil {
 		return nil, a.s.toStatus(ctx, err)
 	}
 	return &sgitv1.DeleteRepoResponse{MovedTo: dst}, nil
+}
+
+// refuseInUse returns FailedPrecondition naming the projects that mount repo
+// or, failing that, have it in their history (a rebuild replays it); nil when
+// no project uses it.
+func (a *adminService) refuseInUse(ctx context.Context, repo string) error {
+	names, err := a.s.store.ProjectsMounting(ctx, repo)
+	if err != nil {
+		return a.s.toStatus(ctx, err)
+	}
+	if len(names) > 0 {
+		sort.Strings(names)
+		return status.Errorf(codes.FailedPrecondition, "repo %q is mounted by project(s) %s; unmount it first", repo, strings.Join(names, ", "))
+	}
+	names, err = a.s.store.ProjectsUsing(ctx, repo)
+	if err != nil {
+		return a.s.toStatus(ctx, err)
+	}
+	if len(names) > 0 {
+		return status.Errorf(codes.FailedPrecondition, "repo %q is in the history of project(s) %s; delete those projects first", repo, strings.Join(names, ", "))
+	}
+	return nil
 }
 
 // notFound replaces a store.ErrNotFound with a NotFound status that names

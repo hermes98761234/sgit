@@ -368,6 +368,29 @@ func (s *Store) ProjectsMounting(ctx context.Context, repo string) ([]string, er
 	return out, rows.Err()
 }
 
+// ProjectsUsing returns the names of projects that mount repo or have it in
+// their recorded history, sorted: the projects that make DeleteRepo return
+// ErrMounted.
+func (s *Store) ProjectsUsing(ctx context.Context, repo string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name FROM projects WHERE id IN (
+		SELECT project_id FROM project_mounts WHERE repo=?1
+		UNION SELECT project_id FROM project_commits WHERE repo=?1
+		UNION SELECT project_id FROM project_commit_sources WHERE repo=?1) ORDER BY name`, repo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
 // RecordProjectCommits is the single writer of derived project state. In one
 // transaction it applies the mount change, inserts the commits (with their
 // per-repo sources) and replaces the cursors. A nil cursors map leaves the

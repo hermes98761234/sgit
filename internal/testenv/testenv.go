@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -104,6 +105,24 @@ func (e *Env) Upload(token, repo string, blobs ...[]byte) []string {
 // Git opens the repo's bare git dir directly (caller closes).
 func (e *Env) Git(repo string) *gitx.Repo {
 	return gitx.Open(filepath.Join(e.DataDir, "repos", repo+".git"))
+}
+
+// CreateProject creates an empty project and returns its id.
+func (e *Env) CreateProject(name string) int64 {
+	e.t.Helper()
+	return Must(e.Admin(e.AdminToken).CreateProject(context.Background(), &sgitv1.CreateProjectRequest{Name: name})).Id
+}
+
+// Mount mounts repo:folder at path in project and returns the project head.
+func (e *Env) Mount(project, path, repo, folder string, readOnly bool) string {
+	e.t.Helper()
+	return Must(e.Admin(e.AdminToken).MountProject(context.Background(), &sgitv1.MountProjectRequest{
+		Project: project, Path: path, Repo: repo, Folder: folder, ReadOnly: readOnly})).Head
+}
+
+// ProjectGit opens a project's derived repo directly (caller closes).
+func (e *Env) ProjectGit(id int64) *gitx.Repo {
+	return gitx.Open(filepath.Join(e.DataDir, "projects", strconv.FormatInt(id, 10)+".git"))
 }
 
 // Files returns path -> content of every file at rev.
