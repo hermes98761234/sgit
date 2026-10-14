@@ -15,7 +15,17 @@ import (
 var (
 	ErrNotFound = errors.New("store: not found")
 	ErrExists   = errors.New("store: already exists")
+
+	// ErrLastAdmin is returned when an operation would leave no admin.
+	ErrLastAdmin = errors.New("store: would leave no admin")
+	// ErrSelf is returned when an operation may not target the acting user.
+	ErrSelf = errors.New("store: cannot target yourself")
 )
+
+// DeletedSuffix marks the name of a soft-deleted user: "alice" becomes
+// "alice~deleted-<id>". '~' is not valid in user names, so a tombstone never
+// collides with a live user and the original name can be reused.
+const DeletedSuffix = "~deleted-"
 
 // Level is a per-repo access level. Write implies read.
 type Level int
@@ -77,7 +87,8 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT UNIQUE NOT NULL,
   email TEXT NOT NULL,
   admin INTEGER NOT NULL DEFAULT 0,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  deleted_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS tokens (
   id TEXT PRIMARY KEY,
@@ -132,7 +143,44 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("store: migrate: %w", err)
 	}
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: migrate: %w", err)
+	}
 	return &Store{db: db}, nil
+}
+
+// migrate upgrades databases created by older versions in place.
+func migrate(db *sql.DB) error {
+	// users.deleted_at (soft delete) was added after the first release.
+	has, err := hasColumn(db, "users", "deleted_at")
+	if err != nil {
+		return err
+	}
+	if !has {
+		if _, err := db.Exec(`ALTER TABLE users ADD COLUMN deleted_at INTEGER`); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func hasColumn(db *sql.DB, table, col string) (bool, error) {
+	rows, err := db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return false, err
+		}
+		if n == col {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -194,13 +242,13 @@ func (s *Store) CreateUserWithToken(ctx context.Context, name, email string, adm
 
 func (s *Store) UserByName(ctx context.Context, name string) (User, error) {
 	var u User
-	err := s.db.QueryRowContext(ctx, `SELECT id,name,email,admin FROM users WHERE name=?`, name).Scan(&u.ID, &u.Name, &u.Email, &u.Admin)
+	err := s.db.QueryRowContext(ctx, `SELECT id,name,email,admin FROM users WHERE name=? AND deleted_at IS NULL`, name).Scan(&u.ID, &u.Name, &u.Email, &u.Admin)
 	return u, notFound(err)
 }
 
 func (s *Store) CountUsers(ctx context.Context) (int, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE deleted_at IS NULL`).Scan(&n)
 	return n, err
 }
 
@@ -215,7 +263,7 @@ func (s *Store) CreateToken(ctx context.Context, userID int64, id string, hash [
 func (s *Store) UserByTokenHash(ctx context.Context, hash []byte) (User, error) {
 	var u User
 	err := s.db.QueryRowContext(ctx, `SELECT u.id,u.name,u.email,u.admin FROM tokens t JOIN users u ON u.id=t.user_id
-		WHERE t.hash=? AND t.revoked_at IS NULL`, hash).Scan(&u.ID, &u.Name, &u.Email, &u.Admin)
+		WHERE t.hash=? AND t.revoked_at IS NULL AND u.deleted_at IS NULL`, hash).Scan(&u.ID, &u.Name, &u.Email, &u.Admin)
 	return u, notFound(err)
 }
 
@@ -417,4 +465,233 @@ func (s *Store) ListDrafts(ctx context.Context, repo string, ownerID int64, stat
 		out = append(out, d)
 	}
 	return out, rows.Err()
+}
+
+// UserRow is a user as listed by ListUsers.
+type UserRow struct {
+	User
+	ActiveTokens int
+	CreatedAt    time.Time
+}
+
+// ListUsers returns every live (not deleted) user ordered by name.
+func (s *Store) ListUsers(ctx context.Context) ([]UserRow, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT u.id,u.name,u.email,u.admin,u.created_at,
+		(SELECT COUNT(*) FROM tokens t WHERE t.user_id=u.id AND t.revoked_at IS NULL)
+		FROM users u WHERE u.deleted_at IS NULL ORDER BY u.name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UserRow
+	for rows.Next() {
+		var r UserRow
+		var created int64
+		if err := rows.Scan(&r.ID, &r.Name, &r.Email, &r.Admin, &created, &r.ActiveTokens); err != nil {
+			return nil, err
+		}
+		r.CreatedAt = time.Unix(created, 0).UTC()
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// SetAdmin sets or clears the global admin flag of a live user. Clearing it
+// from the last admin fails with ErrLastAdmin. It is idempotent.
+func (s *Store) SetAdmin(ctx context.Context, name string, admin bool) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	var id int64
+	var cur bool
+	err = tx.QueryRowContext(ctx, `SELECT id,admin FROM users WHERE name=? AND deleted_at IS NULL`, name).Scan(&id, &cur)
+	if err != nil {
+		return fmt.Errorf("%w: user %q", ErrNotFound, name)
+	}
+	if cur && !admin {
+		if err := lastAdminCheck(ctx, tx); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET admin=? WHERE id=?`, admin, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// lastAdminCheck returns ErrLastAdmin if at most one live admin exists.
+func lastAdminCheck(ctx context.Context, tx *sql.Tx) error {
+	var n int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE admin=1 AND deleted_at IS NULL`).Scan(&n); err != nil {
+		return err
+	}
+	if n <= 1 {
+		return ErrLastAdmin
+	}
+	return nil
+}
+
+// DeleteResult counts what DeleteUser changed.
+type DeleteResult struct {
+	TokensRevoked   int
+	ACLsRemoved     int
+	DraftsAbandoned int
+}
+
+// DeleteUser soft-deletes name: it revokes the user's tokens, removes their
+// ACLs, abandons their open drafts and tombstones the row. The row stays
+// because landed and abandoned drafts reference it; the name becomes
+// "<name>~deleted-<id>" (see DeletedSuffix) so it can be reused. It fails
+// with ErrSelf if name is actingID and ErrLastAdmin if the user is the only
+// admin. All of it happens in one transaction.
+func (s *Store) DeleteUser(ctx context.Context, name string, actingID int64) (DeleteResult, error) {
+	var res DeleteResult
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return res, err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	var id int64
+	var admin bool
+	if err := tx.QueryRowContext(ctx, `SELECT id,admin FROM users WHERE name=? AND deleted_at IS NULL`, name).Scan(&id, &admin); err != nil {
+		return res, fmt.Errorf("%w: user %q", ErrNotFound, name)
+	}
+	if id == actingID {
+		return res, ErrSelf
+	}
+	if admin {
+		if err := lastAdminCheck(ctx, tx); err != nil {
+			return res, err
+		}
+	}
+	now := time.Now().Unix()
+	count := func(dst *int, q string, args ...any) error {
+		r, err := tx.ExecContext(ctx, q, args...)
+		if err != nil {
+			return err
+		}
+		n, _ := r.RowsAffected()
+		*dst = int(n)
+		return nil
+	}
+	if err := count(&res.TokensRevoked, `UPDATE tokens SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL`, now, id); err != nil {
+		return res, err
+	}
+	if err := count(&res.ACLsRemoved, `DELETE FROM acl WHERE user_id=?`, id); err != nil {
+		return res, err
+	}
+	if err := count(&res.DraftsAbandoned, `UPDATE drafts SET status=?,updated_at=? WHERE owner_id=? AND status=?`, DraftAbandoned, now, id, DraftOpen); err != nil {
+		return res, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET admin=0,deleted_at=?,name=name||?||id WHERE id=?`, now, DeletedSuffix, id); err != nil {
+		return res, err
+	}
+	return res, tx.Commit()
+}
+
+// TokenRow describes a token without its secret.
+type TokenRow struct {
+	ID        string
+	User      string
+	CreatedAt time.Time
+	RevokedAt time.Time // zero = active
+}
+
+// ListTokens returns the tokens of live users, oldest first. A non-empty user
+// restricts the list to that user.
+func (s *Store) ListTokens(ctx context.Context, user string) ([]TokenRow, error) {
+	q := `SELECT t.id,u.name,t.created_at,t.revoked_at FROM tokens t JOIN users u ON u.id=t.user_id WHERE u.deleted_at IS NULL`
+	var args []any
+	if user != "" {
+		q += ` AND u.name=?`
+		args = append(args, user)
+	}
+	rows, err := s.db.QueryContext(ctx, q+` ORDER BY t.created_at, t.id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TokenRow
+	for rows.Next() {
+		var r TokenRow
+		var created int64
+		var revoked sql.NullInt64
+		if err := rows.Scan(&r.ID, &r.User, &created, &revoked); err != nil {
+			return nil, err
+		}
+		r.CreatedAt = time.Unix(created, 0).UTC()
+		if revoked.Valid {
+			r.RevokedAt = time.Unix(revoked.Int64, 0).UTC()
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ACLRow is one explicit grant.
+type ACLRow struct {
+	User  string
+	Repo  string
+	Level Level
+}
+
+// ListACL returns explicit grants of live users ordered by user then repo;
+// non-empty user and repo filter the result. Admins' implicit access is not
+// listed.
+func (s *Store) ListACL(ctx context.Context, user, repo string) ([]ACLRow, error) {
+	q := `SELECT u.name,a.repo,a.level FROM acl a JOIN users u ON u.id=a.user_id WHERE u.deleted_at IS NULL`
+	var args []any
+	if user != "" {
+		q += ` AND u.name=?`
+		args = append(args, user)
+	}
+	if repo != "" {
+		q += ` AND a.repo=?`
+		args = append(args, repo)
+	}
+	rows, err := s.db.QueryContext(ctx, q+` ORDER BY u.name, a.repo`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ACLRow
+	for rows.Next() {
+		var r ACLRow
+		var l int
+		if err := rows.Scan(&r.User, &r.Repo, &l); err != nil {
+			return nil, err
+		}
+		r.Level = Level(l)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// DeleteRepo removes a repo's row together with its ACLs, drafts and mirror
+// state, atomically. It does not touch the git directory.
+func (s *Store) DeleteRepo(ctx context.Context, name string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	for _, q := range []string{
+		`DELETE FROM acl WHERE repo=?`,
+		`DELETE FROM drafts WHERE repo=?`,
+		`DELETE FROM mirror_state WHERE repo=?`,
+	} {
+		if _, err := tx.ExecContext(ctx, q, name); err != nil {
+			return err
+		}
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM repos WHERE name=?`, name)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("%w: repo %q", ErrNotFound, name)
+	}
+	return tx.Commit()
 }

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"regexp"
 
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
@@ -208,6 +209,121 @@ func (a *adminService) RevokeACL(ctx context.Context, req *sgitv1.RevokeACLReque
 		return nil, err
 	}
 	return &sgitv1.RevokeACLResponse{}, nil
+}
+
+func (a *adminService) ListUsers(ctx context.Context, _ *sgitv1.ListUsersRequest) (*sgitv1.ListUsersResponse, error) {
+	if _, err := a.requireAdmin(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := a.s.store.ListUsers(ctx)
+	if err != nil {
+		return nil, a.s.toStatus(ctx, err)
+	}
+	out := &sgitv1.ListUsersResponse{}
+	for _, r := range rows {
+		out.Users = append(out.Users, &sgitv1.UserInfo{
+			Name: r.Name, Email: r.Email, Admin: r.Admin,
+			ActiveTokens: int32(r.ActiveTokens), CreatedUnix: r.CreatedAt.Unix(),
+		})
+	}
+	return out, nil
+}
+
+func (a *adminService) SetUserAdmin(ctx context.Context, req *sgitv1.SetUserAdminRequest) (*sgitv1.SetUserAdminResponse, error) {
+	if _, err := a.requireAdmin(ctx); err != nil {
+		return nil, err
+	}
+	err := a.s.store.SetAdmin(ctx, req.User, req.Admin)
+	if errors.Is(err, store.ErrLastAdmin) {
+		return nil, status.Errorf(codes.FailedPrecondition, "cannot demote %q: they are the last admin; promote another user first", req.User)
+	}
+	if err != nil {
+		return nil, a.s.toStatus(ctx, notFound(err, "user %q not found", req.User))
+	}
+	return &sgitv1.SetUserAdminResponse{}, nil
+}
+
+func (a *adminService) DeleteUser(ctx context.Context, req *sgitv1.DeleteUserRequest) (*sgitv1.DeleteUserResponse, error) {
+	me, err := a.requireAdmin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	res, err := a.s.store.DeleteUser(ctx, req.User, me.ID)
+	switch {
+	case errors.Is(err, store.ErrSelf):
+		return nil, status.Error(codes.FailedPrecondition, "cannot delete yourself; ask another admin")
+	case errors.Is(err, store.ErrLastAdmin):
+		return nil, status.Errorf(codes.FailedPrecondition, "cannot delete %q: they are the last admin; promote another user first", req.User)
+	case err != nil:
+		return nil, a.s.toStatus(ctx, notFound(err, "user %q not found", req.User))
+	}
+	return &sgitv1.DeleteUserResponse{
+		TokensRevoked: int32(res.TokensRevoked), AclsRemoved: int32(res.ACLsRemoved), DraftsAbandoned: int32(res.DraftsAbandoned),
+	}, nil
+}
+
+func (a *adminService) ListTokens(ctx context.Context, req *sgitv1.ListTokensRequest) (*sgitv1.ListTokensResponse, error) {
+	if _, err := a.requireAdmin(ctx); err != nil {
+		return nil, err
+	}
+	if req.User != "" {
+		if _, err := a.s.store.UserByName(ctx, req.User); err != nil {
+			return nil, a.s.toStatus(ctx, notFound(err, "user %q not found", req.User))
+		}
+	}
+	rows, err := a.s.store.ListTokens(ctx, req.User)
+	if err != nil {
+		return nil, a.s.toStatus(ctx, err)
+	}
+	out := &sgitv1.ListTokensResponse{}
+	for _, r := range rows {
+		ti := &sgitv1.TokenInfo{Id: r.ID, User: r.User, CreatedUnix: r.CreatedAt.Unix()}
+		if !r.RevokedAt.IsZero() {
+			ti.RevokedUnix = r.RevokedAt.Unix()
+		}
+		out.Tokens = append(out.Tokens, ti)
+	}
+	return out, nil
+}
+
+func (a *adminService) ListACL(ctx context.Context, req *sgitv1.ListACLRequest) (*sgitv1.ListACLResponse, error) {
+	if _, err := a.requireAdmin(ctx); err != nil {
+		return nil, err
+	}
+	if req.User != "" {
+		if _, err := a.s.store.UserByName(ctx, req.User); err != nil {
+			return nil, a.s.toStatus(ctx, notFound(err, "user %q not found", req.User))
+		}
+	}
+	if req.Repo != "" {
+		if _, err := a.s.store.GetRepo(ctx, req.Repo); err != nil {
+			return nil, a.s.toStatus(ctx, notFound(err, "repo %q not found", req.Repo))
+		}
+	}
+	rows, err := a.s.store.ListACL(ctx, req.User, req.Repo)
+	if err != nil {
+		return nil, a.s.toStatus(ctx, err)
+	}
+	out := &sgitv1.ListACLResponse{}
+	for _, r := range rows {
+		lvl := "read"
+		if r.Level == store.LevelWrite {
+			lvl = "write"
+		}
+		out.Entries = append(out.Entries, &sgitv1.ACLEntry{User: r.User, Repo: r.Repo, Level: lvl})
+	}
+	return out, nil
+}
+
+func (a *adminService) DeleteRepo(ctx context.Context, req *sgitv1.DeleteRepoRequest) (*sgitv1.DeleteRepoResponse, error) {
+	if _, err := a.requireAdmin(ctx); err != nil {
+		return nil, err
+	}
+	dst, err := a.s.repos.deleteRepo(ctx, req.Name, filepath.Join(a.s.cfg.DataDir, "deleted"), a.s.cfg.Now())
+	if err != nil {
+		return nil, a.s.toStatus(ctx, err)
+	}
+	return &sgitv1.DeleteRepoResponse{MovedTo: dst}, nil
 }
 
 // notFound replaces a store.ErrNotFound with a NotFound status that names

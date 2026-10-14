@@ -15,7 +15,7 @@
 | `sg drafts [--mine]`, `sg show <id\|rev>`, `sg abandon [id]` | manage drafts |
 | `sg log [path] [-n N]`, `sg blame <path>`, `sg cat <rev>:<path>` | history; works without a checkout with `--repo` |
 | `sg sparse list \| add <path>... \| rm <path>...` | change a sparse checkout |
-| `sg repo`, `sg token`, `sg acl` | admin commands, see the [server guide](server.md#administration) |
+| `sg repo`, `sg user`, `sg token`, `sg acl` | admin commands, see the [server guide](server.md#administration) |
 
 ## How it works
 

@@ -34,6 +34,12 @@ service Admin {
   rpc RevokeToken(RevokeTokenRequest) returns (RevokeTokenResponse);
   rpc GrantACL(GrantACLRequest) returns (GrantACLResponse);
   rpc RevokeACL(RevokeACLRequest) returns (RevokeACLResponse);
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+  rpc SetUserAdmin(SetUserAdminRequest) returns (SetUserAdminResponse);
+  rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
+  rpc ListTokens(ListTokensRequest) returns (ListTokensResponse);
+  rpc ListACL(ListACLRequest) returns (ListACLResponse);
+  rpc DeleteRepo(DeleteRepoRequest) returns (DeleteRepoResponse);
 }
 
 message ResolveRevRequest { string repo = 1; string rev = 2; }
@@ -136,6 +142,32 @@ message GrantACLRequest { string user = 1; string repo = 2; string level = 3; }
 message GrantACLResponse {}
 message RevokeACLRequest { string user = 1; string repo = 2; }
 message RevokeACLResponse {}
+
+message UserInfo {
+  string name = 1;
+  string email = 2;
+  bool admin = 3;
+  int32 active_tokens = 4;  // tokens that are not revoked
+  int64 created_unix = 5;
+}
+message ListUsersRequest {}
+message ListUsersResponse { repeated UserInfo users = 1; }
+message SetUserAdminRequest { string user = 1; bool admin = 2; }
+message SetUserAdminResponse {}
+message DeleteUserRequest { string user = 1; }
+message DeleteUserResponse { int32 tokens_revoked = 1; int32 acls_removed = 2; int32 drafts_abandoned = 3; }
+// TokenInfo never carries the secret, only the public id.
+message TokenInfo { string id = 1; string user = 2; int64 created_unix = 3; int64 revoked_unix = 4; }
+// ListTokensRequest.user filters to one user; empty lists everyone's.
+message ListTokensRequest { string user = 1; }
+message ListTokensResponse { repeated TokenInfo tokens = 1; }
+message ACLEntry { string user = 1; string repo = 2; string level = 3; }
+// ListACLRequest.user and .repo are optional filters.
+message ListACLRequest { string user = 1; string repo = 2; }
+message ListACLResponse { repeated ACLEntry entries = 1; }
+// DeleteRepo moves the bare repo to <data>/deleted; moved_to is its new path.
+message DeleteRepoRequest { string name = 1; }
+message DeleteRepoResponse { string moved_to = 1; }
 
 // Daemon is served only by sgd, so clients can check which server it fronts
 // before sending it a token.

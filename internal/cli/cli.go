@@ -62,6 +62,7 @@ func commandTable() []command {
 		{"cat", "cat <rev>:<path> [--repo R] [--server S]", cmdCat},
 		{"sparse", "sparse list | add <path>... | rm <path>...", cmdSparse},
 		{"repo", repoUsage, cmdRepo},
+		{"user", userUsage, cmdUser},
 		{"token", tokenUsage, cmdToken},
 		{"acl", aclUsage, cmdACL},
 	}
@@ -119,6 +120,7 @@ func usage(w io.Writer) {
 		fmt.Fprintf(w, "  sg %s\n", c.usage)
 	}
 	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Admin commands need an admin token. acl list shows explicit grants only; admins have implicit access to everything.")
 	fmt.Fprintln(w, "Every command accepts --json. Exit codes: 0 ok, 1 error, 2 auth, 3 conflict, 4 main kept moving.")
 }
 

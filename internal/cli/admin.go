@@ -11,9 +11,10 @@ import (
 )
 
 const (
-	repoUsage  = "repo create <name> [--mirror URL] | repo import <name> --from URL [--mirror URL] | repo status <name> | repo list  [--server S]"
-	tokenUsage = "token create <user> [--admin] [--email E] | token revoke <id>  [--server S]"
-	aclUsage   = "acl grant <user> <repo> read|write | acl revoke <user> <repo>  [--server S]"
+	repoUsage  = "repo create <name> [--mirror URL] | repo import <name> --from URL [--mirror URL] | repo status <name> | repo list | repo delete <name> --yes  [--server S]"
+	userUsage  = "user list | user promote <user> | user demote <user> | user delete <user>  [--server S]"
+	tokenUsage = "token create <user> [--admin] [--email E] | token revoke <id> | token list [user]  [--server S]"
+	aclUsage   = "acl grant <user> <repo> read|write | acl revoke <user> <repo> | acl list [--user U] [--repo R]  [--server S]"
 )
 
 const (
@@ -44,6 +45,8 @@ func cmdRepo(ctx context.Context, a *app, args []string) error {
 			return repoStatus(ctx, a, args[1:])
 		case "list":
 			return repoList(ctx, a, args[1:])
+		case "delete":
+			return repoDelete(ctx, a, args[1:])
 		}
 	}
 	return usageErr(repoUsage)
@@ -234,6 +237,8 @@ func cmdToken(ctx context.Context, a *app, args []string) error {
 			return tokenCreate(ctx, a, args[1:])
 		case "revoke":
 			return tokenRevoke(ctx, a, args[1:])
+		case "list":
+			return tokenList(ctx, a, args[1:])
 		}
 	}
 	return usageErr(tokenUsage)
@@ -290,6 +295,9 @@ func tokenRevoke(ctx context.Context, a *app, args []string) error {
 }
 
 func cmdACL(ctx context.Context, a *app, args []string) error {
+	if len(args) > 0 && args[0] == "list" {
+		return aclList(ctx, a, args[1:])
+	}
 	if len(args) == 0 || (args[0] != "grant" && args[0] != "revoke") {
 		return usageErr(aclUsage)
 	}
@@ -327,5 +335,212 @@ func cmdACL(ctx context.Context, a *app, args []string) error {
 		} else {
 			fmt.Fprintf(w, "revoked %s's access to %s\n", user, repo)
 		}
+	})
+}
+
+func repoDelete(ctx context.Context, a *app, args []string) error {
+	fs := a.newFlags("repo delete")
+	yes := fs.Bool("yes", false, "confirm: delete the repo (its files are moved aside, not erased)")
+	srv := fs.String("server", "", "server (default: the working copy's, else the login default)")
+	pos, err := parse(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 1 {
+		return usageErr(repoUsage)
+	}
+	if !*yes {
+		return exitf(ExitError, "refusing to delete repo %q without --yes (this removes its ACLs and drafts; the git data is moved to <data>/deleted/ on the server)", pos[0])
+	}
+	var resp *sgitv1.DeleteRepoResponse
+	err = a.admin(ctx, *srv, adminTimeout, func(ctx context.Context, ac sgitv1.AdminClient) (err error) {
+		resp, err = ac.DeleteRepo(ctx, &sgitv1.DeleteRepoRequest{Name: pos[0]})
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	return a.emit(map[string]any{"repo": pos[0], "moved_to": resp.MovedTo}, func(w io.Writer) {
+		fmt.Fprintf(w, "deleted repo %s (git data moved to %s on the server)\n", pos[0], resp.MovedTo)
+	})
+}
+
+func cmdUser(ctx context.Context, a *app, args []string) error {
+	if len(args) == 0 {
+		return usageErr(userUsage)
+	}
+	verb := args[0]
+	switch verb {
+	case "list", "promote", "demote", "delete":
+	default:
+		return usageErr(userUsage)
+	}
+	fs := a.newFlags("user " + verb)
+	srv := fs.String("server", "", "server (default: the working copy's, else the login default)")
+	pos, err := parse(fs, args[1:])
+	if err != nil {
+		return err
+	}
+	want := 1
+	if verb == "list" {
+		want = 0
+	}
+	if len(pos) != want {
+		return usageErr(userUsage)
+	}
+	switch verb {
+	case "list":
+		var resp *sgitv1.ListUsersResponse
+		err = a.admin(ctx, *srv, adminTimeout, func(ctx context.Context, ac sgitv1.AdminClient) (err error) {
+			resp, err = ac.ListUsers(ctx, &sgitv1.ListUsersRequest{})
+			return err
+		})
+		if err != nil {
+			return err
+		}
+		type userJSON struct {
+			Name    string `json:"name"`
+			Email   string `json:"email"`
+			Admin   bool   `json:"admin"`
+			Tokens  int32  `json:"tokens"`
+			Created string `json:"created"`
+		}
+		users := make([]userJSON, 0, len(resp.Users))
+		for _, u := range resp.Users {
+			users = append(users, userJSON{u.Name, u.Email, u.Admin, u.ActiveTokens, unixTime(u.CreatedUnix)})
+		}
+		return a.emit(map[string]any{"users": users}, func(w io.Writer) {
+			tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "NAME\tEMAIL\tADMIN\tTOKENS\tCREATED")
+			for _, u := range users {
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n", u.Name, u.Email, yesNo(u.Admin), u.Tokens, u.Created)
+			}
+			tw.Flush()
+		})
+	case "promote", "demote":
+		admin := verb == "promote"
+		err = a.admin(ctx, *srv, adminTimeout, func(ctx context.Context, ac sgitv1.AdminClient) error {
+			_, err := ac.SetUserAdmin(ctx, &sgitv1.SetUserAdminRequest{User: pos[0], Admin: admin})
+			return err
+		})
+		if err != nil {
+			return err
+		}
+		return a.emit(map[string]any{"user": pos[0], "admin": admin}, func(w io.Writer) {
+			if admin {
+				fmt.Fprintf(w, "promoted %s to admin\n", pos[0])
+			} else {
+				fmt.Fprintf(w, "demoted %s (no longer admin)\n", pos[0])
+			}
+		})
+	default: // delete
+		var resp *sgitv1.DeleteUserResponse
+		err = a.admin(ctx, *srv, adminTimeout, func(ctx context.Context, ac sgitv1.AdminClient) (err error) {
+			resp, err = ac.DeleteUser(ctx, &sgitv1.DeleteUserRequest{User: pos[0]})
+			return err
+		})
+		if err != nil {
+			return err
+		}
+		return a.emit(map[string]any{
+			"deleted": pos[0], "tokens_revoked": resp.TokensRevoked,
+			"acls_removed": resp.AclsRemoved, "drafts_abandoned": resp.DraftsAbandoned,
+		}, func(w io.Writer) {
+			fmt.Fprintf(w, "deleted user %s (revoked %d tokens, removed %d ACLs, abandoned %d drafts)\n",
+				pos[0], resp.TokensRevoked, resp.AclsRemoved, resp.DraftsAbandoned)
+		})
+	}
+}
+
+func yesNo(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
+}
+
+func tokenList(ctx context.Context, a *app, args []string) error {
+	fs := a.newFlags("token list")
+	srv := fs.String("server", "", "server (default: the working copy's, else the login default)")
+	pos, err := parse(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) > 1 {
+		return usageErr(tokenUsage)
+	}
+	user := ""
+	if len(pos) == 1 {
+		user = pos[0]
+	}
+	var resp *sgitv1.ListTokensResponse
+	err = a.admin(ctx, *srv, adminTimeout, func(ctx context.Context, ac sgitv1.AdminClient) (err error) {
+		resp, err = ac.ListTokens(ctx, &sgitv1.ListTokensRequest{User: user})
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	type tokenJSON struct {
+		ID      string `json:"id"`
+		User    string `json:"user"`
+		Created string `json:"created"`
+		Status  string `json:"status"`
+		Revoked string `json:"revoked,omitempty"`
+	}
+	toks := make([]tokenJSON, 0, len(resp.Tokens))
+	for _, t := range resp.Tokens {
+		st := "active"
+		if t.RevokedUnix != 0 {
+			st = "revoked"
+		}
+		toks = append(toks, tokenJSON{t.Id, t.User, unixTime(t.CreatedUnix), st, unixTime(t.RevokedUnix)})
+	}
+	return a.emit(map[string]any{"tokens": toks}, func(w io.Writer) {
+		tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(tw, "ID\tUSER\tCREATED\tSTATUS")
+		for _, t := range toks {
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", t.ID, t.User, t.Created, t.Status)
+		}
+		tw.Flush()
+	})
+}
+
+func aclList(ctx context.Context, a *app, args []string) error {
+	fs := a.newFlags("acl list")
+	user := fs.String("user", "", "only this user's grants")
+	repo := fs.String("repo", "", "only grants on this repo")
+	srv := fs.String("server", "", "server (default: the working copy's, else the login default)")
+	pos, err := parse(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 0 {
+		return usageErr(aclUsage)
+	}
+	var resp *sgitv1.ListACLResponse
+	err = a.admin(ctx, *srv, adminTimeout, func(ctx context.Context, ac sgitv1.AdminClient) (err error) {
+		resp, err = ac.ListACL(ctx, &sgitv1.ListACLRequest{User: *user, Repo: *repo})
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	type aclJSON struct {
+		User  string `json:"user"`
+		Repo  string `json:"repo"`
+		Level string `json:"level"`
+	}
+	entries := make([]aclJSON, 0, len(resp.Entries))
+	for _, e := range resp.Entries {
+		entries = append(entries, aclJSON{e.User, e.Repo, e.Level})
+	}
+	return a.emit(map[string]any{"acl": entries}, func(w io.Writer) {
+		tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(tw, "USER\tREPO\tLEVEL")
+		for _, e := range entries {
+			fmt.Fprintf(tw, "%s\t%s\t%s\n", e.User, e.Repo, e.Level)
+		}
+		tw.Flush()
 	})
 }

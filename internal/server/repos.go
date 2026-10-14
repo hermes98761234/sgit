@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -234,4 +235,54 @@ func (m *repoManager) closeAll() {
 		h.git.Close()
 	}
 	m.open = map[string]*repoHandle{}
+}
+
+// deleteRepo removes name from the database and moves its bare directory to
+// <deletedRoot>/<name>.<unixtime>.git, so an operator can recover it and the
+// name can be reused. landMu is held throughout, so no land or draft change
+// is mid-flight; once released, those calls fail with NotFound. The mirror
+// remote is never contacted.
+func (m *repoManager) deleteRepo(ctx context.Context, name, deletedRoot string, now time.Time) (string, error) {
+	h, err := m.get(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	h.landMu.Lock()
+	defer h.landMu.Unlock()
+	// Lost a race with another delete.
+	if _, err := m.st.GetRepo(ctx, name); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return "", status.Errorf(codes.NotFound, "repo %q not found", name)
+		}
+		return "", err
+	}
+	if err := os.MkdirAll(deletedRoot, 0o750); err != nil {
+		return "", err
+	}
+	src := m.path(name)
+	var dst string
+	for ts := now.Unix(); ; ts++ {
+		dst = filepath.Join(deletedRoot, name+"."+strconv.FormatInt(ts, 10)+".git")
+		if _, err := os.Lstat(dst); errors.Is(err, os.ErrNotExist) {
+			break
+		} else if err != nil {
+			return "", err
+		}
+	}
+	h.git.Close()
+	if err := os.Rename(src, dst); err != nil {
+		return "", err
+	}
+	// Past the point of no return for the caller's context: finish the DB
+	// change or put the directory back.
+	if err := m.st.DeleteRepo(context.WithoutCancel(ctx), name); err != nil {
+		if rerr := os.Rename(dst, src); rerr != nil {
+			return "", errors.Join(err, rerr)
+		}
+		return "", err
+	}
+	m.mu.Lock()
+	delete(m.open, name)
+	m.mu.Unlock()
+	return dst, nil
 }

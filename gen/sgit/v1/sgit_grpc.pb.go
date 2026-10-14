@@ -654,15 +654,21 @@ var Repo_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	Admin_WhoAmI_FullMethodName      = "/sgit.v1.Admin/WhoAmI"
-	Admin_CreateRepo_FullMethodName  = "/sgit.v1.Admin/CreateRepo"
-	Admin_ImportRepo_FullMethodName  = "/sgit.v1.Admin/ImportRepo"
-	Admin_RepoStatus_FullMethodName  = "/sgit.v1.Admin/RepoStatus"
-	Admin_ListRepos_FullMethodName   = "/sgit.v1.Admin/ListRepos"
-	Admin_CreateToken_FullMethodName = "/sgit.v1.Admin/CreateToken"
-	Admin_RevokeToken_FullMethodName = "/sgit.v1.Admin/RevokeToken"
-	Admin_GrantACL_FullMethodName    = "/sgit.v1.Admin/GrantACL"
-	Admin_RevokeACL_FullMethodName   = "/sgit.v1.Admin/RevokeACL"
+	Admin_WhoAmI_FullMethodName       = "/sgit.v1.Admin/WhoAmI"
+	Admin_CreateRepo_FullMethodName   = "/sgit.v1.Admin/CreateRepo"
+	Admin_ImportRepo_FullMethodName   = "/sgit.v1.Admin/ImportRepo"
+	Admin_RepoStatus_FullMethodName   = "/sgit.v1.Admin/RepoStatus"
+	Admin_ListRepos_FullMethodName    = "/sgit.v1.Admin/ListRepos"
+	Admin_CreateToken_FullMethodName  = "/sgit.v1.Admin/CreateToken"
+	Admin_RevokeToken_FullMethodName  = "/sgit.v1.Admin/RevokeToken"
+	Admin_GrantACL_FullMethodName     = "/sgit.v1.Admin/GrantACL"
+	Admin_RevokeACL_FullMethodName    = "/sgit.v1.Admin/RevokeACL"
+	Admin_ListUsers_FullMethodName    = "/sgit.v1.Admin/ListUsers"
+	Admin_SetUserAdmin_FullMethodName = "/sgit.v1.Admin/SetUserAdmin"
+	Admin_DeleteUser_FullMethodName   = "/sgit.v1.Admin/DeleteUser"
+	Admin_ListTokens_FullMethodName   = "/sgit.v1.Admin/ListTokens"
+	Admin_ListACL_FullMethodName      = "/sgit.v1.Admin/ListACL"
+	Admin_DeleteRepo_FullMethodName   = "/sgit.v1.Admin/DeleteRepo"
 )
 
 // AdminClient is the client API for Admin service.
@@ -680,6 +686,12 @@ type AdminClient interface {
 	RevokeToken(ctx context.Context, in *RevokeTokenRequest, opts ...grpc.CallOption) (*RevokeTokenResponse, error)
 	GrantACL(ctx context.Context, in *GrantACLRequest, opts ...grpc.CallOption) (*GrantACLResponse, error)
 	RevokeACL(ctx context.Context, in *RevokeACLRequest, opts ...grpc.CallOption) (*RevokeACLResponse, error)
+	ListUsers(ctx context.Context, in *ListUsersRequest, opts ...grpc.CallOption) (*ListUsersResponse, error)
+	SetUserAdmin(ctx context.Context, in *SetUserAdminRequest, opts ...grpc.CallOption) (*SetUserAdminResponse, error)
+	DeleteUser(ctx context.Context, in *DeleteUserRequest, opts ...grpc.CallOption) (*DeleteUserResponse, error)
+	ListTokens(ctx context.Context, in *ListTokensRequest, opts ...grpc.CallOption) (*ListTokensResponse, error)
+	ListACL(ctx context.Context, in *ListACLRequest, opts ...grpc.CallOption) (*ListACLResponse, error)
+	DeleteRepo(ctx context.Context, in *DeleteRepoRequest, opts ...grpc.CallOption) (*DeleteRepoResponse, error)
 }
 
 type adminClient struct {
@@ -780,6 +792,66 @@ func (c *adminClient) RevokeACL(ctx context.Context, in *RevokeACLRequest, opts 
 	return out, nil
 }
 
+func (c *adminClient) ListUsers(ctx context.Context, in *ListUsersRequest, opts ...grpc.CallOption) (*ListUsersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListUsersResponse)
+	err := c.cc.Invoke(ctx, Admin_ListUsers_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminClient) SetUserAdmin(ctx context.Context, in *SetUserAdminRequest, opts ...grpc.CallOption) (*SetUserAdminResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetUserAdminResponse)
+	err := c.cc.Invoke(ctx, Admin_SetUserAdmin_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminClient) DeleteUser(ctx context.Context, in *DeleteUserRequest, opts ...grpc.CallOption) (*DeleteUserResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteUserResponse)
+	err := c.cc.Invoke(ctx, Admin_DeleteUser_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminClient) ListTokens(ctx context.Context, in *ListTokensRequest, opts ...grpc.CallOption) (*ListTokensResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListTokensResponse)
+	err := c.cc.Invoke(ctx, Admin_ListTokens_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminClient) ListACL(ctx context.Context, in *ListACLRequest, opts ...grpc.CallOption) (*ListACLResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListACLResponse)
+	err := c.cc.Invoke(ctx, Admin_ListACL_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminClient) DeleteRepo(ctx context.Context, in *DeleteRepoRequest, opts ...grpc.CallOption) (*DeleteRepoResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteRepoResponse)
+	err := c.cc.Invoke(ctx, Admin_DeleteRepo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AdminServer is the server API for Admin service.
 // All implementations must embed UnimplementedAdminServer
 // for forward compatibility.
@@ -795,6 +867,12 @@ type AdminServer interface {
 	RevokeToken(context.Context, *RevokeTokenRequest) (*RevokeTokenResponse, error)
 	GrantACL(context.Context, *GrantACLRequest) (*GrantACLResponse, error)
 	RevokeACL(context.Context, *RevokeACLRequest) (*RevokeACLResponse, error)
+	ListUsers(context.Context, *ListUsersRequest) (*ListUsersResponse, error)
+	SetUserAdmin(context.Context, *SetUserAdminRequest) (*SetUserAdminResponse, error)
+	DeleteUser(context.Context, *DeleteUserRequest) (*DeleteUserResponse, error)
+	ListTokens(context.Context, *ListTokensRequest) (*ListTokensResponse, error)
+	ListACL(context.Context, *ListACLRequest) (*ListACLResponse, error)
+	DeleteRepo(context.Context, *DeleteRepoRequest) (*DeleteRepoResponse, error)
 	mustEmbedUnimplementedAdminServer()
 }
 
@@ -831,6 +909,24 @@ func (UnimplementedAdminServer) GrantACL(context.Context, *GrantACLRequest) (*Gr
 }
 func (UnimplementedAdminServer) RevokeACL(context.Context, *RevokeACLRequest) (*RevokeACLResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RevokeACL not implemented")
+}
+func (UnimplementedAdminServer) ListUsers(context.Context, *ListUsersRequest) (*ListUsersResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListUsers not implemented")
+}
+func (UnimplementedAdminServer) SetUserAdmin(context.Context, *SetUserAdminRequest) (*SetUserAdminResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetUserAdmin not implemented")
+}
+func (UnimplementedAdminServer) DeleteUser(context.Context, *DeleteUserRequest) (*DeleteUserResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteUser not implemented")
+}
+func (UnimplementedAdminServer) ListTokens(context.Context, *ListTokensRequest) (*ListTokensResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListTokens not implemented")
+}
+func (UnimplementedAdminServer) ListACL(context.Context, *ListACLRequest) (*ListACLResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListACL not implemented")
+}
+func (UnimplementedAdminServer) DeleteRepo(context.Context, *DeleteRepoRequest) (*DeleteRepoResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteRepo not implemented")
 }
 func (UnimplementedAdminServer) mustEmbedUnimplementedAdminServer() {}
 func (UnimplementedAdminServer) testEmbeddedByValue()               {}
@@ -1015,6 +1111,114 @@ func _Admin_RevokeACL_Handler(srv interface{}, ctx context.Context, dec func(int
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Admin_ListUsers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListUsersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServer).ListUsers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Admin_ListUsers_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServer).ListUsers(ctx, req.(*ListUsersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Admin_SetUserAdmin_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetUserAdminRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServer).SetUserAdmin(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Admin_SetUserAdmin_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServer).SetUserAdmin(ctx, req.(*SetUserAdminRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Admin_DeleteUser_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteUserRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServer).DeleteUser(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Admin_DeleteUser_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServer).DeleteUser(ctx, req.(*DeleteUserRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Admin_ListTokens_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListTokensRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServer).ListTokens(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Admin_ListTokens_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServer).ListTokens(ctx, req.(*ListTokensRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Admin_ListACL_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListACLRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServer).ListACL(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Admin_ListACL_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServer).ListACL(ctx, req.(*ListACLRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Admin_DeleteRepo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteRepoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServer).DeleteRepo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Admin_DeleteRepo_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServer).DeleteRepo(ctx, req.(*DeleteRepoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Admin_ServiceDesc is the grpc.ServiceDesc for Admin service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1057,6 +1261,30 @@ var Admin_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RevokeACL",
 			Handler:    _Admin_RevokeACL_Handler,
+		},
+		{
+			MethodName: "ListUsers",
+			Handler:    _Admin_ListUsers_Handler,
+		},
+		{
+			MethodName: "SetUserAdmin",
+			Handler:    _Admin_SetUserAdmin_Handler,
+		},
+		{
+			MethodName: "DeleteUser",
+			Handler:    _Admin_DeleteUser_Handler,
+		},
+		{
+			MethodName: "ListTokens",
+			Handler:    _Admin_ListTokens_Handler,
+		},
+		{
+			MethodName: "ListACL",
+			Handler:    _Admin_ListACL_Handler,
+		},
+		{
+			MethodName: "DeleteRepo",
+			Handler:    _Admin_DeleteRepo_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

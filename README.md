@@ -79,6 +79,7 @@ flowchart LR
    docker compose exec sg-server sg token create bob              # prints bob's token once
    docker compose exec sg-server sg acl grant bob web write
    ```
+   Manage them later with `sg user list|promote|demote|delete`, `sg token list|revoke`, `sg acl list|revoke` and `sg repo list|delete`.
 6. **Optional: mirror to GitHub.**
    1. Give the server credentials. See [Mirror credentials](docs/server.md#mirror-credentials).
    2. Create the repo with an empty GitHub mirror: `sg repo create web --mirror git@github.com:acme/web.git`.
@@ -123,6 +124,45 @@ More in the **[client guide](docs/client.md)**: all commands, drafts, conflicts 
 3. **Done.** `sg` uses it automatically. Set `SG_NO_DAEMON=1` to bypass it.
 
 More in the **[sgd guide](docs/sgd.md)**: the systemd user service, socket and cache settings, and security.
+
+## 4. AI agent skills (Claude Code, Codex, Cursor)
+
+Two [Agent Skills](https://agentskills.io) teach coding agents how to use sgit:
+
+| Skill | For | Covers |
+|---|---|---|
+| [`sgit-admin`](skills/sgit-admin/SKILL.md) | admins | `sg-server`, users (create, list, promote, demote, delete), tokens (create, list, rotate, revoke), access (`acl grant`/`list`/`revoke`), repos (create, import, delete), mirroring |
+| [`sgit-client`](skills/sgit-client/SKILL.md) | developers and agents | login, checkout, status/diff, `commit --land`, drafts, sync, conflicts, log/blame/cat, sparse, exit codes |
+
+**In this repo** they work out of the box: `.claude/skills/`, `.agents/skills/` (Codex) and `.cursor/skills/` are symlinks to `skills/`.
+
+**In your own projects or for your user**, copy the skills where your agent looks for them:
+
+```bash
+git clone https://github.com/hermes98761234/sgit
+cd sgit
+
+# Claude Code
+cp -r skills/sgit-client skills/sgit-admin ~/.claude/skills/        # all projects
+cp -r skills/sgit-client /path/to/project/.claude/skills/           # one project
+
+# Codex
+cp -r skills/sgit-client skills/sgit-admin ~/.agents/skills/        # all projects
+cp -r skills/sgit-client /path/to/project/.agents/skills/           # one project
+
+# Cursor
+cp -r skills/sgit-client skills/sgit-admin ~/.cursor/skills/        # all projects
+cp -r skills/sgit-client /path/to/project/.cursor/skills/           # one project
+```
+
+Create the target directory first if it doesn't exist. Give developers only `sgit-client`; install `sgit-admin` only where admin tokens are used.
+
+**Use them** by just asking: the agent loads the skill when the task matches.
+
+- Admin: "Create user bob with write access to web and give me the token", "Import github.com/acme/api as api and mirror it back", "Rotate alice's token".
+- Client: "Check out web, fix the failing test and land it", "Sync and resolve the conflicts", "Who last changed src/main.go?".
+
+You can also call them explicitly: `/sgit-admin` or `/sgit-client` in Claude Code, `$sgit-client` in Codex, `/sgit-client` in Cursor.
 
 ## Performance
 

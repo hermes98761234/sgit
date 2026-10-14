@@ -45,11 +45,30 @@ sg token revoke <id>                          # the id printed by token create
 sg repo create web
 sg repo list
 sg repo status web
+sg repo delete web --yes                      # see "Deleting" below
+sg user list                                  # NAME EMAIL ADMIN TOKENS CREATED
+sg user promote bob                           # make bob a global admin
+sg user demote bob
+sg user delete bob
+sg token list [bob]                           # ID USER CREATED STATUS (active|revoked)
+sg acl list [--user bob] [--repo web]         # USER REPO LEVEL
 ```
 
 - `--admin` and `--email` take effect only when `token create` creates the user.
 - `sg token create` prints only the token on stdout, so `TOKEN=$(sg token create bob)` works. The token id goes to stderr.
 - `sg repo list` shows MIRROR as `broken` when a repo itself cannot be read. `sg repo status` then prints an `error:` line.
+
+- `sg user list` shows TOKENS as the number of active (not revoked) tokens. `ADMIN` is `yes` or `no`.
+- `sg token list` never prints token secrets; the server stores only their hashes. REVOKED timestamps appear in `--json` output as `revoked`.
+- `sg acl list` shows explicit grants only. Admins have implicit access to every repo and do not appear in it.
+- `sg user demote` and `sg user delete` fail (exit 1) if they would leave the server with no admin. You cannot delete yourself.
+- All of these accept `--json` and `--server`.
+
+### Deleting
+
+- **`sg user delete <user>`** revokes all the user's tokens, removes their ACLs, abandons their open drafts and removes them from `sg user list`. It is a soft delete: the database row stays, because landed and abandoned drafts still refer to the owner. The name is freed by renaming the row to `<name>~deleted-<id>` (`~` is not a valid user name character), so a later `sg token create <name>` makes a brand-new user with no old access. Draft history shows the renamed owner. Landed git history is not touched.
+- **`sg repo delete <name> --yes`** refuses without `--yes` and does not contact the server. With it, the server removes the repo's ACLs, drafts and mirror state from the database and moves the bare repo to `<data>/deleted/<name>.<unixtime>.git` instead of erasing it. An operator can restore it by moving the directory back to `<data>/repos/<name>.git` and re-creating the repo row (or delete it for good with `rm -rf`). The name can be reused straight away. The delete runs under the repo's land lock, so it never interleaves with a land; lands and draft operations that lose the race fail. The GitHub (or other) mirror remote is never contacted, so its content stays.
+- Existing databases are upgraded automatically on start: the `users` table gains a nullable `deleted_at` column.
 
 The server image ships `sg` too, so you can administer from inside the container:
 
