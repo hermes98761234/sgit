@@ -1,0 +1,138 @@
+package auth
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/hermes98761234/sgit/internal/store"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+)
+
+type fakeACL map[string]store.Level
+
+func (f fakeACL) ACL(_ context.Context, _ int64, repo string) (store.Level, error) {
+	return f[repo], nil
+}
+
+type fakeTokens map[string]store.User
+
+func (f fakeTokens) UserByTokenHash(_ context.Context, hash []byte) (store.User, error) {
+	u, ok := f[string(hash)]
+	if !ok {
+		return store.User{}, store.ErrNotFound
+	}
+	return u, nil
+}
+
+func TestNewToken(t *testing.T) {
+	id, tok, hash, err := NewToken()
+	if err != nil || len(id) != 8 || !strings.HasPrefix(tok, TokenPrefix) || len(tok) < 50 || string(hash) != string(Hash(tok)) || len(hash) != 32 {
+		t.Fatalf("NewToken = %q %q %x %v", id, tok, hash, err)
+	}
+	_, tok2, _, _ := NewToken()
+	if tok == tok2 {
+		t.Fatal("tokens not random")
+	}
+}
+
+func TestAuthorize(t *testing.T) {
+	ctx := context.Background()
+	acl := fakeACL{"r": store.LevelRead, "w": store.LevelWrite}
+	user := store.User{ID: 1, Name: "bob"}
+	admin := store.User{ID: 2, Name: "admin", Admin: true}
+	cases := []struct {
+		u    store.User
+		repo string
+		a    Action
+		ok   bool
+	}{
+		{user, "r", ActionRead, true},
+		{user, "r", ActionWrite, false},
+		{user, "w", ActionWrite, true},
+		{user, "w", ActionRead, true},
+		{user, "none", ActionRead, false},
+		{user, "", ActionAdmin, false},
+		{user, "w", Action(0), false},
+		{admin, "none", ActionWrite, true},
+		{admin, "", ActionAdmin, true},
+	}
+	for _, c := range cases {
+		err := Authorize(ctx, acl, c.u, c.repo, c.a)
+		if c.ok != (err == nil) || (err != nil && status.Code(err) != codes.PermissionDenied) {
+			t.Errorf("Authorize(%s,%s,%s) = %v", c.u.Name, c.repo, c.a, err)
+		}
+	}
+}
+
+func TestUnaryInterceptor(t *testing.T) {
+	_, tok, hash, _ := NewToken()
+	lk := fakeTokens{string(hash): {ID: 7, Name: "alice"}}
+	icpt := UnaryInterceptor(lk)
+	var seen store.User
+	var reqID string
+	handler := func(ctx context.Context, _ any) (any, error) {
+		seen, _ = UserFrom(ctx)
+		reqID = RequestID(ctx)
+		return "ok", nil
+	}
+	call := func(md metadata.MD, method string) error {
+		ctx := metadata.NewIncomingContext(context.Background(), md)
+		_, err := icpt(ctx, nil, &grpc.UnaryServerInfo{FullMethod: method}, handler)
+		return err
+	}
+	if err := call(metadata.Pairs("authorization", "Bearer "+tok), "/sgit.v1.Repo/ResolveRev"); err != nil || seen.Name != "alice" || len(reqID) != 12 {
+		t.Fatalf("valid token: err=%v user=%+v reqID=%q", err, seen, reqID)
+	}
+	for name, md := range map[string]metadata.MD{
+		"missing":   metadata.MD{},
+		"malformed": metadata.Pairs("authorization", "Basic xyz"),
+		"unknown":   metadata.Pairs("authorization", "Bearer sgt_doesnotexist"),
+	} {
+		if err := call(md, "/sgit.v1.Repo/ResolveRev"); status.Code(err) != codes.Unauthenticated {
+			t.Errorf("%s: want Unauthenticated, got %v", name, err)
+		}
+	}
+	if err := call(metadata.MD{}, "/grpc.health.v1.Health/Check"); err != nil {
+		t.Fatalf("health must skip auth: %v", err)
+	}
+}
+
+type fakeStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (f fakeStream) Context() context.Context { return f.ctx }
+
+func TestStreamInterceptor(t *testing.T) {
+	_, tok, hash, _ := NewToken()
+	lk := fakeTokens{string(hash): {ID: 7, Name: "alice"}}
+	icpt := StreamInterceptor(lk)
+	var called bool
+	var seen store.User
+	var reqID string
+	handler := func(_ any, ss grpc.ServerStream) error {
+		called = true
+		seen, _ = UserFrom(ss.Context())
+		reqID = RequestID(ss.Context())
+		return nil
+	}
+	run := func(md metadata.MD, method string) error {
+		called, seen, reqID = false, store.User{}, ""
+		ss := fakeStream{ctx: metadata.NewIncomingContext(context.Background(), md)}
+		return icpt(nil, ss, &grpc.StreamServerInfo{FullMethod: method}, handler)
+	}
+	if err := run(metadata.MD{}, "/sgit.v1.Repo/GetObjects"); status.Code(err) != codes.Unauthenticated || called {
+		t.Fatalf("missing token: want Unauthenticated and no handler call, got err=%v called=%v", err, called)
+	}
+	if err := run(metadata.Pairs("authorization", "Bearer "+tok), "/sgit.v1.Repo/GetObjects"); err != nil || !called || seen.Name != "alice" || len(reqID) != 12 {
+		t.Fatalf("valid token: err=%v called=%v user=%+v reqID=%q", err, called, seen, reqID)
+	}
+	if err := run(metadata.MD{}, "/grpc.health.v1.Health/Watch"); err != nil || !called {
+		t.Fatalf("health must skip auth: err=%v called=%v", err, called)
+	}
+}
