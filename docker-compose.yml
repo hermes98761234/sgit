@@ -1,0 +1,18 @@
+services:
+  sg-server:
+    build: .
+    image: ghcr.io/hermes98761234/sgit-server:latest
+    ports:
+      - "7419:7419"
+    environment:
+      SG_TLS_SELF_SIGNED: "1"
+      SG_TLS_HOSTS: "localhost,127.0.0.1"
+      SG_LOG_LEVEL: info
+      # Or bring your own certificate:
+      # SG_TLS_CERT: /data/tls/cert.pem
+      # SG_TLS_KEY: /data/tls/key.pem
+    volumes:
+      - sgdata:/data
+    restart: unless-stopped
+volumes:
+  sgdata: {}
