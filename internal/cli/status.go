@@ -40,7 +40,8 @@ func cmdStatus(ctx context.Context, a *app, args []string) error {
 		Draft     string   `json:"draft,omitempty"`
 		Changes   []item   `json:"changes"`
 		Conflicts []string `json:"conflicts"`
-	}{Repo: w.Config.Repo, Base: w.Base, Draft: w.Draft, Changes: []item{}, Conflicts: append([]string{}, w.Conflicts...)}
+		Skipped   []string `json:"skipped"`
+	}{Repo: w.Config.Repo, Base: w.Base, Draft: w.Draft, Changes: []item{}, Conflicts: append([]string{}, w.Conflicts...), Skipped: append([]string{}, w.Skipped...)}
 	for _, c := range changes {
 		res.Changes = append(res.Changes, item{c.Path, c.Kind.String()})
 	}
@@ -50,7 +51,7 @@ func cmdStatus(ctx context.Context, a *app, args []string) error {
 			fmt.Fprintf(out, " (draft %s)", w.Draft)
 		}
 		fmt.Fprintln(out)
-		if len(changes) == 0 && len(w.Conflicts) == 0 {
+		if len(changes) == 0 && len(w.Conflicts) == 0 && len(w.Skipped) == 0 {
 			fmt.Fprintln(out, "nothing changed")
 			return
 		}
@@ -59,6 +60,9 @@ func cmdStatus(ctx context.Context, a *app, args []string) error {
 		}
 		for _, p := range w.Conflicts {
 			fmt.Fprintf(out, "  %-9s %s\n", "conflict:", p)
+		}
+		for _, p := range w.Skipped {
+			fmt.Fprintf(out, "  %-9s %q (the server cannot store this file name)\n", "skipped:", p)
 		}
 	})
 }

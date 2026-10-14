@@ -49,6 +49,9 @@ type WC struct {
 	Draft     string
 	Index     map[string]Entry
 	Conflicts []string
+	// Skipped lists the untracked files the last Status left out because the
+	// server cannot store their names. It is not saved.
+	Skipped []string
 }
 
 func realDir(p string) (string, error) {

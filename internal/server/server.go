@@ -148,6 +148,10 @@ func (s *Server) toStatus(ctx context.Context, err error) error {
 	case errors.Is(err, context.DeadlineExceeded):
 		return status.Error(codes.DeadlineExceeded, err.Error())
 	}
+	// The caller went away (its git children were killed): not our error.
+	if ctx.Err() != nil {
+		return status.FromContextError(ctx.Err()).Err()
+	}
 	id := auth.RequestID(ctx)
 	s.log.ErrorContext(ctx, "internal error", "request_id", id, "err", err)
 	return status.Errorf(codes.Internal, "internal error (request %s)", id)

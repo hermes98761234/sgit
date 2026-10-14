@@ -312,3 +312,56 @@ func TestStatusNestedGitignore(t *testing.T) {
 		}
 	}
 }
+
+// A .gitignore that is not a regular file is not a rule file (as in git), and
+// must not break status.
+func TestStatusGitignoreNotAFile(t *testing.T) {
+	w := newWC(t)
+	_ = os.MkdirAll(filepath.Join(w.Root, ".gitignore"), 0o755)
+	_ = WriteLocal(w.Root, ".gitignore/inner", []byte("*.txt\n"), "100644")
+	_ = WriteLocal(w.Root, "sub/real", []byte("*.tmp\n"), "100644")
+	_ = os.Symlink("real", filepath.Join(w.Root, "sub", ".gitignore"))
+	_ = WriteLocal(w.Root, "sub/a.tmp", []byte("t"), "100644")
+	_ = WriteLocal(w.Root, "a.txt", []byte("a"), "100644")
+	changes, err := w.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := kinds(changes)
+	for _, p := range []string{".gitignore/inner", "sub/real", "sub/.gitignore", "sub/a.tmp", "a.txt"} {
+		if got[p] != Added {
+			t.Fatalf("%s not added: %v", p, got)
+		}
+	}
+}
+
+// Nested repositories and working copies are not part of this one, and names
+// the server cannot store are reported as skipped instead of breaking commit.
+func TestStatusSkipsNestedReposAndUncommittableNames(t *testing.T) {
+	w := newWC(t)
+	_ = WriteLocal(w.Root, "vendor/lib/.git/HEAD", []byte("ref"), "100644")
+	_ = WriteLocal(w.Root, "vendor/lib/v.txt", []byte("v"), "100644")
+	_ = WriteLocal(w.Root, "nested/.sg/base", []byte("b"), "100644")
+	_ = WriteLocal(w.Root, "sub/.GIT/x", []byte("x"), "100644")
+	_ = WriteLocal(w.Root, "new\nline", []byte("n"), "100644")
+	_ = WriteLocal(w.Root, "cr\r.txt", []byte("n"), "100644")
+	_ = WriteLocal(w.Root, "bad\xff.txt", []byte("n"), "100644")
+	_ = WriteLocal(w.Root, "ok.txt", []byte("ok"), "100644")
+	changes, err := w.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := kinds(changes)
+	if len(got) != 2 || got["vendor/lib/v.txt"] != Added || got["ok.txt"] != Added {
+		t.Fatalf("changes = %v", got)
+	}
+	want := []string{"bad\xff.txt", "cr\r.txt", "new\nline"}
+	if len(w.Skipped) != len(want) {
+		t.Fatalf("skipped = %q, want %q", w.Skipped, want)
+	}
+	for i := range want {
+		if w.Skipped[i] != want[i] {
+			t.Fatalf("skipped = %q, want %q", w.Skipped, want)
+		}
+	}
+}

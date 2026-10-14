@@ -55,6 +55,9 @@ func cmdCommit(ctx context.Context, a *app, args []string) error {
 	if err != nil {
 		return err
 	}
+	for _, p := range w.Skipped {
+		fmt.Fprintf(a.io.Stderr, "sg: warning: skipping %q: the server cannot store this file name\n", p)
+	}
 	if len(changes) == 0 {
 		return exitf(ExitError, "nothing to commit")
 	}

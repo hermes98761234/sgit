@@ -192,7 +192,8 @@ func TestSyncFileBecomesDirKeepsLocalEdit(t *testing.T) {
 	baseBefore := readFile(t, filepath.Join(w, ".sg", "base"))
 	h.upstream(map[string]string{"d/inner.txt": "I\n"}, "d")
 	code, _, errs := h.run(w, "sync")
-	if code != 1 || !strings.Contains(errs, "d") {
+	// Name what is in the way locally, not the incoming files under it.
+	if code != 1 || !strings.Contains(errs, "d (main has a directory there)") || strings.Contains(errs, "inner.txt") {
 		t.Fatalf("sync = %d, stderr %q", code, errs)
 	}
 	if got := readFile(t, filepath.Join(w, "d")); got != "LOCAL D\n" {
@@ -320,7 +321,7 @@ func TestSyncDirBecomesFileBlockedByUntracked(t *testing.T) {
 	w := h.checkout(t.TempDir())
 	writeFile(t, filepath.Join(w, "d", "mine.txt"), "MINE\n")
 	h.upstream(map[string]string{"d": "now a file\n"}, "d/inner.txt")
-	if code, _, errs := h.run(w, "sync"); code != 1 {
+	if code, _, errs := h.run(w, "sync"); code != 1 || !strings.Contains(errs, "d (main has a file there)") {
 		t.Fatalf("sync = %d, stderr %q", code, errs)
 	}
 	if readFile(t, filepath.Join(w, "d", "mine.txt")) != "MINE\n" || readFile(t, filepath.Join(w, "d", "inner.txt")) != "I\n" {

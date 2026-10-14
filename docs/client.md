@@ -19,7 +19,7 @@
 
 ## How it works
 
-- **No `sg add`.** Every new file that no `.gitignore` ignores goes into the next commit. Nested `.gitignore` files work as in git.
+- **No `sg add`.** Every new file that no `.gitignore` ignores goes into the next commit. Nested `.gitignore` files work as in git. Nested `.git` and `.sg` directories (other repos and working copies) are left out, and files whose names the server cannot store (with a newline, CR or invalid UTF-8) are listed as `skipped:` in `sg status`.
 - **One open draft per working copy.** It is kept in `.sg/draft`, and each `sg commit` updates it until it lands or is abandoned.
 - **Merges run on the server.** That includes the 3-way merges for `sg sync`.
 - **Conflicts.** When a land or a sync conflicts, `sg` writes conflict markers, lists the files in `sg status`, and exits with code 3. Fix the files and run `sg commit -m … --land` again.

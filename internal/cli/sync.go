@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -198,19 +200,25 @@ func syncTo(ctx context.Context, s *session, target string) (syncResult, error) 
 	for _, p := range removes {
 		removing[p] = true
 	}
-	var blockers []string
-	blocked := func(p string) bool {
+	// blocked returns what is in the way locally of writing p: an ancestor
+	// that is not a directory, or a directory at p holding anything this sync
+	// does not remove. It returns "" when nothing is.
+	blocked := func(p string) string {
+		var dirs []string
 		for dir := path.Dir(p); dir != "."; dir = path.Dir(dir) {
-			if removing[dir] {
+			dirs = append(dirs, dir)
+		}
+		for i := len(dirs) - 1; i >= 0; i-- {
+			if removing[dirs[i]] {
 				continue
 			}
-			if fi, err := os.Lstat(w.Abs(dir)); err == nil && !fi.IsDir() {
-				return true
+			if fi, err := os.Lstat(w.Abs(dirs[i])); err == nil && !fi.IsDir() {
+				return dirs[i] + " (main has a directory there)"
 			}
 		}
 		fi, err := os.Lstat(w.Abs(p))
 		if err != nil || !fi.IsDir() {
-			return false
+			return ""
 		}
 		// A directory in the way is fine only if every file under it is
 		// an unchanged tracked file that this sync removes.
@@ -230,22 +238,28 @@ func syncTo(ctx context.Context, s *session, target string) (syncResult, error) 
 			}
 			return nil
 		})
-		return inWay
+		if inWay {
+			return p + " (main has a file there)"
+		}
+		return ""
+	}
+	blockerSet := map[string]bool{}
+	block := func(p string) bool {
+		b := blocked(p)
+		if b != "" {
+			blockerSet[b] = true
+		}
+		return b != ""
 	}
 	for _, p := range removes {
-		if blocked(p) {
-			blockers = append(blockers, p)
-		}
+		block(p)
 	}
 	for _, m := range merges {
-		if blocked(m.path) {
-			blockers = append(blockers, m.path)
-		}
+		block(m.path)
 	}
 	keptWrites := writes[:0:0]
 	for _, p := range writes {
-		if blocked(p) {
-			blockers = append(blockers, p)
+		if block(p) {
 			continue
 		}
 		if _, tracked := w.Index[p]; !tracked {
@@ -254,7 +268,7 @@ func syncTo(ctx context.Context, s *session, target string) (syncResult, error) 
 				n := newT[p]
 				data, mode, err := wc.ReadLocal(w.Root, p)
 				if err != nil || mode != n.Mode || objfmt.BlobSHA(data) != n.SHA {
-					blockers = append(blockers, p)
+					blockerSet[p] = true
 					continue
 				}
 				e, err := wc.StatEntry(w.Root, p, n.Mode, n.SHA)
@@ -270,9 +284,9 @@ func syncTo(ctx context.Context, s *session, target string) (syncResult, error) 
 		keptWrites = append(keptWrites, p)
 	}
 	writes = keptWrites
-	if len(blockers) > 0 {
-		sort.Strings(blockers)
-		return res, exitf(ExitError, "sync would overwrite local files; move or commit them first: %s", strings.Join(blockers, ", "))
+	if len(blockerSet) > 0 {
+		blockers := slices.Sorted(maps.Keys(blockerSet))
+		return res, exitf(ExitError, "sync would overwrite local files; move them away or commit them first: %s", strings.Join(blockers, ", "))
 	}
 
 	// Phase C: network (nothing written locally).

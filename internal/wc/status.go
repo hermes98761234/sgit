@@ -68,10 +68,17 @@ func newIgnorer(root string) *ignorer {
 
 // load reads dir/.gitignore (dir is slash-separated, "" for the root).
 func (ig *ignorer) load(dir string) error {
-	data, err := os.ReadFile(filepath.Join(ig.root, filepath.FromSlash(dir), ".gitignore"))
-	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+	f := filepath.Join(ig.root, filepath.FromSlash(dir), ".gitignore")
+	// Like git, only a regular file is a rule file; a directory or a
+	// symlink named .gitignore is just another entry.
+	if fi, err := os.Lstat(f); errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+		return nil
+	} else if err != nil {
+		return err
+	} else if !fi.Mode().IsRegular() {
 		return nil
 	}
+	data, err := os.ReadFile(f)
 	if err != nil {
 		return err
 	}
@@ -172,6 +179,7 @@ func (w *WC) Status() ([]Change, error) {
 		}
 		out = append(out, Change{Path: p, Kind: Modified, Mode: mode, SHA: sha})
 	}
+	w.Skipped = nil
 	if err := ign.load(""); err != nil {
 		return nil, err
 	}
@@ -185,12 +193,13 @@ func (w *WC) Status() ([]Change, error) {
 		}
 		p := filepath.ToSlash(rel)
 		if d.IsDir() {
-			if p == metaDir || !TreeNeeded(w.Config.Sparse, p) || ign.ignored(p, true) || ValidPath(p) != nil {
+			if nestedMeta(d.Name()) || !TreeNeeded(w.Config.Sparse, p) || ign.ignored(p, true) || ValidPath(p) != nil {
 				return filepath.SkipDir
 			}
 			return ign.load(p)
 		}
-		if _, tracked := w.Index[p]; tracked || !InSparse(w.Config.Sparse, p) || ign.ignored(p, false) || isTempFile(d.Name()) {
+		// A .git file is a submodule or worktree link, never content.
+		if _, tracked := w.Index[p]; tracked || !InSparse(w.Config.Sparse, p) || ign.ignored(p, false) || isTempFile(d.Name()) || nestedMeta(d.Name()) {
 			return nil
 		}
 		fi, err := d.Info()
@@ -199,6 +208,10 @@ func (w *WC) Status() ([]Change, error) {
 		}
 		mode, ok := ModeOf(fi)
 		if !ok || ValidPath(p) != nil {
+			return nil
+		}
+		if !Committable(p) {
+			w.Skipped = append(w.Skipped, p)
 			return nil
 		}
 		data, _, err := ReadLocal(w.Root, p)
@@ -212,6 +225,7 @@ func (w *WC) Status() ([]Change, error) {
 		return nil, err
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	sort.Strings(w.Skipped)
 	return out, nil
 }
 

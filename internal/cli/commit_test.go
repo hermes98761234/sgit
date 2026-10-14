@@ -205,3 +205,24 @@ func TestCommitDraftFlagUpdatesThatDraft(t *testing.T) {
 		t.Fatalf("bad draft id: exit %d", code)
 	}
 }
+
+// A nested git clone or a file name the server rejects must not block commits.
+func TestCommitSkipsNestedRepoAndBadNames(t *testing.T) {
+	h := newHarness(t)
+	h.seed(seedFiles)
+	w := h.checkout(t.TempDir())
+	writeFile(t, filepath.Join(w, "vendor", "lib", ".git", "HEAD"), "ref: refs/heads/main\n")
+	writeFile(t, filepath.Join(w, "vendor", "lib", "v.txt"), "v\n")
+	writeFile(t, filepath.Join(w, "new\nline"), "n\n")
+	st := h.ok(w, "status")
+	if !strings.Contains(st, "skipped:  \"new\\nline\"") || strings.Contains(st, ".git") {
+		t.Fatalf("status = %q", st)
+	}
+	code, _, errs := h.run(w, "commit", "-m", "vendor", "--land")
+	if code != 0 || !strings.Contains(errs, `skipping "new\nline"`) {
+		t.Fatalf("commit = %d, stderr %q", code, errs)
+	}
+	if got := h.ok(w, "cat", "main:vendor/lib/v.txt"); got != "v\n" {
+		t.Fatalf("v.txt = %q", got)
+	}
+}
