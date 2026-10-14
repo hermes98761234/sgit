@@ -290,3 +290,44 @@ func TestLandConflictSyncBlockedKeepsExit3(t *testing.T) {
 		t.Fatal("draft must be kept")
 	}
 }
+
+// Landing straight onto the working copy's base records the landed changes
+// without a full sync; the result must be indistinguishable from one.
+func TestLandOnBaseSkipsFullSync(t *testing.T) {
+	h := newHarness(t)
+	h.seed(seedFiles)
+	w := h.checkout(t.TempDir())
+	other := h.checkout(t.TempDir())
+	writeFile(t, filepath.Join(w, "new.txt"), "N\n")
+	writeFile(t, filepath.Join(w, "a.txt"), "A2\n")
+	if err := os.Chmod(filepath.Join(w, "a.txt"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(w, "docs", "d.md")); err != nil {
+		t.Fatal(err)
+	}
+	h.ok(w, "commit", "-m", "fast", "--land")
+	if got := strings.TrimSpace(readFile(t, filepath.Join(w, ".sg", "base"))); got != h.mainSHA() {
+		t.Fatalf("base = %s, main = %s", got, h.mainSHA())
+	}
+	if st := h.ok(w, "status"); !strings.Contains(st, "nothing changed") {
+		t.Fatalf("status after land = %q", st)
+	}
+	// An edit after landing is still seen (the landed entries are re-hashed).
+	writeFile(t, filepath.Join(w, "new.txt"), "N2\n")
+	if st := h.ok(w, "status"); !strings.Contains(st, "modified: new.txt") {
+		t.Fatalf("status after edit = %q", st)
+	}
+	h.ok(other, "sync")
+	for p, want := range map[string]string{"new.txt": "N\n", "a.txt": "A2\n"} {
+		if got := readFile(t, filepath.Join(other, p)); got != want {
+			t.Fatalf("other %s = %q", p, got)
+		}
+	}
+	if fi, err := os.Stat(filepath.Join(other, "a.txt")); err != nil || fi.Mode()&0o100 == 0 {
+		t.Fatalf("a.txt exec bit not landed (%v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(other, "docs", "d.md")); !os.IsNotExist(err) {
+		t.Fatalf("docs/d.md still in other (%v)", err)
+	}
+}

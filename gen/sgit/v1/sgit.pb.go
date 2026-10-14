@@ -1178,10 +1178,13 @@ func (x *CommitAndLandRequest) GetMessage() string {
 	return ""
 }
 
+// parent is the main the commit was placed on. When it equals the draft's
+// base, the landed tree is exactly the draft's tree (no rebase happened).
 type LandResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Commit        string                 `protobuf:"bytes,1,opt,name=commit,proto3" json:"commit,omitempty"`
 	DraftId       string                 `protobuf:"bytes,2,opt,name=draft_id,json=draftId,proto3" json:"draft_id,omitempty"`
+	Parent        string                 `protobuf:"bytes,3,opt,name=parent,proto3" json:"parent,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1226,6 +1229,13 @@ func (x *LandResponse) GetCommit() string {
 func (x *LandResponse) GetDraftId() string {
 	if x != nil {
 		return x.DraftId
+	}
+	return ""
+}
+
+func (x *LandResponse) GetParent() string {
+	if x != nil {
+		return x.Parent
 	}
 	return ""
 }
@@ -3025,10 +3035,11 @@ const file_sgit_v1_sgit_proto_rawDesc = "" +
 	"\x04base\x18\x03 \x01(\tR\x04base\x12)\n" +
 	"\achanges\x18\x04 \x03(\v2\x0f.sgit.v1.ChangeR\achanges\x12\x14\n" +
 	"\x05title\x18\x05 \x01(\tR\x05title\x12\x18\n" +
-	"\amessage\x18\x06 \x01(\tR\amessage\"A\n" +
+	"\amessage\x18\x06 \x01(\tR\amessage\"Y\n" +
 	"\fLandResponse\x12\x16\n" +
 	"\x06commit\x18\x01 \x01(\tR\x06commit\x12\x19\n" +
-	"\bdraft_id\x18\x02 \x01(\tR\adraftId\"w\n" +
+	"\bdraft_id\x18\x02 \x01(\tR\adraftId\x12\x16\n" +
+	"\x06parent\x18\x03 \x01(\tR\x06parent\"w\n" +
 	"\fConflictFile\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x19\n" +
 	"\bbase_sha\x18\x02 \x01(\tR\abaseSha\x12\x19\n" +

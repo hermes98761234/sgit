@@ -44,7 +44,7 @@ func cmdLand(ctx context.Context, a *app, args []string) error {
 		touch = s.ownsDraft(id)
 	}
 	resp, err := s.repo.Land(ctx, &sgitv1.LandRequest{Repo: s.name, Id: id})
-	return a.finishLand(ctx, s, resp, err, touch)
+	return a.finishLand(ctx, s, resp, err, touch, nil)
 }
 
 // commitAndLand creates/updates the working copy's draft and lands it in one
@@ -55,7 +55,7 @@ func (a *app) commitAndLand(ctx context.Context, s *session, changes []*sgitv1.C
 		req := &sgitv1.CommitAndLandRequest{Repo: s.name, DraftId: w.Draft, Base: w.Base, Changes: changes, Title: title, Message: msg}
 		resp, err := s.repo.CommitAndLand(ctx, req)
 		if err == nil || !isStaleDraft(err) {
-			return a.finishLand(ctx, s, resp, err, true)
+			return a.finishLand(ctx, s, resp, err, true, changes)
 		}
 		w.Draft = ""
 	}
@@ -70,12 +70,13 @@ func (a *app) commitAndLand(ctx context.Context, s *session, changes []*sgitv1.C
 		return err
 	}
 	resp, err := s.repo.Land(ctx, &sgitv1.LandRequest{Repo: s.name, Id: d.Id})
-	return a.finishLand(ctx, s, resp, err, true)
+	return a.finishLand(ctx, s, resp, err, true, changes)
 }
 
 // finishLand updates the working copy after Land/CommitAndLand. touchWC is
-// false when the landed draft does not belong to this working copy.
-func (a *app) finishLand(ctx context.Context, s *session, resp *sgitv1.LandResponse, err error, touchWC bool) error {
+// false when the landed draft does not belong to this working copy. sent is
+// the change set this command committed against w.Base, or nil.
+func (a *app) finishLand(ctx context.Context, s *session, resp *sgitv1.LandResponse, err error, touchWC bool, sent []*sgitv1.Change) error {
 	w := s.wc
 	if err != nil {
 		det := conflictDetail(err)
@@ -99,7 +100,26 @@ func (a *app) finishLand(ctx context.Context, s *session, resp *sgitv1.LandRespo
 		return exitf(ExitConflict, "landing conflicted: fix the conflicted files, then run `sg commit -m MSG --land` again")
 	}
 	res := newSyncResult("", resp.Commit)
-	if w != nil && touchWC {
+	if w != nil && touchWC && sent != nil && resp.Parent != "" && resp.Parent == w.Base {
+		// Landed directly on our base: the new main is exactly w.Base plus
+		// the changes just sent, which are already on disk. Record them
+		// instead of walking and fetching the whole tree.
+		res = newSyncResult(w.Base, resp.Commit)
+		w.Draft = ""
+		for _, c := range sent {
+			if c.Op == sgitv1.ChangeOp_CHANGE_OP_DELETE {
+				delete(w.Index, c.Path)
+				continue
+			}
+			// Size -1: the next status re-hashes the file, so an edit made
+			// after it was uploaded is never mistaken for the landed one.
+			w.Index[c.Path] = wc.Entry{Path: c.Path, Mode: c.Mode, SHA: c.BlobSha, Size: -1}
+		}
+		w.Base = resp.Commit
+		if err := w.Save(); err != nil {
+			return err
+		}
+	} else if w != nil && touchWC {
 		w.Draft = ""
 		if res, err = syncTo(ctx, s, resp.Commit); err != nil {
 			// The in-memory w may hold a half-applied sync; never save it.

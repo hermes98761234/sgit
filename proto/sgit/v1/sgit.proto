@@ -83,7 +83,9 @@ message Draft {
 
 message LandRequest { string repo = 1; string id = 2; }
 message CommitAndLandRequest { string repo = 1; string draft_id = 2; string base = 3; repeated Change changes = 4; string title = 5; string message = 6; }
-message LandResponse { string commit = 1; string draft_id = 2; }
+// parent is the main the commit was placed on. When it equals the draft's
+// base, the landed tree is exactly the draft's tree (no rebase happened).
+message LandResponse { string commit = 1; string draft_id = 2; string parent = 3; }
 
 // Attached as a status detail to ABORTED errors from Land/CommitAndLand.
 // "ours" is main, "theirs" is the draft.

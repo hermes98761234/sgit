@@ -23,11 +23,11 @@ func (r *repoService) Land(ctx context.Context, req *sgitv1.LandRequest) (*sgitv
 	if err != nil {
 		return nil, r.s.toStatus(ctx, err)
 	}
-	commit, err := r.land(ctx, h, d.ID)
+	commit, parent, err := r.land(ctx, h, d.ID)
 	if err != nil {
 		return nil, r.s.toStatus(ctx, err)
 	}
-	return &sgitv1.LandResponse{Commit: commit, DraftId: d.ID}, nil
+	return &sgitv1.LandResponse{Commit: commit, DraftId: d.ID, Parent: parent}, nil
 }
 
 func (r *repoService) CommitAndLand(ctx context.Context, req *sgitv1.CommitAndLandRequest) (*sgitv1.LandResponse, error) {
@@ -44,62 +44,63 @@ func (r *repoService) CommitAndLand(ctx context.Context, req *sgitv1.CommitAndLa
 	if err != nil {
 		return nil, r.s.toStatus(ctx, err)
 	}
-	commit, err := r.land(ctx, h, d.ID)
+	commit, parent, err := r.land(ctx, h, d.ID)
 	if err != nil {
 		return nil, r.s.toStatus(ctx, err)
 	}
-	return &sgitv1.LandResponse{Commit: commit, DraftId: d.ID}, nil
+	return &sgitv1.LandResponse{Commit: commit, DraftId: d.ID, Parent: parent}, nil
 }
 
 // land rebases the draft onto main as a single linear commit and moves main
-// with compare-and-swap, retrying if main moved underneath.
-func (r *repoService) land(ctx context.Context, h *repoHandle, id string) (string, error) {
+// with compare-and-swap, retrying if main moved underneath. It returns the
+// new commit and its parent (the main it was placed on).
+func (r *repoService) land(ctx context.Context, h *repoHandle, id string) (string, string, error) {
 	h.landMu.Lock()
 	defer h.landMu.Unlock()
 
 	// Re-read under the lock: a concurrent Land of the same draft may have won.
 	d, err := r.s.store.GetDraft(ctx, h.name, id)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if d.Status != store.DraftOpen {
-		return "", status.Errorf(codes.FailedPrecondition, "draft %s is %s", id, d.Status)
+		return "", "", status.Errorf(codes.FailedPrecondition, "draft %s is %s", id, d.Status)
 	}
 	if cur, err := h.git.ReadRef(ctx, headRef(d.ID)); err != nil || cur != d.Head {
-		return "", status.Errorf(codes.Aborted, "draft %s is inconsistent (head ref moved); update it and retry", id)
+		return "", "", status.Errorf(codes.Aborted, "draft %s is inconsistent (head ref moved); update it and retry", id)
 	}
 	dc, err := h.git.ReadCommit(ctx, d.Head)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	for attempt := 0; attempt < r.s.cfg.LandRetries; attempt++ {
 		mainOld, err := h.git.ReadRef(ctx, gitx.MainRef)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		tree := dc.Tree
 		if mainOld != d.Base {
 			mr, err := h.git.MergeTree(ctx, d.Base, mainOld, d.Head)
 			if err != nil {
-				return "", err
+				return "", "", err
 			}
 			if !mr.Clean {
-				return "", conflictStatus(d.ID, mainOld, mr.Conflicts)
+				return "", "", conflictStatus(d.ID, mainOld, mr.Conflicts)
 			}
 			tree = mr.Tree
 		}
 		mc, err := h.git.ReadCommit(ctx, mainOld)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		if tree == mc.Tree {
-			return "", status.Errorf(codes.FailedPrecondition, "draft %s changes are already on main", id)
+			return "", "", status.Errorf(codes.FailedPrecondition, "draft %s changes are already on main", id)
 		}
 		committer := dc.Committer
 		committer.When = r.s.cfg.Now()
 		newC, err := h.git.CommitTree(ctx, tree, []string{mainOld}, dc.Message, dc.Author, committer)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		if r.s.cfg.BeforeCAS != nil {
 			r.s.cfg.BeforeCAS(h.name)
@@ -111,7 +112,7 @@ func (r *repoService) land(ctx context.Context, h *repoHandle, id string) (strin
 			continue
 		}
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		d.Status, d.LandedAs, d.UpdatedAt = store.DraftLanded, newC, r.s.cfg.Now()
 		if err := r.s.store.UpdateDraft(bg, d); err != nil {
@@ -119,9 +120,9 @@ func (r *repoService) land(ctx context.Context, h *repoHandle, id string) (strin
 			r.s.log.ErrorContext(bg, "landed but failed to mark draft", "draft", d.ID, "commit", newC, "err", err)
 		}
 		r.s.mirror.Notify(h.name)
-		return newC, nil
+		return newC, mainOld, nil
 	}
-	return "", status.Errorf(codes.ResourceExhausted, "main kept moving; gave up after %d attempts", r.s.cfg.LandRetries)
+	return "", "", status.Errorf(codes.ResourceExhausted, "main kept moving; gave up after %d attempts", r.s.cfg.LandRetries)
 }
 
 func conflictStatus(draftID, main string, files []gitx.ConflictFile) error {

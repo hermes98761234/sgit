@@ -124,6 +124,30 @@ More in the **[client guide](docs/client.md)**: all commands, drafts, conflicts 
 
 More in the **[sgd guide](docs/sgd.md)**: the systemd user service, socket and cache settings, and security.
 
+## Performance
+
+Measured with v0.2.0 in Docker on one machine (8 CPUs, 31 GB RAM, git 2.45): `sg-server`, `sgd` and the clients each ran in their own container on a local network, over TLS. The test repo has 20,000 files of about 2.7 KB in 20 directories, plus 20 commits of history. The bare repo is 41 MB.
+
+| Operation (20,000-file repo) | Time |
+|---|---|
+| `sg repo import` over ssh | 2.1 s |
+| `sg checkout`, full, direct to server | 3.7 s |
+| `sg checkout`, full, through a warm `sgd` cache | 3.1 s |
+| `sg checkout --path d0` (sparse, 1,000 files) | 0.15 s |
+| `sg status`, nothing changed | 0.2 s |
+| `sg status` / `sg diff`, 100 files modified | 0.17 s / 0.2 s |
+| `sg commit --land`, 1 file | 0.48 s |
+| `sg commit --land`, 100 files modified | 0.64 s |
+| `sg commit --land`, 1,000 new files | 1.7 s |
+| `sg commit --land`, one 20 MB file | 2.5 s |
+| `sg sync`, pulling 1,100 files and 20 MB | 1.9 s |
+| `sg log -n 100`, `sg log <path>`, `sg blame` | 50–70 ms |
+| `sg cat` of a 20 MB file | 0.23 s |
+
+- **Small repos.** A one-file land takes about 60 ms. In large repos, landing still costs time proportional to the repo size: the client scans the working copy, and the server rebuilds the tree.
+- **Many users.** 30 users, each with their own token, landed 10 rounds each on one repo at the same time. All 300 lands succeeded in 17 s, about 18 lands/s, with a p50 of 1.3 s and a p95 of 1.7 s per land. Lands that touch different files never conflict; the server rebases them. When many users edit the same file at the same moment, most of their lands conflict and have to be fixed by hand, as with git.
+- **Robustness.** A randomized "monkey" run made about 6,300 sg calls while killing the server, restarting `sgd` and sending junk to the port. The calls included random edits, garbage arguments and `kill -9` mid-command. No call crashed or broke a working copy. At the end, every working copy matched `main` and `git fsck` was clean.
+
 ## Docs
 
 - [Server guide](docs/server.md)
