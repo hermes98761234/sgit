@@ -235,8 +235,10 @@ func (r *projectService) landDraft(ctx context.Context, pr *proj, u store.User, 
 		if !landedAny {
 			return nil, conflictStatus(d.ID, head, conflicts, false, nil)
 		}
-		if _, rerr := r.rebuildDraft(ctx, pr, d, dc, groups[i:], head); rerr != nil {
-			return nil, r.s.hide(ctx, rerr)
+		// A failed rebuild leaves the draft as it was (consistent); a retry
+		// skips the landed repos (already on main). The answer stays partial.
+		if _, rerr := r.rebuildDraft(ctx, pr, d, dc, groups[i:]); rerr != nil {
+			r.s.log.ErrorContext(ctx, "partial land: rebuilding the draft failed", "request_id", auth.RequestID(ctx), "draft", d.ID, "err", rerr)
 		}
 		if err != nil {
 			st := status.New(codes.Aborted, fmt.Sprintf("landed %s; the rest did not land: %s", strings.Join(landed, ", "), r.s.safeMessage(ctx, err)))
@@ -272,10 +274,8 @@ func (r *projectService) landDraft(ctx context.Context, pr *proj, u store.User, 
 // for the draft's project base (§6.3 step 4) and lands it. Conflicts come
 // back with project paths. Source-side failures are hidden.
 func (r *projectService) landGroup(ctx context.Context, pr *proj, d store.Draft, dc gitx.Commit, g *repoChanges) ([]gitx.ConflictFile, error) {
+	// checkLayout guarantees the base recorded every touched repo.
 	srcBase, err := r.s.store.ProjectSource(ctx, pr.p.ID, d.Base, g.repo)
-	if errors.Is(err, store.ErrNotFound) {
-		return nil, status.Errorf(codes.FailedPrecondition, "draft %s was made before mount %s/ was added; sync and commit again", d.ID, g.mounts[0])
-	}
 	if err != nil {
 		return nil, r.s.hide(ctx, err)
 	}
@@ -349,31 +349,23 @@ func (r *projectService) checkLayout(ctx context.Context, pr *proj, d store.Draf
 	return nil
 }
 
-// rebuildDraft re-creates the draft on head with only the changes of the
-// groups that did not land, keeping its id (§6.4).
-func (r *projectService) rebuildDraft(ctx context.Context, pr *proj, d store.Draft, dc gitx.Commit, rest []*repoChanges, head string) (store.Draft, error) {
-	files, err := pr.h.Git.ListFiles(ctx, head)
-	if err != nil {
-		return d, err
-	}
+// rebuildDraft rewrites the draft to hold only the changes of the groups that
+// did not land, keeping its id (§6.4). It stays on its original project base
+// so a retry still does a 3-way merge per repo against upstream instead of
+// overwriting it; the client learns the new head from ConflictDetail.Main.
+// On failure the draft is left unchanged (refs and store agree).
+func (r *projectService) rebuildDraft(ctx context.Context, pr *proj, d store.Draft, dc gitx.Commit, rest []*repoChanges) (store.Draft, error) {
 	var changes []gitx.Change
 	for _, g := range rest {
-		for _, c := range g.project {
-			if c.Op == gitx.OpDelete {
-				if _, ok := files[c.Path]; !ok {
-					continue // already gone upstream
-				}
-			}
-			changes = append(changes, c)
-		}
+		changes = append(changes, g.project...)
 	}
-	tree, err := pr.h.Git.BuildTree(ctx, head, changes)
+	tree, err := pr.h.Git.BuildTree(ctx, d.Base, changes)
 	if err != nil {
 		return d, err
 	}
 	committer := dc.Committer
 	committer.When = r.s.cfg.Now()
-	c, err := pr.h.Git.CommitTree(ctx, tree, []string{head}, dc.Message, dc.Author, committer)
+	c, err := pr.h.Git.CommitTree(ctx, tree, []string{d.Base}, dc.Message, dc.Author, committer)
 	if err != nil {
 		return d, err
 	}
@@ -381,18 +373,33 @@ func (r *projectService) rebuildDraft(ctx context.Context, pr *proj, d store.Dra
 	if err := pr.h.Git.UpdateRef(bg, headRef(d.ID), c, d.Head); err != nil {
 		return d, err
 	}
-	d.Version++
-	if err := pr.h.Git.UpdateRef(bg, versionRef(d.ID, d.Version), c, ""); err != nil {
-		return d, err
+	nd := d
+	nd.Version++
+	nd.Head, nd.UpdatedAt = c, r.s.cfg.Now()
+	err = pr.h.Git.UpdateRef(bg, versionRef(d.ID, nd.Version), c, "")
+	if err == nil {
+		if err = r.s.store.UpdateDraft(bg, nd); err == nil {
+			return nd, nil
+		}
+		if rerr := pr.h.Git.UpdateRef(bg, versionRef(d.ID, nd.Version), gitx.ZeroSHA, c); rerr != nil {
+			r.s.log.ErrorContext(bg, "rolling back draft version ref", "draft", d.ID, "err", rerr)
+		}
 	}
-	d.Base, d.Head, d.UpdatedAt = head, c, r.s.cfg.Now()
-	return d, r.s.store.UpdateDraft(bg, d)
+	if rerr := pr.h.Git.UpdateRef(bg, headRef(d.ID), d.Head, c); rerr != nil {
+		r.s.log.ErrorContext(bg, "rolling back draft head ref", "draft", d.ID, "err", rerr)
+	}
+	return d, err
 }
 
 // safeMessage returns err's message when it is one of our own status errors
 // (safe for clients), otherwise logs it and returns a request-id reference.
+// An Internal status was already logged by hide, so it is not logged again.
 func (s *Server) safeMessage(ctx context.Context, err error) string {
-	if st, ok := status.FromError(err); ok && st.Code() != codes.Unknown && st.Code() != codes.Internal {
+	st, ok := status.FromError(err)
+	switch {
+	case ok && st.Code() == codes.Internal:
+		return fmt.Sprintf("internal error (request %s)", auth.RequestID(ctx))
+	case ok && st.Code() != codes.Unknown:
 		return st.Message()
 	}
 	return status.Convert(s.hide(ctx, err)).Message()

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
 	"github.com/hermes98761234/sgit/internal/rpc"
@@ -84,9 +85,10 @@ func TestPartialLandThenRetryLandsRest(t *testing.T) {
 	if e.Files("a", "main")["f.txt"] != "ours a\n" {
 		t.Fatal("repo a did not land")
 	}
-	// The draft now holds only what did not land, on the new head, same id.
+	// The draft now holds only what did not land, on its original base (the
+	// 3-way merge base for a retry), same id; det.Main is the new head.
 	d := testenv.Must(c.GetDraft(ctx, &sgitv1.GetDraftRequest{Project: "web", Id: det.DraftId}))
-	if d.Base != now || d.Status != "open" {
+	if d.Base != head || d.Status != "open" {
 		t.Fatalf("draft after partial = %+v", d)
 	}
 	patch := string(testenv.Must(c.Diff(ctx, &sgitv1.DiffRequest{Project: "web", A: d.Base, B: d.Head})).Patch)
@@ -224,7 +226,7 @@ func TestPartialLandOnErrorAfterLanding(t *testing.T) {
 	}
 	d := testenv.Must(c.GetDraft(ctx, &sgitv1.GetDraftRequest{Project: "web", Id: det.DraftId}))
 	patch := string(testenv.Must(c.Diff(ctx, &sgitv1.DiffRequest{Project: "web", A: d.Base, B: d.Head})).Patch)
-	if d.Base != now || d.Status != "open" || !strings.Contains(patch, "b/f.txt") || strings.Contains(patch, "a/f.txt") {
+	if d.Base != head || d.Status != "open" || !strings.Contains(patch, "b/f.txt") || strings.Contains(patch, "a/f.txt") {
 		t.Fatalf("draft after partial = %+v\n%s", d, patch)
 	}
 }
@@ -260,5 +262,206 @@ func TestLandRefusesDraftFromOlderLayout(t *testing.T) {
 		Changes: []*sgitv1.Change{testenv.Modify("lib/f.txt", sha)}}))
 	if e.Files("core", "main")["other/f.txt"] != "mine\n" {
 		t.Fatal("land on the current layout failed")
+	}
+}
+
+func lines(first, last string) string {
+	var b strings.Builder
+	for i := 1; i <= 10; i++ {
+		switch i {
+		case 1:
+			b.WriteString(first + "\n")
+		case 10:
+			b.WriteString(last + "\n")
+		default:
+			fmt.Fprintf(&b, "line %d\n", i)
+		}
+	}
+	return b.String()
+}
+
+// After a partial land the rebuilt draft keeps its merge base: retrying it
+// unresolved conflicts again instead of overwriting upstream, and clean
+// upstream edits in the repo that conflicted and in a repo after the stop
+// point (never attempted) survive the retry.
+func TestRetryAfterPartialLandMergesWithUpstream(t *testing.T) {
+	ctx := context.Background()
+	e := testenv.Start(t)
+	e.CreateRepo("a")
+	e.CommitDirect("a", map[string]string{"f.txt": "base a\n"}, "seed a")
+	e.CreateRepo("b")
+	e.CommitDirect("b", map[string]string{"f.txt": "base b\n", "g.txt": lines("one", "ten")}, "seed b")
+	e.CreateRepo("c")
+	e.CommitDirect("c", map[string]string{"h.txt": lines("one", "ten")}, "seed c")
+	e.CreateProject("web")
+	for _, r := range []string{"a", "b", "c"} {
+		e.Mount("web", r, r, ".", false)
+	}
+	pc := e.Project(e.AdminToken)
+	head := testenv.Must(pc.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web"})).Sha
+	e.CommitDirect("b", map[string]string{"f.txt": "theirs b\n", "g.txt": lines("THEIRS", "ten")}, "upstream b")
+	e.CommitDirect("c", map[string]string{"h.txt": lines("THEIRS", "ten")}, "upstream c")
+	shas := e.Upload(e.AdminToken, "web", []byte("ours a\n"), []byte("ours b\n"), []byte(lines("one", "OURS")), []byte("theirs b\n"))
+	_, err := pc.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{Project: "web", Base: head, Message: "all",
+		Changes: []*sgitv1.Change{testenv.Modify("a/f.txt", shas[0]), testenv.Modify("b/f.txt", shas[1]),
+			testenv.Modify("b/g.txt", shas[2]), testenv.Modify("c/h.txt", shas[2])}})
+	var det *sgitv1.ConflictDetail
+	for _, d := range status.Convert(err).Details() {
+		det, _ = d.(*sgitv1.ConflictDetail)
+	}
+	if det == nil || !det.Partial || !reflect.DeepEqual(det.Landed, []string{"a"}) {
+		t.Fatalf("first land = %v %+v", err, det)
+	}
+	// (1) Retrying unresolved conflicts again and overwrites nothing.
+	_, err = pc.Land(ctx, &sgitv1.LandRequest{Project: "web", Id: det.DraftId})
+	var again *sgitv1.ConflictDetail
+	for _, d := range status.Convert(err).Details() {
+		again, _ = d.(*sgitv1.ConflictDetail)
+	}
+	if status.Code(err) != codes.Aborted || again == nil || again.Partial || len(again.Files) != 1 || again.Files[0].Path != "b/f.txt" {
+		t.Fatalf("unresolved retry = %v %+v", err, again)
+	}
+	if fb, fc := e.Files("b", "main"), e.Files("c", "main"); fb["f.txt"] != "theirs b\n" || fb["g.txt"] != lines("THEIRS", "ten") || fc["h.txt"] != lines("THEIRS", "ten") {
+		t.Fatalf("upstream overwritten: b=%v c=%v", fb, fc)
+	}
+	// (2)+(3) Resolve b/f.txt against the same base; the retry merges b/g.txt
+	// and c/h.txt with upstream's line 1, and a is not landed again.
+	testenv.Must(pc.UpdateDraft(ctx, &sgitv1.UpdateDraftRequest{Project: "web", Id: det.DraftId, Base: head, Message: "all",
+		Changes: []*sgitv1.Change{testenv.Modify("b/f.txt", shas[3]), testenv.Modify("b/g.txt", shas[2]), testenv.Modify("c/h.txt", shas[2])}}))
+	testenv.Must(pc.Land(ctx, &sgitv1.LandRequest{Project: "web", Id: det.DraftId}))
+	if fb, fc := e.Files("b", "main"), e.Files("c", "main"); fb["g.txt"] != lines("THEIRS", "OURS") || fc["h.txt"] != lines("THEIRS", "OURS") {
+		t.Fatalf("retry lost upstream or ours: b=%q c=%q", fb["g.txt"], fc["h.txt"])
+	}
+	if n := countSubject(t, e, "a", "all"); n != 1 {
+		t.Fatalf("repo a has %d commits from the draft, want 1", n)
+	}
+}
+
+// When rebuilding the draft fails after a partial land, the client still
+// gets the partial answer, the draft stays consistent (head ref and store
+// agree) and a retry lands only what is left.
+func TestPartialLandWithFailedRebuild(t *testing.T) {
+	ctx := context.Background()
+	var e *testenv.Env
+	var moving atomic.Bool
+	moving.Store(true)
+	var hookErr error
+	e = testenv.Start(t, func(c *server.Config) {
+		c.LandRetries = 2
+		c.BeforeCAS = func(repo string) {
+			if repo != "b" || !moving.Load() {
+				return
+			}
+			e.CommitDirect(repo, map[string]string{"ext.txt": time.Now().String()}, "external")
+			_, err := e.Store.DB().Exec(`CREATE TRIGGER IF NOT EXISTS fail_draft BEFORE UPDATE ON drafts BEGIN SELECT RAISE(ABORT, 'injected'); END`)
+			if err != nil {
+				hookErr = err
+			}
+		}
+	})
+	for _, r := range []string{"a", "b"} {
+		e.CreateRepo(r)
+		e.CommitDirect(r, map[string]string{"f.txt": "base " + r + "\n"}, "seed "+r)
+	}
+	e.CreateProject("web")
+	e.Mount("web", "a", "a", ".", false)
+	head := e.Mount("web", "b", "b", ".", false)
+	c := e.Project(e.AdminToken)
+	shas := e.Upload(e.AdminToken, "web", []byte("A\n"), []byte("B\n"))
+	_, err := c.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{Project: "web", Base: head, Message: "both",
+		Changes: []*sgitv1.Change{testenv.Modify("a/f.txt", shas[0]), testenv.Modify("b/f.txt", shas[1])}})
+	if hookErr != nil {
+		t.Fatal(hookErr)
+	}
+	moving.Store(false)
+	testenv.Must(e.Store.DB().Exec(`DROP TRIGGER fail_draft`))
+	st := status.Convert(err)
+	var det *sgitv1.ConflictDetail
+	for _, d := range st.Details() {
+		det, _ = d.(*sgitv1.ConflictDetail)
+	}
+	if st.Code() != codes.Aborted || det == nil || !det.Partial || !reflect.DeepEqual(det.Landed, []string{"a"}) {
+		t.Fatalf("partial land with failed rebuild = %v %+v", err, det)
+	}
+	d := testenv.Must(c.GetDraft(ctx, &sgitv1.GetDraftRequest{Project: "web", Id: det.DraftId}))
+	g := e.ProjectGit(e.ProjectID("web"))
+	defer g.Close()
+	if ref := testenv.Must(g.ReadRef(ctx, "refs/sg/drafts/"+d.Id+"/head")); ref != d.Head || d.Version != 1 {
+		t.Fatalf("draft inconsistent: ref %s, store %+v", ref, d)
+	}
+	if _, err := g.ReadRef(ctx, "refs/sg/drafts/"+d.Id+"/v2"); err == nil {
+		t.Fatal("version ref of the failed rebuild left behind")
+	}
+	testenv.Must(c.Land(ctx, &sgitv1.LandRequest{Project: "web", Id: d.Id}))
+	if e.Files("b", "main")["f.txt"] != "B\n" || countSubject(t, e, "a", "both") != 1 {
+		t.Fatal("retry after failed rebuild did not land exactly the rest")
+	}
+}
+
+// Cross-repo lands run concurrently through two projects that both mount
+// the same two repos: every land touches both repos, nothing is lost and
+// no mount lands twice.
+func TestConcurrentCrossRepoLandsThroughTwoProjects(t *testing.T) {
+	ctx := context.Background()
+	e := testenv.Start(t)
+	for _, r := range []string{"core", "docs"} {
+		e.CreateRepo(r)
+		e.CommitDirect(r, map[string]string{"src/seed": "s"}, "seed")
+	}
+	for _, p := range []string{"web", "api"} {
+		e.CreateProject(p)
+		e.Mount(p, "lib", "core", "src", false)
+		e.Mount(p, "doc", "docs", "src", false)
+	}
+	const n = 5
+	c := e.Project(e.AdminToken)
+	var wg sync.WaitGroup
+	errs := make(chan error, 2*n)
+	for i := 0; i < n; i++ {
+		for _, project := range []string{"web", "api"} {
+			wg.Add(1)
+			go func(i int, project string) {
+				defer wg.Done()
+				rr, err := c.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: project})
+				if err != nil {
+					errs <- err
+					return
+				}
+				name := fmt.Sprintf("%s-%d", project, i)
+				shas, err := rpc.UploadBlobs(ctx, c, project, [][]byte{[]byte(name)})
+				if err != nil {
+					errs <- err
+					return
+				}
+				_, err = c.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{Project: project, Base: rr.Sha, Message: name,
+					Changes: []*sgitv1.Change{testenv.Add("lib/"+name, shas[0]), testenv.Add("doc/"+name, shas[0])}})
+				errs <- err
+			}(i, project)
+		}
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent cross-repo land: %v", err)
+		}
+	}
+	for _, r := range []string{"core", "docs"} {
+		if got := len(e.Files(r, "main")); got != 2*n+1 {
+			t.Errorf("repo %s has %d files, want %d", r, got, 2*n+1)
+		}
+		for i := 0; i < n; i++ {
+			for _, p := range []string{"web", "api"} {
+				if k := countSubject(t, e, r, fmt.Sprintf("%s-%d", p, i)); k != 1 {
+					t.Errorf("repo %s has %d commits %s-%d, want 1", r, k, p, i)
+				}
+			}
+		}
+	}
+	for _, p := range []string{"web", "api"} {
+		testenv.Must(c.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: p})) // catch up
+		if got := len(e.ProjectFiles(p, "main")); got != 2*(2*n+1) {
+			t.Errorf("project %s has %d files, want %d", p, got, 2*(2*n+1))
+		}
 	}
 }
