@@ -102,11 +102,17 @@ func (r *repoService) land(ctx context.Context, h *repoHandle, id string) (strin
 		if err != nil {
 			return "", "", err
 		}
+		// Once main moves, the draft bookkeeping must not be cancelled by the client.
+		bg := context.WithoutCancel(ctx)
+		// Recorded before main moves, so a catch-up never sees this commit
+		// on main without its sequence number. A row for a commit that loses
+		// the CAS is never looked up.
+		if err := r.s.store.RecordLand(bg, h.name, newC, r.s.cfg.Now()); err != nil {
+			return "", "", err
+		}
 		if r.s.cfg.BeforeCAS != nil {
 			r.s.cfg.BeforeCAS(h.name)
 		}
-		// Once main moves, the draft bookkeeping must not be cancelled by the client.
-		bg := context.WithoutCancel(ctx)
 		err = h.git.UpdateRef(bg, gitx.MainRef, newC, mainOld)
 		if errors.Is(err, gitx.ErrRefMoved) {
 			continue

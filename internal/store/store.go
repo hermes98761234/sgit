@@ -239,6 +239,9 @@ func hasColumn(db *sql.DB, table, col string) (bool, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
+// DB exposes the database handle for tests that inspect raw tables.
+func (s *Store) DB() *sql.DB { return s.db }
+
 func isUnique(err error) bool {
 	return err != nil && (strings.Contains(err.Error(), "UNIQUE constraint failed") || strings.Contains(err.Error(), "PRIMARY KEY"))
 }

@@ -168,6 +168,9 @@ func (m *repoManager) create(ctx context.Context, name, mirrorURL string, sig gi
 		os.RemoveAll(p)
 		return "", err
 	}
+	if err := m.st.RecordLand(ctx, name, main, time.Now()); err != nil {
+		return "", err
+	}
 	return main, nil
 }
 
@@ -223,6 +226,9 @@ func (m *repoManager) importRepo(ctx context.Context, name, from, mirrorURL stri
 	// The fetch may have taken minutes; record the result even if the caller gave up.
 	if err := m.st.CreateRepoWithMirror(context.WithoutCancel(ctx), name, mirrorURL, seeded); err != nil {
 		os.RemoveAll(p)
+		return "", err
+	}
+	if err := m.st.RecordLand(context.WithoutCancel(ctx), name, main, time.Now()); err != nil {
 		return "", err
 	}
 	return main, nil
