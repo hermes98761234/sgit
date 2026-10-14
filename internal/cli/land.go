@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
 	"github.com/hermes98761234/sgit/internal/wc"
@@ -11,16 +12,16 @@ import (
 
 func cmdLand(ctx context.Context, a *app, args []string) error {
 	fs := a.newFlags("land")
-	repo := fs.String("repo", "", "repository (default: the working copy's)")
+	project := fs.String("project", "", "project name, alias or #id (default: the working copy's)")
 	server := fs.String("server", "", "server")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) > 1 {
-		return usageErr("land [draft-id] [--repo R] [--server S]")
+		return usageErr("land [draft-id] [--project P] [--server S]")
 	}
-	s, err := a.connect(target{server: *server, repo: *repo, needRepo: true})
+	s, err := a.connect(target{server: *server, project: *project, needProject: true})
 	if err != nil {
 		return err
 	}
@@ -43,7 +44,7 @@ func cmdLand(ctx context.Context, a *app, args []string) error {
 		defer unlock()
 		touch = s.ownsDraft(id)
 	}
-	resp, err := s.repo.Land(ctx, &sgitv1.LandRequest{Project: s.name, Id: id})
+	resp, err := s.proj.Land(ctx, &sgitv1.LandRequest{Project: s.project, Id: id})
 	return a.finishLand(ctx, s, resp, err, touch, nil)
 }
 
@@ -52,8 +53,8 @@ func cmdLand(ctx context.Context, a *app, args []string) error {
 func (a *app) commitAndLand(ctx context.Context, s *session, changes []*sgitv1.Change, title, msg string) error {
 	w := s.wc
 	if w.Draft != "" {
-		req := &sgitv1.CommitAndLandRequest{Project: s.name, DraftId: w.Draft, Base: w.Base, Changes: changes, Title: title, Message: msg}
-		resp, err := s.repo.CommitAndLand(ctx, req)
+		req := &sgitv1.CommitAndLandRequest{Project: s.project, DraftId: w.Draft, Base: w.Base, Changes: changes, Title: title, Message: msg}
+		resp, err := s.proj.CommitAndLand(ctx, req)
 		if err == nil || !isStaleDraft(err) {
 			return a.finishLand(ctx, s, resp, err, true, changes)
 		}
@@ -69,7 +70,7 @@ func (a *app) commitAndLand(ctx context.Context, s *session, changes []*sgitv1.C
 	if err := w.Save(); err != nil {
 		return err
 	}
-	resp, err := s.repo.Land(ctx, &sgitv1.LandRequest{Project: s.name, Id: d.Id})
+	resp, err := s.proj.Land(ctx, &sgitv1.LandRequest{Project: s.project, Id: d.Id})
 	return a.finishLand(ctx, s, resp, err, true, changes)
 }
 
@@ -91,7 +92,14 @@ func (a *app) finishLand(ctx context.Context, s *session, resp *sgitv1.LandRespo
 		if serr != nil {
 			return exitf(ExitConflict, "landing conflicted on main %s (draft %s kept); could not rebase the working copy: %v", short(det.Main), det.DraftId, serr)
 		}
-		if err := a.emit(map[string]any{"landed": false, "draft": det.DraftId, "main": det.Main, "sync": res}, func(out io.Writer) {
+		landed := det.Landed
+		if landed == nil {
+			landed = []string{}
+		}
+		if err := a.emit(map[string]any{"landed": false, "partial": det.Partial, "landed_mounts": landed, "draft": det.DraftId, "main": det.Main, "sync": res}, func(out io.Writer) {
+			if det.Partial {
+				fmt.Fprintf(out, "partially landed: %s/ landed; the rest stays in draft %s\n", strings.Join(det.Landed, "/, "), det.DraftId)
+			}
 			fmt.Fprintf(out, "conflict: draft %s does not apply cleanly to main %s; working copy rebased onto it\n", det.DraftId, short(det.Main))
 			printSync(out, res)
 		}); err != nil {

@@ -121,7 +121,7 @@ func TestTokenAndACLCommands(t *testing.T) {
 	}
 	h.loginAs("bob", tok.Token)
 	bobLog := func() int {
-		code, _, _ := h.runAs("bob", dir, "log", "--repo", "web")
+		code, _, _ := h.runAs("bob", dir, "log", "--project", "web")
 		return code
 	}
 	if code := bobLog(); code != cli.ExitAuth {

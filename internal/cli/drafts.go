@@ -18,25 +18,25 @@ func cmdDrafts(ctx context.Context, a *app, args []string) error {
 	fs := a.newFlags("drafts")
 	mine := fs.Bool("mine", false, "only my drafts")
 	st := fs.String("status", "open", "open, landed, abandoned or all")
-	repo := fs.String("repo", "", "repository (default: the working copy's)")
+	project := fs.String("project", "", "project name, alias or #id (default: the working copy's)")
 	server := fs.String("server", "", "server (default: the working copy's or the login default)")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) != 0 {
-		return usageErr("drafts [--mine] [--status S] [--repo R] [--server S]")
+		return usageErr("drafts [--mine] [--status S] [--project P] [--server S]")
 	}
 	want := *st
 	if want == "all" {
 		want = ""
 	}
-	s, err := a.connect(target{server: *server, repo: *repo, needRepo: true})
+	s, err := a.connect(target{server: *server, project: *project, needProject: true})
 	if err != nil {
 		return err
 	}
 	defer s.Close()
-	resp, err := s.repo.ListDrafts(ctx, &sgitv1.ListDraftsRequest{Project: s.name, Mine: *mine, Status: want})
+	resp, err := s.proj.ListDrafts(ctx, &sgitv1.ListDraftsRequest{Project: s.project, Mine: *mine, Status: want})
 	if err != nil {
 		return err
 	}
@@ -65,25 +65,25 @@ func cmdDrafts(ctx context.Context, a *app, args []string) error {
 
 func cmdShow(ctx context.Context, a *app, args []string) error {
 	fs := a.newFlags("show")
-	repo := fs.String("repo", "", "repository (default: the working copy's)")
+	project := fs.String("project", "", "project name, alias or #id (default: the working copy's)")
 	server := fs.String("server", "", "server")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) != 1 {
-		return usageErr("show <draft-id|rev> [--repo R] [--server S]")
+		return usageErr("show <draft-id|rev> [--project P] [--server S]")
 	}
-	s, err := a.connect(target{server: *server, repo: *repo, needRepo: true})
+	s, err := a.connect(target{server: *server, project: *project, needProject: true})
 	if err != nil {
 		return err
 	}
 	defer s.Close()
 	arg := pos[0]
 	if draftIDRe.MatchString(arg) {
-		d, err := s.repo.GetDraft(ctx, &sgitv1.GetDraftRequest{Project: s.name, Id: arg})
+		d, err := s.proj.GetDraft(ctx, &sgitv1.GetDraftRequest{Project: s.project, Id: arg})
 		if err == nil {
-			df, err := s.repo.Diff(ctx, &sgitv1.DiffRequest{Project: s.name, A: d.Base, B: d.Head})
+			df, err := s.proj.Diff(ctx, &sgitv1.DiffRequest{Project: s.project, A: d.Base, B: d.Head})
 			if err != nil {
 				return err
 			}
@@ -97,7 +97,7 @@ func cmdShow(ctx context.Context, a *app, args []string) error {
 			return err
 		}
 	}
-	lg, err := s.repo.Log(ctx, &sgitv1.LogRequest{Project: s.name, Rev: arg, N: 1})
+	lg, err := s.proj.Log(ctx, &sgitv1.LogRequest{Project: s.project, Rev: arg, N: 1})
 	if err != nil {
 		return err
 	}
@@ -106,7 +106,7 @@ func cmdShow(ctx context.Context, a *app, args []string) error {
 	}
 	e := lg.Entries[0]
 	patch := ""
-	if df, err := s.repo.Diff(ctx, &sgitv1.DiffRequest{Project: s.name, A: e.Sha + "^", B: e.Sha}); err == nil {
+	if df, err := s.proj.Diff(ctx, &sgitv1.DiffRequest{Project: s.project, A: e.Sha + "^", B: e.Sha}); err == nil {
 		patch = string(df.Patch)
 	}
 	when := time.Unix(e.Time, 0).UTC().Format(time.RFC3339)
@@ -118,16 +118,16 @@ func cmdShow(ctx context.Context, a *app, args []string) error {
 
 func cmdAbandon(ctx context.Context, a *app, args []string) error {
 	fs := a.newFlags("abandon")
-	repo := fs.String("repo", "", "repository (default: the working copy's)")
+	project := fs.String("project", "", "project name, alias or #id (default: the working copy's)")
 	server := fs.String("server", "", "server")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) > 1 {
-		return usageErr("abandon [draft-id] [--repo R] [--server S]")
+		return usageErr("abandon [draft-id] [--project P] [--server S]")
 	}
-	s, err := a.connect(target{server: *server, repo: *repo, needRepo: true})
+	s, err := a.connect(target{server: *server, project: *project, needProject: true})
 	if err != nil {
 		return err
 	}
@@ -150,7 +150,7 @@ func cmdAbandon(ctx context.Context, a *app, args []string) error {
 		defer unlock()
 		touch = s.ownsDraft(id)
 	}
-	d, err := s.repo.AbandonDraft(ctx, &sgitv1.AbandonDraftRequest{Project: s.name, Id: id})
+	d, err := s.proj.AbandonDraft(ctx, &sgitv1.AbandonDraftRequest{Project: s.project, Id: id})
 	if err != nil {
 		return err
 	}

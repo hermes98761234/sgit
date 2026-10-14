@@ -19,7 +19,7 @@ import (
 const materializeGroup = 500
 
 func cmdCheckout(ctx context.Context, a *app, args []string) error {
-	const u = "checkout <repo> [dir] [--path P]... [--at REV] [--server S]"
+	const u = "checkout <project|alias> [dir] [--path P]... [--at REV] [--server S]"
 	fs := a.newFlags("checkout")
 	var paths stringList
 	fs.Var(&paths, "path", "check out only this directory (repeatable; sparse checkout)")
@@ -32,38 +32,41 @@ func cmdCheckout(ctx context.Context, a *app, args []string) error {
 	if len(pos) < 1 || len(pos) > 2 {
 		return usageErr(u)
 	}
-	repo, dir := pos[0], pos[0]
-	if len(pos) == 2 {
-		dir = pos[1]
-	}
-	dir = a.abs(dir)
 	sparse, err := wc.NormalizeSparse(paths)
 	if err != nil {
 		return exitf(ExitError, "%v", err)
 	}
+	s, err := a.connect(target{server: *server, project: pos[0], needProject: true})
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	// Resolve first: the default dir is the canonical name even for an
+	// alias or #id, and later calls use the id so a rename cannot race.
+	rr, err := s.proj.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: s.project, Rev: *at})
+	if err != nil {
+		return err
+	}
+	dir := rr.ProjectName
+	if len(pos) == 2 {
+		dir = pos[1]
+	}
+	dir = a.abs(dir)
 	if _, err := os.Stat(filepath.Join(dir, ".sg", "base")); err == nil {
 		return exitf(ExitError, "%s is already an sg working copy", dir)
 	}
 	if err := checkoutTarget(dir); err != nil {
 		return err
 	}
-	s, err := a.connect(target{server: *server, repo: repo, needRepo: true})
-	if err != nil {
-		return err
-	}
-	defer s.Close()
-	rr, err := s.repo.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: repo, Rev: *at})
-	if err != nil {
-		return err
-	}
-	files, err := fetch.Tree(ctx, s.repo, repo, rr.Sha, sparse)
+	ref := wcRef(rr.ProjectId)
+	files, err := fetch.Tree(ctx, s.proj, ref, rr.Sha, sparse)
 	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	w, err := wc.Create(dir, wc.Config{Server: s.server, Repo: repo, Sparse: sparse})
+	w, err := wc.Create(dir, wc.Config{Server: s.server, Project: rr.ProjectId, Name: rr.ProjectName, Sparse: sparse})
 	if err != nil {
 		return err
 	}
@@ -72,7 +75,7 @@ func cmdCheckout(ctx context.Context, a *app, args []string) error {
 		return exitf(ExitError, "%v", err)
 	}
 	defer unlock()
-	index, err := materialize(ctx, s.repo, repo, w.Root, files)
+	index, err := materialize(ctx, s.proj, ref, w.Root, files)
 	if err != nil {
 		return err
 	}
@@ -80,9 +83,9 @@ func cmdCheckout(ctx context.Context, a *app, args []string) error {
 	if err := w.Save(); err != nil {
 		return err
 	}
-	res := map[string]any{"repo": repo, "dir": w.Root, "commit": rr.Sha, "files": len(index)}
+	res := map[string]any{"project": rr.ProjectName, "dir": w.Root, "commit": rr.Sha, "files": len(index)}
 	return a.emit(res, func(out io.Writer) {
-		fmt.Fprintf(out, "checked out %s@%s (%d files) into %s\n", repo, short(rr.Sha), len(index), w.Root)
+		fmt.Fprintf(out, "checked out %s@%s (%d files) into %s\n", rr.ProjectName, short(rr.Sha), len(index), w.Root)
 	})
 }
 
@@ -107,7 +110,7 @@ func checkoutTarget(dir string) error {
 
 // materialize writes files under root and returns their index entries. Files
 // that already hold the right content (a resumed checkout) are not rewritten.
-func materialize(ctx context.Context, c sgitv1.ProjectClient, repo, root string, files map[string]fetch.File) (map[string]wc.Entry, error) {
+func materialize(ctx context.Context, c sgitv1.ProjectClient, project, root string, files map[string]fetch.File) (map[string]wc.Entry, error) {
 	paths := make([]string, 0, len(files))
 	for p := range files {
 		paths = append(paths, p)
@@ -126,7 +129,7 @@ func materialize(ctx context.Context, c sgitv1.ProjectClient, repo, root string,
 			}
 			need = append(need, f.SHA)
 		}
-		blobs, err := fetch.Blobs(ctx, c, repo, need)
+		blobs, err := fetch.Blobs(ctx, c, project, need)
 		if err != nil {
 			return nil, err
 		}

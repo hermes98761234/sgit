@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
 	"github.com/hermes98761234/sgit/internal/client"
@@ -17,11 +18,13 @@ import (
 type session struct {
 	conn   *grpc.ClientConn
 	cached *grpc.ClientConn // sgd connection; nil when not used
-	repo   sgitv1.ProjectClient
+	proj   sgitv1.ProjectClient
 	admin  sgitv1.AdminClient
 	server string
-	name   string // repository name
-	wc     *wc.WC
+	// project is the reference sent to the server: the "#<id>" from
+	// .sg/config inside a working copy, otherwise the --project value.
+	project string
+	wc      *wc.WC
 }
 
 func (s *session) Close() {
@@ -31,14 +34,22 @@ func (s *session) Close() {
 	}
 }
 
-// target says which server/repo a command needs; empty fields come from the
-// working copy, then from the default login.
+// target says which server/project a command needs; empty fields come from
+// the working copy, then from the default login.
 type target struct {
-	server    string
-	repo      string
-	needWC    bool
-	needRepo  bool
-	adminOnly bool // Admin RPCs only: never dial sgd
+	server      string
+	project     string
+	needWC      bool
+	needProject bool
+	adminOnly   bool // Admin RPCs only: never dial sgd
+}
+
+// wcRef is the project reference for a project id ("#<id>").
+func wcRef(id int64) string { return "#" + strconv.FormatInt(id, 10) }
+
+// ownsWC reports whether the session's project is its working copy's.
+func (s *session) ownsWC() bool {
+	return s.wc != nil && s.wc.Config.Project != 0 && wcRef(s.wc.Config.Project) == s.project
 }
 
 func openWC(a *app) (*wc.WC, error) {
@@ -75,9 +86,9 @@ func (s *session) lock() (func(), error) {
 }
 
 // ownsDraft reports whether draft id belongs to the session's working copy
-// (same server and repo, and recorded in .sg/draft).
+// (same server and project, and recorded in .sg/draft).
 func (s *session) ownsDraft(id string) bool {
-	return s.wc != nil && s.wc.Config.Server == s.server && s.wc.Config.Repo == s.name && s.wc.Draft == id
+	return s.ownsWC() && s.wc.Config.Server == s.server && s.wc.Draft == id
 }
 
 func (a *app) connect(t target) (*session, error) {
@@ -92,13 +103,17 @@ func (a *app) connect(t target) (*session, error) {
 	default:
 		return nil, err
 	}
-	server, repo := t.server, t.repo
+	server, ref := t.server, t.project
 	if w != nil {
 		if server == "" {
 			server = w.Config.Server
 		}
-		if repo == "" {
-			repo = w.Config.Repo
+		switch {
+		case ref != "":
+		case w.Config.Project != 0:
+			ref = wcRef(w.Config.Project)
+		case t.needWC || t.needProject:
+			return nil, exitf(ExitError, "%s: this working copy predates projects; check it out again with `sg checkout <project>`", w.Root)
 		}
 	}
 	f, err := creds.Load()
@@ -112,28 +127,28 @@ func (a *app) connect(t target) (*session, error) {
 		}
 		return nil, exitf(ExitAuth, "no credentials for %s; run `sg login %s`", name, name)
 	}
-	if t.needRepo && repo == "" {
-		return nil, exitf(ExitError, "no repository: run inside a working copy or pass --repo")
+	if t.needProject && ref == "" {
+		return nil, exitf(ExitError, "no project: run inside a working copy or pass --project")
 	}
 	conn, err := client.Dial(name, cred)
 	if err != nil {
 		return nil, exitf(ExitError, "%v", err)
 	}
-	repoConn := grpc.ClientConnInterface(conn)
+	projConn := grpc.ClientConnInterface(conn)
 	var cached *grpc.ClientConn
 	if os.Getenv("SG_NO_DAEMON") == "" && !t.adminOnly {
 		sock := client.DefaultSocket()
 		dc, err := client.DialDaemon(context.Background(), sock, name, cred.Token)
 		switch {
 		case err == nil && dc != nil:
-			cached, repoConn = dc, dc
+			cached, projConn = dc, dc
 		case err != nil && !errors.Is(err, client.ErrOtherUpstream):
 			fmt.Fprintf(a.io.Stderr, "sg: warning: sgd at %s is not usable (%v); connecting directly\n", sock, err)
 		}
 	}
 	return &session{
-		conn: conn, cached: cached, repo: sgitv1.NewProjectClient(repoConn), admin: sgitv1.NewAdminClient(conn),
-		server: name, name: repo, wc: w,
+		conn: conn, cached: cached, proj: sgitv1.NewProjectClient(projConn), admin: sgitv1.NewAdminClient(conn),
+		server: name, project: ref, wc: w,
 	}, nil
 }
 

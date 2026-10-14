@@ -74,12 +74,12 @@ func cmdSparse(ctx context.Context, a *app, args []string) error {
 			if err != nil {
 				return exitf(ExitError, "%v", err)
 			}
-			s, err := a.connect(target{needWC: true, needRepo: true})
+			s, err := a.connect(target{needWC: true, needProject: true})
 			if err != nil {
 				return err
 			}
 			defer s.Close()
-			files, err := fetch.Tree(ctx, s.repo, s.name, w.Base, fresh)
+			files, err := fetch.Tree(ctx, s.proj, s.project, w.Base, fresh)
 			if err != nil {
 				return err
 			}
@@ -109,7 +109,7 @@ func cmdSparse(ctx context.Context, a *app, args []string) error {
 				slices.Sort(blockers)
 				return exitf(ExitError, "sparse add would overwrite local files; move them first: %s", strings.Join(blockers, ", "))
 			}
-			idx, err := materialize(ctx, s.repo, s.name, w.Root, files)
+			idx, err := materialize(ctx, s.proj, s.project, w.Root, files)
 			if err != nil {
 				return err
 			}

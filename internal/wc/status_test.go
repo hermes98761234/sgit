@@ -32,7 +32,7 @@ func track(t *testing.T, w *WC, p, content, mode string) {
 func newWC(t *testing.T) *WC {
 	t.Helper()
 	root, _ := filepath.EvalSymlinks(t.TempDir())
-	return &WC{Root: root, Config: Config{Server: "s:1", Repo: "r"}, Base: "b", Index: map[string]Entry{}}
+	return &WC{Root: root, Config: Config{Server: "s:1", Project: 1, Name: "web"}, Base: "b", Index: map[string]Entry{}}
 }
 
 func kinds(changes []Change) map[string]Kind {

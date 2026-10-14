@@ -35,18 +35,18 @@ func cmdStatus(ctx context.Context, a *app, args []string) error {
 		Status string `json:"status"`
 	}
 	res := struct {
-		Repo      string   `json:"repo"`
+		Project   string   `json:"project"`
 		Base      string   `json:"base"`
 		Draft     string   `json:"draft,omitempty"`
 		Changes   []item   `json:"changes"`
 		Conflicts []string `json:"conflicts"`
 		Skipped   []string `json:"skipped"`
-	}{Repo: w.Config.Repo, Base: w.Base, Draft: w.Draft, Changes: []item{}, Conflicts: append([]string{}, w.Conflicts...), Skipped: append([]string{}, w.Skipped...)}
+	}{Project: w.Config.Name, Base: w.Base, Draft: w.Draft, Changes: []item{}, Conflicts: append([]string{}, w.Conflicts...), Skipped: append([]string{}, w.Skipped...)}
 	for _, c := range changes {
 		res.Changes = append(res.Changes, item{c.Path, c.Kind.String()})
 	}
 	return a.emit(res, func(out io.Writer) {
-		fmt.Fprintf(out, "On %s@%s", w.Config.Repo, short(w.Base))
+		fmt.Fprintf(out, "On %s@%s", w.Config.Name, short(w.Base))
 		if w.Draft != "" {
 			fmt.Fprintf(out, " (draft %s)", w.Draft)
 		}

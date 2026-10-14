@@ -14,10 +14,10 @@ import (
 	"github.com/hermes98761234/sgit/internal/fetch"
 )
 
-// repoPath resolves a path argument: relative to the cwd inside the matching
-// working copy, otherwise taken as a repo path.
-func (a *app) repoPath(s *session, arg string) (string, error) {
-	if s.wc != nil && s.wc.Config.Repo == s.name {
+// projectPath resolves a path argument: relative to the cwd inside the
+// matching working copy, otherwise taken as a project path.
+func (a *app) projectPath(s *session, arg string) (string, error) {
+	if s.ownsWC() {
 		p, err := s.wc.RepoPath(a.io.Dir, arg)
 		if err != nil {
 			return "", exitf(ExitError, "%v", err)
@@ -58,27 +58,27 @@ func cmdLog(ctx context.Context, a *app, args []string) error {
 	fs := a.newFlags("log")
 	n := fs.Int("n", 20, "number of commits")
 	rev := fs.String("rev", "main", "revision to start from")
-	repo := fs.String("repo", "", "repository (default: the working copy's)")
+	project := fs.String("project", "", "project name, alias or #id (default: the working copy's)")
 	server := fs.String("server", "", "server")
 	pos, err := parse(fs, splitCountFlag(args))
 	if err != nil {
 		return err
 	}
 	if len(pos) > 1 {
-		return usageErr("log [path] [-n N] [--rev REV] [--repo R] [--server S]")
+		return usageErr("log [path] [-n N] [--rev REV] [--project P] [--server S]")
 	}
-	s, err := a.connect(target{server: *server, repo: *repo, needRepo: true})
+	s, err := a.connect(target{server: *server, project: *project, needProject: true})
 	if err != nil {
 		return err
 	}
 	defer s.Close()
 	p := ""
 	if len(pos) == 1 {
-		if p, err = a.repoPath(s, pos[0]); err != nil {
+		if p, err = a.projectPath(s, pos[0]); err != nil {
 			return err
 		}
 	}
-	resp, err := s.repo.Log(ctx, &sgitv1.LogRequest{Project: s.name, Rev: *rev, Path: p, N: int32(*n)})
+	resp, err := s.proj.Log(ctx, &sgitv1.LogRequest{Project: s.project, Rev: *rev, Path: p, N: int32(*n)})
 	if err != nil {
 		return err
 	}
@@ -103,25 +103,25 @@ func cmdLog(ctx context.Context, a *app, args []string) error {
 func cmdBlame(ctx context.Context, a *app, args []string) error {
 	fs := a.newFlags("blame")
 	rev := fs.String("rev", "main", "revision")
-	repo := fs.String("repo", "", "repository (default: the working copy's)")
+	project := fs.String("project", "", "project name, alias or #id (default: the working copy's)")
 	server := fs.String("server", "", "server")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) != 1 {
-		return usageErr("blame <path> [--rev REV] [--repo R] [--server S]")
+		return usageErr("blame <path> [--rev REV] [--project P] [--server S]")
 	}
-	s, err := a.connect(target{server: *server, repo: *repo, needRepo: true})
+	s, err := a.connect(target{server: *server, project: *project, needProject: true})
 	if err != nil {
 		return err
 	}
 	defer s.Close()
-	p, err := a.repoPath(s, pos[0])
+	p, err := a.projectPath(s, pos[0])
 	if err != nil {
 		return err
 	}
-	resp, err := s.repo.Blame(ctx, &sgitv1.BlameRequest{Project: s.name, Rev: *rev, Path: p})
+	resp, err := s.proj.Blame(ctx, &sgitv1.BlameRequest{Project: s.project, Rev: *rev, Path: p})
 	if err != nil {
 		return err
 	}
@@ -142,34 +142,34 @@ func cmdBlame(ctx context.Context, a *app, args []string) error {
 	})
 }
 
-// cmdCat prints a file at a revision. The path is repo-relative (git
+// cmdCat prints a file at a revision. The path is project-relative (git
 // "<rev>:<path>" syntax); an empty rev means main.
 func cmdCat(ctx context.Context, a *app, args []string) error {
 	fs := a.newFlags("cat")
-	repo := fs.String("repo", "", "repository (default: the working copy's)")
+	project := fs.String("project", "", "project name, alias or #id (default: the working copy's)")
 	server := fs.String("server", "", "server")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) != 1 || !strings.Contains(pos[0], ":") {
-		return usageErr("cat <rev>:<path> [--repo R] [--server S]")
+		return usageErr("cat <rev>:<path> [--project P] [--server S]")
 	}
 	rev, p, _ := strings.Cut(pos[0], ":")
 	if rev == "" {
 		rev = "main"
 	}
 	p = strings.Trim(path.Clean(p), "/")
-	s, err := a.connect(target{server: *server, repo: *repo, needRepo: true})
+	s, err := a.connect(target{server: *server, project: *project, needProject: true})
 	if err != nil {
 		return err
 	}
 	defer s.Close()
-	rr, err := s.repo.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: s.name, Rev: rev})
+	rr, err := s.proj.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: s.project, Rev: rev})
 	if err != nil {
 		return err
 	}
-	tree, err := fetch.Tree(ctx, s.repo, s.name, rr.Sha, []string{p})
+	tree, err := fetch.Tree(ctx, s.proj, s.project, rr.Sha, []string{p})
 	if err != nil {
 		return err
 	}
@@ -177,7 +177,7 @@ func cmdCat(ctx context.Context, a *app, args []string) error {
 	if !ok {
 		return exitf(ExitError, "%s: no such file at %s", p, rev)
 	}
-	blobs, err := fetch.Blobs(ctx, s.repo, s.name, []string{f.SHA})
+	blobs, err := fetch.Blobs(ctx, s.proj, s.project, []string{f.SHA})
 	if err != nil {
 		return err
 	}

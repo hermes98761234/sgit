@@ -47,12 +47,12 @@ func cmdDiff(ctx context.Context, a *app, args []string) error {
 	}
 	var blobs map[string][]byte
 	if len(need) > 0 {
-		s, err := a.connect(target{needWC: true, needRepo: true})
+		s, err := a.connect(target{needWC: true, needProject: true})
 		if err != nil {
 			return err
 		}
 		defer s.Close()
-		if blobs, err = fetch.Blobs(ctx, s.repo, s.name, need); err != nil {
+		if blobs, err = fetch.Blobs(ctx, s.proj, s.project, need); err != nil {
 			return err
 		}
 	}

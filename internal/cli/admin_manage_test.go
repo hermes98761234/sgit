@@ -82,7 +82,7 @@ func TestUserDelete(t *testing.T) {
 	if !strings.Contains(out, "deleted user bob (revoked 1 tokens, removed 1 ACLs, abandoned 0 drafts)") {
 		t.Fatalf("delete printed %q", out)
 	}
-	if code, _, _ := h.runAs("bob", dir, "log", "--repo", "web"); code != cli.ExitAuth {
+	if code, _, _ := h.runAs("bob", dir, "log", "--project", "web"); code != cli.ExitAuth {
 		t.Fatalf("deleted user's token: exit %d, want %d", code, cli.ExitAuth)
 	}
 	if r := rows(h.ok(dir, "user", "list")); len(r) != 2 {

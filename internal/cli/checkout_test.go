@@ -9,7 +9,7 @@ import (
 )
 
 type statusJSON struct {
-	Repo    string `json:"repo"`
+	Project string `json:"project"`
 	Base    string `json:"base"`
 	Draft   string `json:"draft"`
 	Changes []struct {
@@ -39,15 +39,15 @@ func TestCheckoutFullAndSparse(t *testing.T) {
 	main := h.seed(seedFiles)
 	root := t.TempDir()
 	var res struct {
-		Repo   string `json:"repo"`
-		Dir    string `json:"dir"`
-		Commit string `json:"commit"`
-		Files  int    `json:"files"`
+		Project string `json:"project"`
+		Dir     string `json:"dir"`
+		Commit  string `json:"commit"`
+		Files   int    `json:"files"`
 	}
 	if err := json.Unmarshal([]byte(h.ok(root, "checkout", "web", "--json")), &res); err != nil {
 		t.Fatal(err)
 	}
-	if res.Files != 3 || res.Commit != main || res.Repo != "web" {
+	if res.Files != 3 || res.Commit != main || res.Project != "web" {
 		t.Fatalf("checkout json = %+v", res)
 	}
 	w := filepath.Join(root, "web")

@@ -11,7 +11,7 @@ import (
 
 func TestCreateSaveOpen(t *testing.T) {
 	root := t.TempDir()
-	w, err := Create(root, Config{Server: "127.0.0.1:7419", Repo: "web", Sparse: []string{"src"}})
+	w, err := Create(root, Config{Server: "127.0.0.1:7419", Project: 1, Name: "web", Sparse: []string{"src"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestSparseHelpers(t *testing.T) {
 
 func TestRepoPath(t *testing.T) {
 	root := t.TempDir()
-	w, _ := Create(root, Config{Repo: "web"})
+	w, _ := Create(root, Config{Project: 1, Name: "web"})
 	w.Base = "1111111111111111111111111111111111111111"
 	_ = w.Save()
 	w, _ = Open(root)
@@ -120,7 +120,7 @@ func TestRepoPath(t *testing.T) {
 }
 
 func TestLockIsExclusive(t *testing.T) {
-	w, err := Create(t.TempDir(), Config{Server: "s:1", Repo: "r"})
+	w, err := Create(t.TempDir(), Config{Server: "s:1", Project: 1, Name: "web"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestLockIsExclusive(t *testing.T) {
 }
 
 func TestSaveIndexWritesOnlyIndex(t *testing.T) {
-	w, err := Create(t.TempDir(), Config{Server: "s:1", Repo: "r"})
+	w, err := Create(t.TempDir(), Config{Server: "s:1", Project: 1, Name: "web"})
 	if err != nil {
 		t.Fatal(err)
 	}

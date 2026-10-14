@@ -25,9 +25,10 @@ var ErrNotWorkingCopy = errors.New("not inside an sg working copy (no .sg direct
 
 // Config is .sg/config.
 type Config struct {
-	Server string   `toml:"server"`
-	Repo   string   `toml:"repo"`
-	Sparse []string `toml:"sparse,omitempty"`
+	Server  string   `toml:"server"`
+	Project int64    `toml:"project"`        // project id; 0 = a pre-project working copy
+	Name    string   `toml:"name,omitempty"` // display cache of the canonical project name
+	Sparse  []string `toml:"sparse,omitempty"`
 }
 
 // Entry is the index record of a tracked file. SHA and Mode describe the file

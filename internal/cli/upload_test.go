@@ -18,7 +18,7 @@ func (shortHasObjects) HasObjects(_ context.Context, req *sgitv1.HasObjectsReque
 }
 
 func TestUploadMissingRejectsShortHasObjects(t *testing.T) {
-	s := &session{repo: shortHasObjects{}, name: "web", wc: &wc.WC{Root: t.TempDir()}}
+	s := &session{proj: shortHasObjects{}, project: "web", wc: &wc.WC{Root: t.TempDir()}}
 	err := uploadMissing(context.Background(), s, map[string]string{"1111111111111111111111111111111111111111": "a", "2222222222222222222222222222222222222222": "b"})
 	if err == nil || !strings.Contains(err.Error(), "flags for 2 objects") {
 		t.Fatalf("want a HasObjects length error, got %v", err)

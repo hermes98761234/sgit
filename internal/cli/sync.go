@@ -39,7 +39,7 @@ func cmdSync(ctx context.Context, a *app, args []string) error {
 	if len(pos) != 0 {
 		return usageErr("sync")
 	}
-	s, err := a.connect(target{needWC: true, needRepo: true})
+	s, err := a.connect(target{needWC: true, needProject: true})
 	if err != nil {
 		return err
 	}
@@ -49,10 +49,11 @@ func cmdSync(ctx context.Context, a *app, args []string) error {
 		return err
 	}
 	defer unlock()
-	rr, err := s.repo.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: s.name, Rev: "main"})
+	rr, err := s.proj.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: s.project, Rev: "main"})
 	if err != nil {
 		return err
 	}
+	s.wc.Config.Name = rr.ProjectName // saved with the sync
 	res, err := syncTo(ctx, s, rr.Sha)
 	if err != nil {
 		return err
@@ -107,11 +108,11 @@ func syncTo(ctx context.Context, s *session, target string) (syncResult, error) 
 	for _, c := range changes {
 		local[c.Path] = c
 	}
-	oldT, err := fetch.Tree(ctx, s.repo, s.name, w.Base, w.Config.Sparse)
+	oldT, err := fetch.Tree(ctx, s.proj, s.project, w.Base, w.Config.Sparse)
 	if err != nil {
 		return res, err
 	}
-	newT, err := fetch.Tree(ctx, s.repo, s.name, target, w.Config.Sparse)
+	newT, err := fetch.Tree(ctx, s.proj, s.project, target, w.Config.Sparse)
 	if err != nil {
 		return res, err
 	}
@@ -297,7 +298,7 @@ func syncTo(ctx context.Context, s *session, target string) (syncResult, error) 
 		for _, p := range chunk {
 			shas = append(shas, newT[p].SHA)
 		}
-		got, err := fetch.Blobs(ctx, s.repo, s.name, shas)
+		got, err := fetch.Blobs(ctx, s.proj, s.project, shas)
 		if err != nil {
 			return res, err
 		}
@@ -314,8 +315,8 @@ func syncTo(ctx context.Context, s *session, target string) (syncResult, error) 
 			return res, err
 		}
 		for _, m := range merges {
-			r, err := s.repo.MergeFile(ctx, &sgitv1.MergeFileRequest{
-				Project: s.name, BaseSha: m.base, OursSha: newT[m.path].SHA, TheirsSha: m.local.SHA, OursLabel: "main", TheirsLabel: "local",
+			r, err := s.proj.MergeFile(ctx, &sgitv1.MergeFileRequest{
+				Project: s.project, BaseSha: m.base, OursSha: newT[m.path].SHA, TheirsSha: m.local.SHA, OursLabel: "main", TheirsLabel: "local",
 			})
 			if err != nil {
 				return res, err

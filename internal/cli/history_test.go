@@ -36,13 +36,13 @@ func TestLogBlameCatFromSubdirectory(t *testing.T) {
 		t.Fatalf("cat = %q", got)
 	}
 	outside := t.TempDir()
-	if err := json.Unmarshal([]byte(h.ok(outside, "log", "--repo", "web", "--json")), &log); err != nil || len(log) != 3 {
-		t.Fatalf("log --repo = %+v (%v)", log, err)
+	if err := json.Unmarshal([]byte(h.ok(outside, "log", "--project", "web", "--json")), &log); err != nil || len(log) != 3 {
+		t.Fatalf("log --project = %+v (%v)", log, err)
 	}
-	if got := h.ok(outside, "cat", "--repo", "web", ":a.txt"); got != "A\n" {
+	if got := h.ok(outside, "cat", "--project", "web", ":a.txt"); got != "A\n" {
 		t.Fatalf("cat main default = %q", got)
 	}
-	if code, _, _ := h.run(outside, "cat", "--repo", "web", "main:nope.txt"); code != 1 {
+	if code, _, _ := h.run(outside, "cat", "--project", "web", "main:nope.txt"); code != 1 {
 		t.Fatalf("cat missing: exit %d", code)
 	}
 	if out := h.ok(w, "log", "-n", "1"); !strings.Contains(out, "extend x") || strings.Contains(out, "seed") {
@@ -95,7 +95,7 @@ func TestNotLoggedInAndReadOnly(t *testing.T) {
 	h := newHarness(t)
 	h.seed(seedFiles)
 	h.cfg["nobody"] = t.TempDir()
-	if code, _, errs := h.runAs("nobody", t.TempDir(), "log", "--repo", "web"); code != 2 || !strings.Contains(errs, "not logged in") {
+	if code, _, errs := h.runAs("nobody", t.TempDir(), "log", "--project", "web"); code != 2 || !strings.Contains(errs, "not logged in") {
 		t.Fatalf("not logged in: exit %d %q", code, errs)
 	}
 	reader := h.env.NewUser("bob-reader", "web", "read")
