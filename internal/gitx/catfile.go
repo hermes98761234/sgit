@@ -81,50 +81,56 @@ func (c *catFile) request(command, sha string, withBody bool) (typ string, size 
 	return f[1], size, buf[:size], nil
 }
 
+// acquire takes a slot token, then reuses an idle process or starts one.
+// Every failure path returns the token, so a waiter is never stranded.
 func (r *Repo) acquire(ctx context.Context) (*catFile, error) {
-	r.mu.Lock()
-	if r.closed {
-		r.mu.Unlock()
-		return nil, errors.New("gitx: repo closed")
-	}
 	select {
-	case c := <-r.pool:
-		r.mu.Unlock()
-		return c, nil
-	default:
-	}
-	if len(r.procs) < catFilePoolSize {
-		c, err := startCatFile(r.dir)
-		if err == nil {
-			r.procs = append(r.procs, c)
-		}
-		r.mu.Unlock()
-		return c, err
-	}
-	r.mu.Unlock()
-	select {
-	case c := <-r.pool:
-		return c, nil
+	case <-r.slots:
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		r.slots <- struct{}{} // never blocks: a token was just taken
+		return nil, errors.New("gitx: repo closed")
+	}
+	if n := len(r.idle); n > 0 {
+		c := r.idle[n-1]
+		r.idle = r.idle[:n-1]
+		r.mu.Unlock()
+		return c, nil
+	}
+	c, err := startCatFile(r.dir)
+	if err != nil {
+		r.mu.Unlock()
+		r.slots <- struct{}{}
+		return nil, err
+	}
+	r.procs = append(r.procs, c)
+	r.mu.Unlock()
+	return c, nil
 }
 
+// release returns a process to the idle list when it is healthy and the repo
+// is open. Otherwise the process is closed and forgotten. The token always goes
+// back, so a waiter blocked in acquire wakes up.
 func (r *Repo) release(c *catFile, healthy bool) {
 	r.mu.Lock()
 	if healthy && !r.closed {
+		r.idle = append(r.idle, c)
 		r.mu.Unlock()
-		r.pool <- c // never blocks: len(procs) <= cap(pool)
-		return
-	}
-	for i, p := range r.procs {
-		if p == c {
-			r.procs = append(r.procs[:i], r.procs[i+1:]...)
-			break
+	} else {
+		for i, p := range r.procs {
+			if p == c {
+				r.procs = append(r.procs[:i], r.procs[i+1:]...)
+				break
+			}
 		}
+		r.mu.Unlock()
+		c.close()
 	}
-	r.mu.Unlock()
-	c.close()
+	r.slots <- struct{}{} // never blocks: this caller held a token
 }
 
 func (r *Repo) withCatFile(ctx context.Context, fn func(*catFile) error) error {

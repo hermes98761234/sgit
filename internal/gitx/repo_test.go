@@ -151,3 +151,69 @@ func TestConcurrentReads(t *testing.T) {
 		}
 	}
 }
+
+func TestWaiterWakesAfterHoldersFail(t *testing.T) {
+	ctx := context.Background()
+	r := newRepo(t)
+	sha, _ := r.WriteBlob(ctx, []byte("x"))
+	held := make([]*catFile, 0, catFilePoolSize)
+	for i := 0; i < catFilePoolSize; i++ {
+		c, err := r.acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		held = append(held, c)
+	}
+	type result struct {
+		obj Object
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		obj, err := r.ReadObject(ctx, sha)
+		done <- result{obj, err}
+	}()
+	time.Sleep(100 * time.Millisecond) // let the 5th caller block on a slot
+	for _, c := range held {
+		r.release(c, false)
+	}
+	select {
+	case res := <-done:
+		if res.err != nil || string(res.obj.Data) != "x" {
+			t.Fatalf("ReadObject = %+v, %v", res.obj, res.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("waiter hung after holders failed")
+	}
+}
+
+func TestCloseWakesWaiterWithError(t *testing.T) {
+	ctx := context.Background()
+	r := newRepo(t)
+	held := make([]*catFile, 0, catFilePoolSize)
+	for i := 0; i < catFilePoolSize; i++ {
+		c, err := r.acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		held = append(held, c)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := r.ReadObject(ctx, EmptyTree)
+		done <- err
+	}()
+	time.Sleep(100 * time.Millisecond) // let the waiter block on a slot
+	r.Close()
+	for _, c := range held {
+		r.release(c, true)
+	}
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("want error from closed repo, got nil")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("waiter hung after Close")
+	}
+}

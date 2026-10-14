@@ -15,15 +15,20 @@ const catFilePoolSize = 4
 // Repo is a handle to one bare repository. It is safe for concurrent use.
 type Repo struct {
 	dir    string
-	pool   chan *catFile
+	slots  chan struct{} // one token per cat-file a caller may hold at once
 	mu     sync.Mutex
-	procs  []*catFile
+	procs  []*catFile // every live cat-file process
+	idle   []*catFile // live processes not currently checked out
 	closed bool
 }
 
 // Open returns a handle to an existing bare repo. Processes start lazily.
 func Open(dir string) *Repo {
-	return &Repo{dir: dir, pool: make(chan *catFile, catFilePoolSize)}
+	r := &Repo{dir: dir, slots: make(chan struct{}, catFilePoolSize)}
+	for i := 0; i < catFilePoolSize; i++ {
+		r.slots <- struct{}{}
+	}
+	return r
 }
 
 // Init creates a bare repo at dir whose main points at an initial empty commit.
@@ -57,6 +62,7 @@ func (r *Repo) Close() error {
 	r.closed = true
 	procs := r.procs
 	r.procs = nil
+	r.idle = nil
 	r.mu.Unlock()
 	for _, p := range procs {
 		p.close()
