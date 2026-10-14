@@ -18,12 +18,14 @@ type Signature struct {
 
 // Commit is a parsed commit object.
 type Commit struct {
-	SHA       string
-	Tree      string
-	Parents   []string
-	Author    Signature
-	Committer Signature
-	Message   string
+	SHA          string
+	Tree         string
+	Parents      []string
+	Author       Signature
+	Committer    Signature
+	AuthorRaw    string // header value after "author ", byte for byte
+	CommitterRaw string // header value after "committer ", byte for byte
+	Message      string
 }
 
 func gitDate(t time.Time) string { return fmt.Sprintf("%d %s", t.Unix(), t.Format("-0700")) }
@@ -73,8 +75,10 @@ func parseCommit(sha string, data []byte) (Commit, error) {
 		case "parent":
 			c.Parents = append(c.Parents, v)
 		case "author":
+			c.AuthorRaw = v
 			c.Author, err = parseSig(v)
 		case "committer":
+			c.CommitterRaw = v
 			c.Committer, err = parseSig(v)
 		}
 		if err != nil {
