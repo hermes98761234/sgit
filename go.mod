@@ -3,6 +3,7 @@ module github.com/hermes98761234/sgit
 go 1.27.2
 
 require (
+	github.com/klauspost/compress v1.20.3
 	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.60.1
