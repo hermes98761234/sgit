@@ -11,8 +11,17 @@ services:
       # Or bring your own certificate:
       # SG_TLS_CERT: /data/tls/cert.pem
       # SG_TLS_KEY: /data/tls/key.pem
+      # Mirror/import over https with a token (see README "Mirror credentials"):
+      # GIT_ASKPASS: /usr/local/bin/sg-git-askpass
+      # SG_MIRROR_TOKEN_FILE: /run/secrets/github_token
     volumes:
       - sgdata:/data
+      # Mirror/import over ssh: id_ed25519 (0600, owned by uid 10001) + known_hosts
+      # - ./mirror-ssh:/home/sg/.ssh:ro
     restart: unless-stopped
+    # secrets: [github_token]
 volumes:
   sgdata: {}
+# secrets:
+#   github_token:
+#     file: ./github_token

@@ -25,5 +25,13 @@ fi
 
 PORT=$(docker port "$NAME" 7419/tcp | head -1 | sed 's/.*://')
 TOKEN=$(docker exec "$NAME" cat /data/admin-token)
+# The image ships sg for admin work inside the container.
+LIST=$(docker exec "$NAME" sh -c 'sg login localhost:7419 --ca /data/tls/cert.pem --token "$(cat /data/admin-token)" >/dev/null \
+  && sg repo create smoke-admin >/dev/null && sg repo list')
+grep -q '^smoke-admin ' <<<"$LIST"
+# sg-git-askpass answers git's https prompts from the environment.
+[ "$(docker exec "$NAME" sg-git-askpass "Username for 'https://github.com': ")" = x-access-token ]
+[ "$(docker exec -e SG_MIRROR_TOKEN=s3cret "$NAME" sg-git-askpass "Password for 'https://x-access-token@github.com': ")" = s3cret ]
+echo "in-container sg and askpass OK"
 SG_SMOKE_ADDR="127.0.0.1:${PORT}" SG_SMOKE_TOKEN="${TOKEN}" go test -tags docker -count=1 ./internal/smoke/
 echo "docker smoke OK"

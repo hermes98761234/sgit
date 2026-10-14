@@ -50,6 +50,7 @@ sg commit -m "fix the thing" --land           # one round trip: draft + rebase +
 
 - **There is no `sg add`.** Every new file that isn't ignored by the root `.gitignore` goes into the next commit.
 - **`sg commit` without `--land`** saves a draft, which is kept in `.sg/draft`. `sg land` lands it later, and `sg drafts`, `sg show <id>` and `sg abandon` manage drafts.
+- **Administration.** `sg token`, `sg acl` and `sg repo` manage users, permissions and repos; see [Administration](#administration).
 - **`sg sync`** rebases your working copy onto the latest `main`. The 3-way merges run on the server.
 - **Conflicts.** When a land or a sync conflicts, sg writes conflict markers, lists the files in `sg status`, and exits with code 3. Fix the files and run `sg commit -m … --land` again.
 - **Reading history.** `sg log`, `sg blame` and `sg cat <rev>:<path>` work with no checkout at all if you pass `--repo`.
@@ -83,6 +84,84 @@ sgd --upstream sg.example.com:7419 --ca cert.pem    # or run it as a systemd use
   - Every request still runs with your own token.
   - Before serving cached objects for a repo, sgd re-checks your read access at least every 60 seconds.
   - Objects cached for one repo can be served for another when requested by their hash. This is acceptable within a trusted team, as spec §7 describes.
+
+## Administration
+
+Admin commands need an admin token. They always talk to the server directly, never through `sgd`.
+
+```bash
+sg token create bob --email bob@example.com   # prints the token once; give it to bob
+sg acl grant bob web write                    # or: read
+sg acl revoke bob web
+sg token revoke <id>                          # the id printed by token create
+sg repo create web
+sg repo list
+sg repo status web
+```
+
+`--admin` and `--email` take effect only when `token create` creates the user.
+
+`sg repo list` shows MIRROR as `broken` when a repo itself cannot be read; `sg repo status` then prints an `error:` line.
+
+The server image ships `sg` too, so you can administer from inside the container:
+
+```bash
+docker compose exec sg-server sh -c 'sg login localhost:7419 --ca /data/tls/cert.pem --token "$(cat /data/admin-token)"'
+docker compose exec sg-server sg repo list
+```
+
+## Importing and mirroring
+
+`sg repo import web --from https://github.com/acme/web.git` creates `web` from the source's `main` and `release/*` branches. Other branches and tags are not copied, and the source must have a `main` branch.
+
+`--mirror URL` on `repo create` or `repo import` makes the server push `main` to that URL after every land, in the background. Each push uses `--force-with-lease=main:<last mirrored commit>`:
+
+- **The mirror is never overwritten.** If someone changes the mirror's `main` outside sgit, the push is refused and `sg repo status` shows the error. To resume, reset the mirror's `main` to the `last:` commit that `sg repo status` prints.
+- **A new mirror must be empty** (no `main` branch). The exception is the URL you imported from (the same URL, exactly): `sg repo import web --from URL --mirror URL` mirrors back to the source.
+- **Failed pushes retry automatically,** with exponential backoff up to 5 minutes. A server restart catches up any missed pushes.
+- **Allowed URLs** are `https://`, `ssh://` and `user@host:path`. A URL containing credentials is rejected, because it would be stored in the server database.
+
+### Mirror credentials
+
+The server runs git with an empty global config, so credential helpers in `~/.gitconfig` are not used. The same credentials serve both imports and mirrors. Choose one of the following.
+
+**SSH deploy key.** Add a deploy key with write access to the GitHub repo. Then put the key in a directory that you mount read-only at `/home/sg/.ssh`:
+
+```bash
+mkdir mirror-ssh && ssh-keygen -t ed25519 -N '' -f mirror-ssh/id_ed25519
+ssh-keyscan github.com > mirror-ssh/known_hosts      # check it against GitHub's published fingerprints
+sudo chown -R 10001 mirror-ssh && chmod 600 mirror-ssh/id_ed25519
+```
+
+```yaml
+    volumes:
+      - sgdata:/data
+      - ./mirror-ssh:/home/sg/.ssh:ro
+```
+
+Then use `--mirror git@github.com:acme/web.git`.
+
+ssh never prompts (the server runs it with `BatchMode=yes`), so `known_hosts` must be pre-populated. Setting `GIT_SSH_COMMAND` in the server environment overrides this.
+
+**HTTPS token.** The image includes `sg-git-askpass`, which answers git's prompts from the environment:
+
+```yaml
+services:
+  sg-server:
+    environment:
+      GIT_ASKPASS: /usr/local/bin/sg-git-askpass
+      SG_MIRROR_TOKEN_FILE: /run/secrets/github_token   # or SG_MIRROR_TOKEN: <token>
+    secrets: [github_token]
+secrets:
+  github_token:
+    file: ./github_token   # fine-grained token with Contents: read and write
+```
+
+Then use `--mirror https://github.com/acme/web.git`. The username defaults to `x-access-token`; set `SG_MIRROR_USER` to change it. The token file is bind-mounted with its host permissions, so make it readable by uid 10001 (`sudo chown 10001 github_token && chmod 600 github_token`).
+
+### Releases
+
+Pushing a tag `vX.Y.Z` runs the tests, then publishes `ghcr.io/hermes98761234/sgit-server:X.Y.Z`, `:X.Y` and `:latest` for linux/amd64 and linux/arm64. Prerelease tags such as `v1.0.0-rc1` do not move `latest`.
 
 ## Run without Docker
 

@@ -213,6 +213,15 @@ There's no "have/want" negotiation and no packfile. An interrupted fetch simply 
   - `last_mirrored`, `last_error` and `pending` are stored in SQLite and shown by `sg repo status`.
 - **Credentials.** Mirror push credentials come from the server's environment (for example a git credential helper or an SSH key). sgit never stores them.
 
+### Phase 4 implementation notes
+
+- **Import.** Import is `git init --bare` followed by a refspec fetch of `main` and `release/*`, with no tags. `clone --single-branch` cannot take both. A source without `main` is rejected, and a failed import leaves nothing behind.
+- **Mirror state.** It lives in the `mirror_state` table: `last_mirrored`, `last_error`, `last_attempt` and `pending`. `sg repo status` computes `pending` as `main != last_mirrored`.
+- **Pushes.** The worker pushes a SHA snapshot with a lease. An empty `last_mirrored` means the mirror must not have `main`, which is why new mirrors must start empty. The exception is a repo imported with `--mirror` equal to `--from`, which starts with `last_mirrored` = the imported main.
+- **Rejected pushes.** When a push is rejected, `ls-remote` checks whether the mirror already has our `main`. If it does (a lost bookkeeping write), that counts as success.
+- **URLs** must be https, ssh or scp-style, and must not contain credentials. git runs with `GIT_ALLOW_PROTOCOL=https:ssh`. Credentials come from an SSH key mounted at `/home/sg/.ssh` or from `GIT_ASKPASS=sg-git-askpass`; see the README.
+- **Deferred:** changing a repo's `mirror_url` after creation.
+
 ## 9. Auth
 
 - **Tokens.** A token is `sgt_` plus 32 random bytes in base32. The DB stores only its SHA-256.

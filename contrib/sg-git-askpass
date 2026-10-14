@@ -1,0 +1,18 @@
+#!/bin/sh
+# GIT_ASKPASS helper for sg-server mirrors and imports over https.
+# Username: $SG_MIRROR_USER (default x-access-token, which GitHub accepts
+# with a personal access token). Password: the contents of
+# $SG_MIRROR_TOKEN_FILE if set, else $SG_MIRROR_TOKEN.
+case "$1" in
+Username*)
+  printf '%s\n' "${SG_MIRROR_USER:-x-access-token}"
+  ;;
+*)
+  if [ -n "${SG_MIRROR_TOKEN_FILE:-}" ]; then
+    tr -d '\r\n' <"$SG_MIRROR_TOKEN_FILE" || exit 1
+    echo
+  else
+    printf '%s\n' "${SG_MIRROR_TOKEN:-}"
+  fi
+  ;;
+esac
