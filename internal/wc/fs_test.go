@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestWriteReadLocalModes(t *testing.T) {
@@ -120,8 +121,15 @@ func TestPathConfinement(t *testing.T) {
 func TestStatEntry(t *testing.T) {
 	root := t.TempDir()
 	_ = WriteLocal(root, "a.txt", []byte("abc"), "100644")
+	if e, err := StatEntry(root, "a.txt", "100644", "sha"); err != nil || e.Size != -1 || e.MtimeNs == 0 {
+		t.Fatalf("fresh file StatEntry = %+v, %v; want Size -1", e, err)
+	}
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(filepath.Join(root, "a.txt"), old, old); err != nil {
+		t.Fatal(err)
+	}
 	e, err := StatEntry(root, "a.txt", "100644", "sha")
-	if err != nil || e.Size != 3 || e.MtimeNs == 0 || e.Path != "a.txt" || e.SHA != "sha" {
+	if err != nil || e.Size != 3 || e.MtimeNs != old.UnixNano() || e.Path != "a.txt" || e.SHA != "sha" {
 		t.Fatalf("StatEntry = %+v, %v", e, err)
 	}
 }

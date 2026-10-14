@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/hermes98761234/sgit/internal/fsutil"
 )
@@ -144,7 +145,8 @@ func RemoveLocal(root, p string) error {
 }
 
 // StatEntry builds an index entry for p with the given mode and SHA and the
-// file's current stat.
+// file's current stat. A file still inside the racy window gets Size -1, so
+// that a later same-size edit is re-hashed rather than trusted from the stat.
 func StatEntry(root, p, mode, sha string) (Entry, error) {
 	if err := ValidPath(p); err != nil {
 		return Entry{}, err
@@ -153,5 +155,9 @@ func StatEntry(root, p, mode, sha string) (Entry, error) {
 	if err != nil {
 		return Entry{}, err
 	}
-	return Entry{Path: p, Mode: mode, SHA: sha, Size: fi.Size(), MtimeNs: fi.ModTime().UnixNano()}, nil
+	e := Entry{Path: p, Mode: mode, SHA: sha, Size: fi.Size(), MtimeNs: fi.ModTime().UnixNano()}
+	if time.Since(fi.ModTime()) <= racyWindow {
+		e.Size = -1
+	}
+	return e, nil
 }
