@@ -116,14 +116,15 @@ docker compose exec sg-server sg repo list
 
 `--mirror URL` on `repo create` or `repo import` makes the server push `main` to that URL after every land, in the background. Each push uses `--force-with-lease=main:<last mirrored commit>`:
 
-- **The mirror is never overwritten.** If someone changes the mirror's `main` outside sgit, the push is refused and `sg repo status` shows the error. To resume, reset the mirror's `main` to the `last:` commit that `sg repo status` prints.
+- **The mirror is never overwritten.** If someone changes the mirror's `main` outside sgit, the push is refused and `sg repo status` shows the error. To resume, reset the mirror's `main` to the `last:` commit that `sg repo status` prints. Mirroring then resumes at the next retry (within 5 minutes), the next land, or a server restart.
 - **A new mirror must be empty** (no `main` branch). The exception is the URL you imported from (the same URL, exactly): `sg repo import web --from URL --mirror URL` mirrors back to the source.
 - **Failed pushes retry automatically,** with exponential backoff up to 5 minutes. A server restart catches up any missed pushes.
-- **Allowed URLs** are `https://`, `ssh://` and `user@host:path`. A URL containing credentials is rejected, because it would be stored in the server database.
+- **Allowed URLs** are `https://`, `ssh://` and `user@host:path`. A URL containing credentials, a query string or a fragment is rejected, because it would be stored in the server database.
+- **An interrupted import leaves nothing behind,** so the name can be reused.
 
 ### Mirror credentials
 
-The server runs git with an empty global config, so credential helpers in `~/.gitconfig` are not used. The same credentials serve both imports and mirrors. Choose one of the following.
+The server runs git with an empty global config, so credential helpers in `~/.gitconfig` are not used. Imports from the same host reuse the mirror credentials. Choose one of the following.
 
 **SSH deploy key.** Add a deploy key with write access to the GitHub repo. Then put the key in a directory that you mount read-only at `/home/sg/.ssh`:
 
@@ -141,9 +142,9 @@ sudo chown -R 10001 mirror-ssh && chmod 600 mirror-ssh/id_ed25519
 
 Then use `--mirror git@github.com:acme/web.git`.
 
-ssh never prompts (the server runs it with `BatchMode=yes`), so `known_hosts` must be pre-populated. Setting `GIT_SSH_COMMAND` in the server environment overrides this.
+ssh never prompts (the server runs it with `BatchMode=yes`), so `known_hosts` must be pre-populated. Setting `GIT_SSH_COMMAND` or `GIT_SSH` in the server environment overrides this.
 
-**HTTPS token.** The image includes `sg-git-askpass`, which answers git's prompts from the environment:
+**HTTPS token.** The image includes `sg-git-askpass`, which answers git's prompts from the environment, but only for one host:
 
 ```yaml
 services:
@@ -151,17 +152,18 @@ services:
     environment:
       GIT_ASKPASS: /usr/local/bin/sg-git-askpass
       SG_MIRROR_TOKEN_FILE: /run/secrets/github_token   # or SG_MIRROR_TOKEN: <token>
+      # SG_MIRROR_HOST: github.com                    # the only host that gets the token
     secrets: [github_token]
 secrets:
   github_token:
     file: ./github_token   # fine-grained token with Contents: read and write
 ```
 
-Then use `--mirror https://github.com/acme/web.git`. The username defaults to `x-access-token`; set `SG_MIRROR_USER` to change it. The token file is bind-mounted with its host permissions, so make it readable by uid 10001 (`sudo chown 10001 github_token && chmod 600 github_token`).
+Then use `--mirror https://github.com/acme/web.git`. The username defaults to `x-access-token`; set `SG_MIRROR_USER` to change it. The helper answers only for `SG_MIRROR_HOST` (default `github.com`) and refuses every other host, so the token is never sent to an import source on another host. The token file is bind-mounted with its host permissions, so make it readable by uid 10001 (`sudo chown 10001 github_token && chmod 600 github_token`).
 
 ### Releases
 
-Pushing a tag `vX.Y.Z` runs the tests, then publishes `ghcr.io/hermes98761234/sgit-server:X.Y.Z`, `:X.Y` and `:latest` for linux/amd64 and linux/arm64. Prerelease tags such as `v1.0.0-rc1` do not move `latest`.
+Pushing a tag `vX.Y.Z` runs the tests, then publishes `ghcr.io/hermes98761234/sgit-server:X.Y.Z`, `:X.Y` and `:latest` for linux/amd64 and linux/arm64. Only release tags move `latest`: prerelease tags such as `v1.0.0-rc1`, and tags that are not semver, do not.
 
 ## Run without Docker
 

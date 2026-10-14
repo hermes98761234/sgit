@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -43,6 +45,24 @@ func newRepoManager(root string, st *store.Store, allowLocal bool) *repoManager 
 }
 
 func (m *repoManager) path(name string) string { return filepath.Join(m.root, name+".git") }
+
+// incomingDir holds repos while create or import builds them. Repo names
+// cannot start with '.', so it never clashes with a repo, and Server.New
+// empties it, so a crash mid-build never blocks the name.
+func incomingDir(root string) string { return filepath.Join(root, ".incoming") }
+
+// staging returns a fresh path under incomingDir for building name.
+func (m *repoManager) staging(name string) (string, error) {
+	dir := incomingDir(m.root)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return "", err
+	}
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, name+"-"+hex.EncodeToString(b[:])+".git"), nil
+}
 
 func (m *repoManager) get(ctx context.Context, name string) (*repoHandle, error) {
 	if !ValidRepoName(name) {
@@ -104,19 +124,24 @@ func (m *repoManager) create(ctx context.Context, name, mirrorURL string, sig gi
 		return "", err
 	}
 	defer release()
-	if err := os.MkdirAll(m.root, 0o750); err != nil {
+	stage, err := m.staging(name)
+	if err != nil {
+		return "", err
+	}
+	r, err := gitx.Init(ctx, stage, sig)
+	if err != nil {
+		os.RemoveAll(stage)
+		return "", err
+	}
+	main, err := r.ReadRef(ctx, gitx.MainRef)
+	r.Close()
+	if err != nil {
+		os.RemoveAll(stage)
 		return "", err
 	}
 	p := m.path(name)
-	r, err := gitx.Init(ctx, p, sig)
-	if err != nil {
-		os.RemoveAll(p)
-		return "", err
-	}
-	defer r.Close()
-	main, err := r.ReadRef(ctx, gitx.MainRef)
-	if err != nil {
-		os.RemoveAll(p)
+	if err := os.Rename(stage, p); err != nil {
+		os.RemoveAll(stage)
 		return "", err
 	}
 	if err := m.st.CreateRepo(ctx, name, mirrorURL); err != nil {
@@ -145,13 +170,13 @@ func (m *repoManager) importRepo(ctx context.Context, name, from, mirrorURL stri
 		return "", err
 	}
 	defer release()
-	if err := os.MkdirAll(m.root, 0o750); err != nil {
+	stage, err := m.staging(name)
+	if err != nil {
 		return "", err
 	}
-	p := m.path(name)
-	main, err := gitx.Import(ctx, p, from, m.allowLocal)
+	main, err := gitx.Import(ctx, stage, from, m.allowLocal)
 	if err != nil {
-		os.RemoveAll(p)
+		os.RemoveAll(stage)
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
@@ -159,6 +184,11 @@ func (m *repoManager) importRepo(ctx context.Context, name, from, mirrorURL stri
 		if errors.As(err, &ge) && slices.Contains(ge.Args, "fetch") {
 			return "", status.Errorf(codes.FailedPrecondition, "import from %s failed: %s", from, gitx.ErrSummary(err))
 		}
+		return "", err
+	}
+	p := m.path(name)
+	if err := os.Rename(stage, p); err != nil {
+		os.RemoveAll(stage)
 		return "", err
 	}
 	seeded := ""

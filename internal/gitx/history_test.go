@@ -50,3 +50,37 @@ func TestLogBlameDiff(t *testing.T) {
 		t.Fatalf("path-limited diff leaked f.txt: %s", patch)
 	}
 }
+
+func TestIsAncestor(t *testing.T) {
+	ctx := context.Background()
+	r := newRepo(t)
+	c0, err := r.ReadRef(ctx, MainRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c1, err := r.CommitTree(ctx, EmptyTree, []string{c0}, "one\n", testSig, testSig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sib, err := r.CommitTree(ctx, EmptyTree, []string{c0}, "sibling\n", testSig, testSig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		a, b string
+		want bool
+	}{
+		{c0, c1, true},
+		{c1, c1, true},
+		{c1, c0, false},
+		{sib, c1, false},
+		{"0123456789abcdef0123456789abcdef01234567", c1, false},
+	} {
+		if got, err := r.IsAncestor(ctx, tc.a, tc.b); err != nil || got != tc.want {
+			t.Errorf("IsAncestor(%s, %s) = %v, %v; want %v, nil", tc.a, tc.b, got, err, tc.want)
+		}
+	}
+	if _, err := r.IsAncestor(ctx, "main", c1); !errors.Is(err, ErrInvalid) {
+		t.Errorf("IsAncestor(main, ...) = %v, want ErrInvalid", err)
+	}
+}

@@ -1,8 +1,23 @@
 #!/bin/sh
 # GIT_ASKPASS helper for sg-server mirrors and imports over https.
+# It answers only for $SG_MIRROR_HOST (default github.com) and refuses any
+# other host, so the token is never sent to an import source elsewhere.
 # Username: $SG_MIRROR_USER (default x-access-token, which GitHub accepts
 # with a personal access token). Password: the contents of
 # $SG_MIRROR_TOKEN_FILE if set, else $SG_MIRROR_TOKEN.
+want=${SG_MIRROR_HOST:-github.com}
+host=
+case "$1" in
+*https://*)
+  host=${1#*https://}
+  host=${host%%[/\':]*}
+  host=${host##*@}
+  ;;
+esac
+if [ -z "$host" ] || [ "$host" != "$want" ]; then
+  echo "sg-git-askpass: refusing to answer for ${host:-unknown host}" >&2
+  exit 1
+fi
 case "$1" in
 Username*)
   printf '%s\n' "${SG_MIRROR_USER:-x-access-token}"

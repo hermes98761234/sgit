@@ -46,6 +46,9 @@ func TestValidateRemote(t *testing.T) {
 		"git@host:a::b",
 		"https://github.com/a\u202e",
 		"https://github.com/a b",
+		"https://h/r.git?access_token=x",
+		"https://h/r.git#x",
+		"ssh://git@h/r.git?x=1",
 	}
 	for _, u := range good {
 		if err := ValidateRemote(u, false); err != nil {
@@ -199,11 +202,17 @@ func TestRemoteEnvSSH(t *testing.T) {
 		return false
 	}
 	t.Setenv("GIT_SSH_COMMAND", "")
+	t.Setenv("GIT_SSH", "")
 	if !has(remoteEnv(false), "GIT_SSH_COMMAND=ssh -o BatchMode=yes") {
 		t.Error("BatchMode not set by default")
 	}
 	t.Setenv("GIT_SSH_COMMAND", "ssh -i k")
 	if has(remoteEnv(false), "GIT_SSH_COMMAND=") {
 		t.Error("operator GIT_SSH_COMMAND overridden")
+	}
+	t.Setenv("GIT_SSH_COMMAND", "")
+	t.Setenv("GIT_SSH", "/usr/local/bin/my-ssh")
+	if has(remoteEnv(false), "GIT_SSH_COMMAND=") {
+		t.Error("GIT_SSH_COMMAND set although the operator set GIT_SSH")
 	}
 }

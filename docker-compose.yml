@@ -14,6 +14,7 @@ services:
       # Mirror/import over https with a token (see README "Mirror credentials"):
       # GIT_ASKPASS: /usr/local/bin/sg-git-askpass
       # SG_MIRROR_TOKEN_FILE: /run/secrets/github_token
+      # SG_MIRROR_HOST: github.com   # default; the token is refused to every other host
     volumes:
       - sgdata:/data
       # Mirror/import over ssh: id_ed25519 (0600, owned by uid 10001) + known_hosts

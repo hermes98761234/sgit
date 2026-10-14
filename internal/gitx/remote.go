@@ -62,6 +62,9 @@ func ValidateRemote(raw string, allowLocal bool) error {
 		default:
 			return bad("scheme must be https or ssh")
 		}
+		if u.RawQuery != "" || u.Fragment != "" || strings.Contains(raw, "#") || strings.Contains(raw, "?") {
+			return bad("query strings and fragments are not allowed")
+		}
 		if h := u.Hostname(); h == "" || strings.HasPrefix(h, "-") {
 			return bad("missing or invalid host")
 		}
@@ -90,7 +93,8 @@ func remoteEnv(allowLocal bool) []string {
 		p += ":file"
 	}
 	env := []string{"GIT_ALLOW_PROTOCOL=" + p}
-	if os.Getenv("GIT_SSH_COMMAND") == "" {
+	// GIT_SSH_COMMAND would take precedence over an operator's GIT_SSH.
+	if os.Getenv("GIT_SSH_COMMAND") == "" && os.Getenv("GIT_SSH") == "" {
 		env = append(env, "GIT_SSH_COMMAND=ssh -o BatchMode=yes")
 	}
 	return env

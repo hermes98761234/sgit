@@ -221,15 +221,27 @@ func runServe(ctx context.Context, args []string, _ io.Writer, stderr io.Writer)
 	}
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	stopped := make(chan struct{})
 	go func() {
+		defer close(stopped)
 		<-ctx.Done()
-		g.GracefulStop()
+		// Give in-flight RPCs 5 s, then cancel them so their cleanup (an
+		// import's staging dir, for one) runs before the store closes.
+		done := make(chan struct{})
+		go func() { g.GracefulStop(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			g.Stop()
+			<-done
+		}
 	}()
 	log.Info("listening", "addr", lis.Addr().String(), "tls", !*insecureDev, "data", *data)
 	if err := g.Serve(lis); err != nil {
 		log.Error("serve", "err", err)
 		return 1
 	}
+	<-stopped // Serve returns as soon as stopping begins; wait for the RPCs
 	log.Info("stopped")
 	return 0
 }

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -65,6 +66,11 @@ type Server struct {
 
 func New(cfg Config, st *store.Store, log *slog.Logger) (*Server, error) {
 	cfg.defaults()
+	root := filepath.Join(cfg.DataDir, "repos")
+	// Leftovers of a create or import interrupted by a crash.
+	if err := os.RemoveAll(incomingDir(root)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
 	enc, err := zstd.NewWriter(nil)
 	if err != nil {
 		return nil, err
@@ -73,7 +79,7 @@ func New(cfg Config, st *store.Store, log *slog.Logger) (*Server, error) {
 		cfg:   cfg,
 		store: st,
 		log:   log,
-		repos: newRepoManager(filepath.Join(cfg.DataDir, "repos"), st, cfg.AllowLocalRemotes),
+		repos: newRepoManager(root, st, cfg.AllowLocalRemotes),
 		zenc:  enc,
 	}
 	s.mirror = mirror.New(mirror.Config{
@@ -98,6 +104,9 @@ func NewGRPC(st *store.Store, extra ...grpc.ServerOption) *grpc.Server {
 		grpc.InTapHandle(auth.TapHandle),
 		grpc.ChainUnaryInterceptor(auth.UnaryInterceptor(st)),
 		grpc.ChainStreamInterceptor(auth.StreamInterceptor(st)),
+		// Stop waits for handlers to return, so a cancelled import finishes
+		// its cleanup before the store is closed.
+		grpc.WaitForHandlers(true),
 	)
 	return grpc.NewServer(append(opts, extra...)...)
 }

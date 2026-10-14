@@ -199,6 +199,27 @@ func TestLeaseMismatchIsNotOverwritten(t *testing.T) {
 	}
 }
 
+func TestLostRecordAfterPushRecovers(t *testing.T) {
+	f := newFixture(t, true)
+	m := f.start(20 * time.Millisecond)
+	first := f.main()
+	waitFor(t, "initial mirror", func() bool { return f.state().LastMirrored == first })
+	x := commit(t, f.src, "x")
+	m.Notify("web")
+	waitFor(t, "mirror at x", func() bool { return f.remoteMain() == x && f.state().LastMirrored == x })
+	m.Close()
+	// The push of x succeeded but its bookkeeping was lost.
+	if err := f.st.RecordMirrorSuccess(context.Background(), "web", first, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	y := commit(t, f.src, "y")
+	f.start(20 * time.Millisecond)
+	waitFor(t, "mirror at y", func() bool {
+		s := f.state()
+		return f.remoteMain() == y && s.LastMirrored == y && s.LastError == ""
+	})
+}
+
 func TestNonEmptyMirrorIsNotOverwritten(t *testing.T) {
 	f := newFixture(t, false)
 	other := gitx.Signature{Name: "admin", Email: "admin@sgit.local", When: time.Unix(1600000000, 0)}

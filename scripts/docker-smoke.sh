@@ -32,6 +32,15 @@ grep -q '^smoke-admin ' <<<"$LIST"
 # sg-git-askpass answers git's https prompts from the environment.
 [ "$(docker exec "$NAME" sg-git-askpass "Username for 'https://github.com': ")" = x-access-token ]
 [ "$(docker exec -e SG_MIRROR_TOKEN=s3cret "$NAME" sg-git-askpass "Password for 'https://x-access-token@github.com': ")" = s3cret ]
+# ...and refuses any host other than SG_MIRROR_HOST (default github.com).
+if OUT=$(docker exec -e SG_MIRROR_TOKEN=s3cret "$NAME" sg-git-askpass "Password for 'https://x-access-token@evil.example': "); then
+  echo "sg-git-askpass answered for evil.example" >&2
+  exit 1
+fi
+if [ -n "$OUT" ]; then
+  echo "sg-git-askpass printed output for evil.example" >&2
+  exit 1
+fi
 echo "in-container sg and askpass OK"
 SG_SMOKE_ADDR="127.0.0.1:${PORT}" SG_SMOKE_TOKEN="${TOKEN}" go test -tags docker -count=1 ./internal/smoke/
 echo "docker smoke OK"

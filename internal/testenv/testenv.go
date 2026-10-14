@@ -44,6 +44,7 @@ func Start(t testing.TB, opts ...func(*server.Config)) *Env {
 	ctx := context.Background()
 	dir := t.TempDir()
 	st := Must(store.Open(filepath.Join(dir, "sg.db")))
+	t.Cleanup(func() { st.Close() }) // cleanups run LIFO: g.Stop, srv.Close, st.Close
 	admin := Must(st.CreateUser(ctx, "admin", "admin@sgit.local", true))
 	id, tok, hash, err := auth.NewToken()
 	if err != nil {
@@ -57,15 +58,12 @@ func Start(t testing.TB, opts ...func(*server.Config)) *Env {
 		o(&cfg)
 	}
 	srv := Must(server.New(cfg, st, slog.New(slog.NewTextHandler(io.Discard, nil))))
+	t.Cleanup(srv.Close)
 	g := server.NewGRPC(st)
 	srv.Register(g)
 	lis := Must(net.Listen("tcp", "127.0.0.1:0"))
 	go g.Serve(lis)
-	t.Cleanup(func() {
-		g.Stop()
-		srv.Close()
-		st.Close()
-	})
+	t.Cleanup(g.Stop)
 	return &Env{t: t, Addr: lis.Addr().String(), AdminToken: tok, DataDir: dir, Store: st, Server: srv}
 }
 

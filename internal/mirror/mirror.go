@@ -201,8 +201,19 @@ func (m *Manager) sync(repo string, g *gitx.Repo) (bool, error) {
 		// normal path. This guards the race where the mirror receives our
 		// exact commit by another route between the lease check and the push:
 		// if it holds main, that is a success, not a conflict.
-		if remote, rerr := gitx.RemoteRef(pctx, row.MirrorURL, gitx.MainRef, m.cfg.AllowLocal); rerr == nil && remote == main {
+		remote, rerr := gitx.RemoteRef(pctx, row.MirrorURL, gitx.MainRef, m.cfg.AllowLocal)
+		switch {
+		case rerr != nil:
+		case remote == main:
 			err = nil
+		case remote != "":
+			// A push that succeeded but whose bookkeeping was lost leaves a
+			// stale lease. If the mirror holds one of our commits that main
+			// descends from, pushing over it is a strict fast-forward, so
+			// nothing made outside sgit can be lost.
+			if ok, aerr := g.IsAncestor(pctx, remote, main); aerr == nil && ok {
+				err = g.Push(pctx, row.MirrorURL, main, remote, m.cfg.AllowLocal)
+			}
 		}
 	}
 	cancel()

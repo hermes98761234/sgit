@@ -63,6 +63,19 @@ func remoteMain(t *testing.T, path string) string {
 	return sha
 }
 
+// assertNoIncoming fails unless the staging dir for creates and imports is
+// empty or absent.
+func assertNoIncoming(t *testing.T, e *testenv.Env, what string) {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(e.DataDir, "repos", ".incoming"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("%s: .incoming holds %d entries, want none", what, len(entries))
+	}
+}
+
 func waitStatus(t *testing.T, ac sgitv1.AdminClient, repo string, cond func(*sgitv1.RepoInfo) bool) *sgitv1.RepoInfo {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
@@ -195,6 +208,7 @@ func TestFailedImportLeavesNothing(t *testing.T) {
 		if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("%s: %s left behind (stat err %v)", what, dir, err)
 		}
+		assertNoIncoming(t, e, what)
 	}
 
 	missing := "file://" + filepath.Join(t.TempDir(), "missing.git")
@@ -216,6 +230,12 @@ func TestFailedImportLeavesNothing(t *testing.T) {
 	if resp.Main != main {
 		t.Fatalf("retry import main = %s, want %s", resp.Main, main)
 	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("imported repo dir: %v", err)
+	}
+	assertNoIncoming(t, e, "successful import")
+	e.CreateRepo("other")
+	assertNoIncoming(t, e, "successful create")
 }
 
 func TestMirrorErrorIsReported(t *testing.T) {

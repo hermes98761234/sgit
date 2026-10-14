@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -112,4 +113,27 @@ func (r *Repo) Diff(ctx context.Context, a, b string, paths []string) ([]byte, e
 	}
 	args := append([]string{"diff", "--no-color", "--no-ext-diff", "--no-textconv", sa, sb, "--"}, paths...)
 	return r.run(ctx, nil, nil, args...)
+}
+
+// IsAncestor reports whether commit a is an ancestor of (or equal to) commit
+// b. A commit a that this repo does not have is not an ancestor.
+func (r *Repo) IsAncestor(ctx context.Context, a, b string) (bool, error) {
+	if !IsSHA(a) || !IsSHA(b) {
+		return false, fmt.Errorf("%w: is-ancestor %q %q", ErrInvalid, a, b)
+	}
+	if _, err := r.run(ctx, nil, nil, "cat-file", "-e", a+"^{commit}"); err != nil {
+		var ge *GitError
+		if errors.As(err, &ge) {
+			return false, nil
+		}
+		return false, err
+	}
+	_, err := r.run(ctx, nil, nil, "merge-base", "--is-ancestor", a, b)
+	switch {
+	case err == nil:
+		return true, nil
+	case exitCode(err) == 1:
+		return false, nil
+	}
+	return false, err
 }
