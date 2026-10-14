@@ -43,16 +43,17 @@ type Handle struct {
 
 // Engine keeps every project's derived repo in step with its mounts.
 type Engine struct {
-	cfg  Config
-	mu   sync.Mutex
-	open map[int64]*Handle
+	cfg     Config
+	mu      sync.Mutex
+	open    map[int64]*Handle
+	opening map[int64]*sync.Mutex // per-project lock held while opening or deleting a repo
 }
 
 func New(cfg Config) *Engine {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &Engine{cfg: cfg, open: map[int64]*Handle{}}
+	return &Engine{cfg: cfg, open: map[int64]*Handle{}, opening: map[int64]*sync.Mutex{}}
 }
 
 func (e *Engine) Path(id int64) string {
@@ -63,12 +64,32 @@ func LayoutMessage(verb, path string) string {
 	return fmt.Sprintf("Project layout: %s `%s/`\n", verb, path)
 }
 
-// Get opens the project repo, creating it when the project has no commits
-// and rebuilding it from the recorded history when it is missing.
-func (e *Engine) Get(ctx context.Context, id int64) (*Handle, error) {
+// openLock returns the project's open lock, or the open handle if there is one.
+func (e *Engine) openLock(id int64) (*Handle, *sync.Mutex) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if h, ok := e.open[id]; ok {
+		return h, nil
+	}
+	l := e.opening[id]
+	if l == nil {
+		l = &sync.Mutex{}
+		e.opening[id] = l
+	}
+	return nil, l
+}
+
+// Get opens the project repo, creating it when the project has no commits
+// and rebuilding it from the recorded history when it is missing. A rebuild
+// holds only that project's open lock, so other projects are not delayed.
+func (e *Engine) Get(ctx context.Context, id int64) (*Handle, error) {
+	h, l := e.openLock(id)
+	if h != nil {
+		return h, nil
+	}
+	l.Lock()
+	defer l.Unlock()
+	if h, _ := e.openLock(id); h != nil { // opened while we waited
 		return h, nil
 	}
 	dir := e.Path(id)
@@ -90,8 +111,10 @@ func (e *Engine) Get(ctx context.Context, id int64) (*Handle, error) {
 	} else if err != nil {
 		return nil, err
 	}
-	h := &Handle{ID: id, Git: gitx.Open(dir)}
+	h = &Handle{ID: id, Git: gitx.Open(dir)}
+	e.mu.Lock()
 	e.open[id] = h
+	e.mu.Unlock()
 	return h, nil
 }
 
@@ -364,15 +387,46 @@ func (e *Engine) Mount(ctx context.Context, h *Handle, m store.Mount, actor gitx
 	}
 	m.AddedAt = e.cfg.Now()
 	if head == "" {
-		if err := e.cfg.Store.RecordProjectCommits(ctx, h.ID, nil, nil, &store.MountChange{Add: &m}); err != nil {
+		sha, err := e.firstMountLocked(ctx, h, m, actor)
+		if err != nil {
+			if rerr := e.resetLocked(context.WithoutCancel(ctx), h); rerr != nil {
+				return "", errors.Join(err, rerr)
+			}
 			return "", err
 		}
-		if head, err = e.catchUpLocked(ctx, h); err != nil || head != "" {
-			return head, err
-		}
-		return e.layoutLocked(ctx, h, actor, "added", m.Path, nil)
+		return sha, nil
 	}
 	return e.layoutLocked(ctx, h, actor, "added", m.Path, &store.MountChange{Add: &m})
+}
+
+// firstMountLocked records m on a project without commits and imports the
+// history of its folder, or writes a layout commit when nothing touches it.
+func (e *Engine) firstMountLocked(ctx context.Context, h *Handle, m store.Mount, actor gitx.Signature) (string, error) {
+	if err := e.cfg.Store.RecordProjectCommits(ctx, h.ID, nil, nil, &store.MountChange{Add: &m}); err != nil {
+		return "", err
+	}
+	head, err := e.catchUpLocked(ctx, h)
+	if err != nil || head != "" {
+		return head, err
+	}
+	return e.layoutLocked(ctx, h, actor, "added", m.Path, nil)
+}
+
+// resetLocked undoes a failed first mount: the project returns to having no
+// mounts, commits or cursors, and its main ref is removed, so a retry starts
+// clean. Objects already copied stay unreachable in the project repo.
+func (e *Engine) resetLocked(ctx context.Context, h *Handle) error {
+	cur, err := h.Git.ReadRef(ctx, gitx.MainRef)
+	switch {
+	case errors.Is(err, gitx.ErrNotFound):
+	case err != nil:
+		return err
+	default:
+		if err := h.Git.UpdateRef(ctx, gitx.MainRef, gitx.ZeroSHA, cur); err != nil {
+			return err
+		}
+	}
+	return e.cfg.Store.ResetProject(ctx, h.ID)
 }
 
 func (e *Engine) Unmount(ctx context.Context, h *Handle, path string, actor gitx.Signature) (string, error) {
@@ -469,7 +523,9 @@ func (e *Engine) layoutLocked(ctx context.Context, h *Handle, actor gitx.Signatu
 }
 
 // rebuild recreates dir from the recorded derivation and checks every SHA.
-func (e *Engine) rebuild(ctx context.Context, id int64, dir string) error {
+// AfterRebuild runs before the rebuilt repo is moved into place, so a failed
+// hook (or any other failure) leaves no repo and the next Get retries it all.
+func (e *Engine) rebuild(ctx context.Context, id int64, dir string) (err error) {
 	commits, err := e.cfg.Store.ProjectCommits(ctx, id)
 	if err != nil {
 		return err
@@ -482,7 +538,12 @@ func (e *Engine) rebuild(ctx context.Context, id int64, dir string) error {
 		return err
 	}
 	g := gitx.Open(stage)
-	defer g.Close()
+	defer func() {
+		g.Close()
+		if err != nil {
+			err = errors.Join(err, os.RemoveAll(stage))
+		}
+	}()
 	copied := map[string]string{} // repo \x00 folder -> last tree copied
 	parent := ""
 	for _, pc := range commits {
@@ -544,17 +605,25 @@ func (e *Engine) rebuild(ctx context.Context, id int64, dir string) error {
 		}
 	}
 	g.Close()
-	if err := os.Rename(stage, dir); err != nil {
-		return err
-	}
 	if e.cfg.AfterRebuild != nil {
-		return e.cfg.AfterRebuild(ctx, id)
+		if err := e.cfg.AfterRebuild(ctx, id); err != nil {
+			return err
+		}
 	}
-	return nil
+	return os.Rename(stage, dir)
 }
 
 // Delete closes and removes a project's derived repo (the DB rows are the caller's).
 func (e *Engine) Delete(id int64) error {
+	e.mu.Lock()
+	l := e.opening[id]
+	if l == nil {
+		l = &sync.Mutex{}
+		e.opening[id] = l
+	}
+	e.mu.Unlock()
+	l.Lock() // wait for a running open or rebuild
+	defer l.Unlock()
 	e.mu.Lock()
 	h := e.open[id]
 	delete(e.open, id)

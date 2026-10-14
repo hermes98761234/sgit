@@ -169,6 +169,50 @@ func TestMountsAndRepoDeleteGuard(t *testing.T) {
 	}
 }
 
+func TestRepoDeleteGuardCoversProjectHistory(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	for _, r := range []string{"core", "docs", "free"} {
+		if err := s.CreateRepo(ctx, r, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p, _ := s.CreateProject(ctx, "web", t0)
+	m := Mount{Path: "lib", Repo: "core", Folder: "src", AddedAt: t0}
+	d := Mount{Path: "docs", Repo: "docs", Folder: ".", AddedAt: t0}
+	if err := s.RecordProjectCommits(ctx, p.ID, nil, nil, &MountChange{Add: &m}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordProjectCommits(ctx, p.ID, nil, nil, &MountChange{Add: &d}); err != nil {
+		t.Fatal(err)
+	}
+	// core: a source commit (project_commits.repo); docs: only in a layout commit's sources.
+	commits := []ProjectCommit{
+		{SHA: sha('1'), Seq: 1, Kind: KindSource, Repo: "core", SourceSHA: sha('a'), Sources: map[string]string{"core": sha('a')}},
+		{SHA: sha('2'), Seq: 2, Kind: KindLayout, Sources: map[string]string{"core": sha('a'), "docs": sha('b')}},
+	}
+	if err := s.RecordProjectCommits(ctx, p.ID, commits, map[string]string{"core": sha('a')}, &MountChange{Remove: "docs"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordProjectCommits(ctx, p.ID, nil, map[string]string{}, &MountChange{Remove: "lib"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range []string{"core", "docs"} {
+		if err := s.DeleteRepo(ctx, r); !errors.Is(err, ErrMounted) {
+			t.Fatalf("DeleteRepo(%s) referenced by project history = %v, want ErrMounted", r, err)
+		}
+	}
+	if err := s.DeleteRepo(ctx, "free"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteProjectRows(ctx, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteRepo(ctx, "core"); err != nil {
+		t.Fatalf("DeleteRepo after the project is gone = %v", err)
+	}
+}
+
 func TestLandSequence(t *testing.T) {
 	ctx := context.Background()
 	s := open(t)

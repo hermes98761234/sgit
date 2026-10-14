@@ -11,7 +11,8 @@ import (
 	"time"
 )
 
-// ErrMounted is returned when deleting a repo that a project still mounts.
+// ErrMounted is returned when deleting a repo that a project still mounts or
+// whose commits are recorded in a project's history (needed for a rebuild).
 var ErrMounted = errors.New("store: repo is mounted by a project")
 
 // Commit kinds of a derived project commit.
@@ -288,6 +289,28 @@ func (s *Store) DeleteProjectRows(ctx context.Context, id int64) error {
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return fmt.Errorf("%w: project %d", ErrNotFound, id)
+	}
+	return tx.Commit()
+}
+
+// ResetProject removes a project's mounts, commits and cursors in one
+// transaction, returning it to the state of a new project (the engine uses it
+// to undo a failed first mount).
+func (s *Store) ResetProject(ctx context.Context, id int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	for _, q := range []string{
+		`DELETE FROM project_mounts WHERE project_id=?`,
+		`DELETE FROM project_commits WHERE project_id=?`,
+		`DELETE FROM project_commit_sources WHERE project_id=?`,
+		`DELETE FROM project_cursors WHERE project_id=?`,
+	} {
+		if _, err := tx.ExecContext(ctx, q, id); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

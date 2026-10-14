@@ -734,8 +734,13 @@ func (s *Store) DeleteRepo(ctx context.Context, name string) error {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	// A project rebuild replays every recorded commit, so a repo stays in use
+	// while any project mounts it or has it in its history.
 	var mounted int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_mounts WHERE repo=?`, name).Scan(&mounted); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT
+		EXISTS(SELECT 1 FROM project_mounts WHERE repo=?) OR
+		EXISTS(SELECT 1 FROM project_commits WHERE repo=?) OR
+		EXISTS(SELECT 1 FROM project_commit_sources WHERE repo=?)`, name, name, name).Scan(&mounted); err != nil {
 		return err
 	}
 	if mounted > 0 {

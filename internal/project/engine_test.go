@@ -408,3 +408,128 @@ func TestOverlappingRecordedMountsAreRefused(t *testing.T) {
 		t.Fatalf("Unmount with overlapping mounts = %v, want ErrInvalid", err)
 	}
 }
+
+// failing fails the n-th Source call (1-based) and passes the others through.
+type failing struct {
+	srcs  srcs
+	n     int
+	calls int
+}
+
+func (f *failing) Source(ctx context.Context, repo string) (*gitx.Repo, error) {
+	f.calls++
+	if f.calls == f.n {
+		return nil, fmt.Errorf("injected failure")
+	}
+	return f.srcs.Source(ctx, repo)
+}
+
+func TestFailedFirstMountLeavesNoState(t *testing.T) {
+	// Call 1 fails the import catch-up; call 2 fails the layout commit after
+	// the catch-up recorded a cursor.
+	for _, n := range []int{1, 2} {
+		t.Run(fmt.Sprint(n), func(t *testing.T) {
+			e := newEnv(t)
+			e.repo("core")
+			src := &failing{srcs: e.srcs, n: n}
+			e.eng = New(Config{Root: filepath.Join(t.TempDir(), "projects"), Store: e.st, Sources: src, Now: e.now})
+			t.Cleanup(e.eng.CloseAll)
+			h := e.project("web")
+			ctx := context.Background()
+			m := store.Mount{Path: "lib", Repo: "core", Folder: "later"}
+			if _, err := e.eng.Mount(ctx, h, m, admin); err == nil {
+				t.Fatal("Mount with an injected failure succeeded")
+			}
+			if ms := must(e.st.Mounts(ctx, h.ID)); len(ms) != 0 {
+				t.Fatalf("mounts after a failed first mount = %+v", ms)
+			}
+			if cur := must(e.st.ProjectCursors(ctx, h.ID)); len(cur) != 0 {
+				t.Fatalf("cursors after a failed first mount = %v", cur)
+			}
+			if head, _ := must2(e.st.ProjectHead(ctx, h.ID)); head != "" {
+				t.Fatalf("head after a failed first mount = %s", head)
+			}
+			if _, err := h.Git.ReadRef(ctx, gitx.MainRef); !errors.Is(err, gitx.ErrNotFound) {
+				t.Fatalf("project main after a failed first mount: %v", err)
+			}
+			e.mount(h, "lib", "core", "later")
+			if got := e.subjects(h); !reflect.DeepEqual(got, []string{"Project layout: added `lib/`"}) {
+				t.Fatalf("log after retry = %v", got)
+			}
+		})
+	}
+}
+
+func TestFailedRebuildLeavesNoRepoAndRetries(t *testing.T) {
+	e := newEnv(t)
+	e.repo("core")
+	e.commit("core", "one", map[string]string{"src/a": "1"}, true)
+	h := e.project("web")
+	e.mount(h, "lib", "core", "src")
+	ctx := context.Background()
+	want := must(h.Git.ReadRef(ctx, gitx.MainRef))
+	e.eng.CloseAll()
+	dir := e.eng.Path(h.ID)
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	hookErr := true
+	eng := New(Config{Root: filepath.Dir(dir), Store: e.st, Sources: e.srcs, Now: e.now,
+		AfterRebuild: func(context.Context, int64) error {
+			if hookErr {
+				return fmt.Errorf("hook failed")
+			}
+			e.rebuilt = append(e.rebuilt, h.ID)
+			return nil
+		}})
+	t.Cleanup(eng.CloseAll)
+	if _, err := eng.Get(ctx, h.ID); err == nil {
+		t.Fatal("Get with a failing AfterRebuild succeeded")
+	}
+	for _, d := range []string{dir, dir + ".rebuild"} {
+		if _, err := os.Stat(d); !os.IsNotExist(err) {
+			t.Fatalf("%s left behind after a failed rebuild: %v", filepath.Base(d), err)
+		}
+	}
+	hookErr = false
+	h2 := must(eng.Get(ctx, h.ID))
+	if got := must(h2.Git.ReadRef(ctx, gitx.MainRef)); got != want || !reflect.DeepEqual(e.rebuilt, []int64{h.ID}) {
+		t.Fatalf("retried rebuild: head %s (want %s), hook calls %v", got, want, e.rebuilt)
+	}
+}
+
+func TestRebuildDoesNotBlockOtherProjects(t *testing.T) {
+	e := newEnv(t)
+	e.repo("core")
+	e.commit("core", "one", map[string]string{"src/a": "1"}, true)
+	slow, other := e.project("slow"), e.project("other")
+	e.mount(slow, "lib", "core", "src")
+	e.mount(other, "lib", "core", "src")
+	e.eng.CloseAll()
+	if err := os.RemoveAll(e.eng.Path(slow.ID)); err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	eng := New(Config{Root: filepath.Dir(e.eng.Path(slow.ID)), Store: e.st, Sources: e.srcs, Now: e.now,
+		AfterRebuild: func(context.Context, int64) error { close(entered); <-release; return nil }})
+	t.Cleanup(eng.CloseAll)
+	ctx := context.Background()
+	done := make(chan error, 1)
+	go func() { _, err := eng.Get(ctx, slow.ID); done <- err }()
+	<-entered
+	got := make(chan error, 1)
+	go func() { _, err := eng.Get(ctx, other.ID); got <- err }()
+	select { // must not wait for the rebuild
+	case err := <-got:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		close(release)
+		t.Fatal("Get of another project waited for a rebuild")
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
