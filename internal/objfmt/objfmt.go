@@ -10,13 +10,17 @@ import (
 	"fmt"
 )
 
-// BlobSHA returns the git object id of data stored as a blob.
-func BlobSHA(data []byte) string {
+// ObjectSHA returns the git object id of data stored as an object of type
+// typ ("blob", "tree", "commit", "tag").
+func ObjectSHA(typ string, data []byte) string {
 	h := sha1.New()
-	fmt.Fprintf(h, "blob %d\x00", len(data))
+	fmt.Fprintf(h, "%s %d\x00", typ, len(data))
 	h.Write(data)
 	return hex.EncodeToString(h.Sum(nil))
 }
+
+// BlobSHA returns the git object id of data stored as a blob.
+func BlobSHA(data []byte) string { return ObjectSHA("blob", data) }
 
 // TreeEntry is one entry of a raw git tree object.
 type TreeEntry struct {

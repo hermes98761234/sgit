@@ -38,3 +38,12 @@ func TestParseTree(t *testing.T) {
 		t.Fatal("want error for truncated tree")
 	}
 }
+
+func TestObjectSHA(t *testing.T) {
+	if got := ObjectSHA("blob", []byte("hello\n")); got != "ce013625030ba8dba906f756967f9e9ca394464a" {
+		t.Fatalf("blob: %s", got)
+	}
+	if got := ObjectSHA("tree", nil); got != "4b825dc642cb6eb9a060e54bf8d69288fbee4904" {
+		t.Fatalf("empty tree: %s", got)
+	}
+}
