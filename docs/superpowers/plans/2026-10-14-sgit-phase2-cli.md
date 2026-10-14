@@ -61,7 +61,7 @@ The client never runs git. Every 3-way merge happens on the server through the `
 ### Decisions beyond the spec (for review)
 - `sg login` adds `--ca FILE` (pins a self-signed server certificate) and `--dev-insecure`. If neither `--token` nor `$SG_TOKEN` is given, the token is read from stdin.
 - There is no `sg add`. As in jj, every untracked, non-ignored file inside the sparse set is part of the next commit. Only the root `.gitignore` is honoured.
-- `sg checkout` into an existing directory that has no `.sg/base` resumes. Files already holding the right content are skipped, tree files are overwritten, and other files are left alone (spec §10: "resumable").
+- `sg checkout` resumes only an interrupted checkout (`.sg/` present without `.sg/base`); otherwise the target must be absent or empty (phase-2 final review ruling).
 - `sg sync` resolves one-sided conflicts as follows:
   - A file deleted locally but changed upstream keeps the local deletion, with a warning.
   - A file changed locally but deleted upstream keeps the local file (it becomes "added"), with a warning.

@@ -392,14 +392,14 @@ func TestSyncRecordsConflictsBeforeApplying(t *testing.T) {
 	}
 }
 
-func TestCommitRefusesMarkersNotListedInConflicts(t *testing.T) {
+func TestCommitAllowsMarkerLinesInUnlistedFiles(t *testing.T) {
 	h := newHarness(t)
 	h.seed(seedFiles)
 	w := h.checkout(t.TempDir())
-	writeFile(t, filepath.Join(w, "a.txt"), "<<<<<<< main\nA\n=======\nB\n>>>>>>> local\n")
-	writeFile(t, filepath.Join(w, "new.txt"), "x\n<<<<<<< main\ny\n")
-	code, _, errs := h.run(w, "commit", "-m", "m")
-	if code != 3 || !strings.Contains(errs, "a.txt") || !strings.Contains(errs, "new.txt") {
-		t.Fatalf("markers without .sg/conflicts: exit %d %q", code, errs)
+	doc := "How to read a conflict:\n<<<<<<< ours\nmine\n=======\ntheirs\n>>>>>>> theirs\n"
+	writeFile(t, filepath.Join(w, "docs", "conflicts.md"), doc)
+	h.ok(w, "commit", "-m", "document conflict markers", "--land")
+	if h.env.Files("web", "main")["docs/conflicts.md"] != doc {
+		t.Fatal("file with intentional marker lines was not committed")
 	}
 }

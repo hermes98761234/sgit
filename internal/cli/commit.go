@@ -48,11 +48,11 @@ func cmdCommit(ctx context.Context, a *app, args []string) error {
 	}
 	defer unlock()
 	w := s.wc
-	changes, err := w.Status()
-	if err != nil {
+	if err := checkConflicts(w); err != nil {
 		return err
 	}
-	if err := checkConflicts(w, changes); err != nil {
+	changes, err := w.Status()
+	if err != nil {
 		return err
 	}
 	if len(changes) == 0 {
@@ -86,14 +86,12 @@ func hasMarkers(b []byte) bool {
 }
 
 // checkConflicts drops resolved paths from w.Conflicts and fails while any
-// listed file still contains conflict markers. As a second line of defence
-// (a sync interrupted before it recorded its conflicts), every added or
-// modified regular file in changes is scanned for markers too.
-func checkConflicts(w *wc.WC, changes []wc.Change) error {
+// listed file still contains conflict markers. Only paths recorded by sync
+// are checked: other files may contain marker-like lines on purpose, and
+// sync records its conflicts before writing any markers.
+func checkConflicts(w *wc.WC) error {
 	var still []string
-	listed := map[string]bool{}
 	for _, p := range w.Conflicts {
-		listed[p] = true
 		if data, _, err := wc.ReadLocal(w.Root, p); err == nil && hasMarkers(data) {
 			still = append(still, p)
 		}
@@ -104,22 +102,8 @@ func checkConflicts(w *wc.WC, changes []wc.Change) error {
 			return err
 		}
 	}
-	bad := append([]string{}, still...)
-	for _, c := range changes {
-		if listed[c.Path] || c.Kind == wc.Deleted || c.Mode == "120000" {
-			continue
-		}
-		data, _, err := wc.ReadLocal(w.Root, c.Path)
-		if err != nil {
-			return err
-		}
-		if hasMarkers(data) {
-			bad = append(bad, c.Path)
-		}
-	}
-	if len(bad) > 0 {
-		sort.Strings(bad)
-		return exitf(ExitConflict, "unresolved conflicts in %s (remove the conflict markers first)", strings.Join(bad, ", "))
+	if len(still) > 0 {
+		return exitf(ExitConflict, "unresolved conflicts in %s (remove the conflict markers first)", strings.Join(still, ", "))
 	}
 	return nil
 }
