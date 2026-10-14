@@ -1,6 +1,9 @@
 package client
 
 import (
+	"context"
+	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,5 +51,39 @@ func TestCheckOwned(t *testing.T) {
 	}
 	if err := CheckOwned(filepath.Join(dir, "missing"), uid); err == nil {
 		t.Fatal("missing path must be an error")
+	}
+}
+
+func TestDialDaemonEdgeCases(t *testing.T) {
+	ctx := context.Background()
+	dir, err := os.MkdirTemp("", "sgdd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	if conn, err := DialDaemon(ctx, filepath.Join(dir, "none.sock"), "s:1", "sgt_x"); conn != nil || err != nil {
+		t.Fatalf("missing socket: %v %v", conn, err)
+	}
+	file := filepath.Join(dir, "file.sock")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DialDaemon(ctx, file, "s:1", "sgt_x"); err == nil || !strings.Contains(err.Error(), "not a socket") {
+		t.Fatalf("a regular file is not a usable socket: %v", err)
+	}
+	open := filepath.Join(dir, "open")
+	if err := os.Mkdir(open, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	l, err := net.Listen("unix", filepath.Join(open, "s.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	if err := os.Chmod(open, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DialDaemon(ctx, filepath.Join(open, "s.sock"), "s:1", "sgt_x"); err == nil || errors.Is(err, ErrOtherUpstream) || !strings.Contains(err.Error(), "writable by group or others") {
+		t.Fatalf("socket in a world-writable dir must be refused: %v", err)
 	}
 }

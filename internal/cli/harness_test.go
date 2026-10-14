@@ -22,6 +22,8 @@ type harness struct {
 func newHarness(t *testing.T, opts ...func(*server.Config)) *harness {
 	t.Helper()
 	t.Setenv("SG_TOKEN", "")
+	t.Setenv("SG_SOCKET", filepath.Join(t.TempDir(), "no-sgd.sock")) // never use a developer's real sgd
+	t.Setenv("SG_NO_DAEMON", "")
 	h := &harness{t: t, env: testenv.Start(t, opts...), cfg: map[string]string{}}
 	h.loginAs("admin", h.env.AdminToken)
 	return h

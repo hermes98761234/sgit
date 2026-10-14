@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"os"
 
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
 	"github.com/hermes98761234/sgit/internal/client"
@@ -13,6 +16,7 @@ import (
 // session is a connection to one server plus the working copy (if any).
 type session struct {
 	conn   *grpc.ClientConn
+	cached *grpc.ClientConn // sgd connection; nil when not used
 	repo   sgitv1.RepoClient
 	admin  sgitv1.AdminClient
 	server string
@@ -20,7 +24,12 @@ type session struct {
 	wc     *wc.WC
 }
 
-func (s *session) Close() { s.conn.Close() }
+func (s *session) Close() {
+	s.conn.Close()
+	if s.cached != nil {
+		s.cached.Close()
+	}
+}
 
 // target says which server/repo a command needs; empty fields come from the
 // working copy, then from the default login.
@@ -109,8 +118,20 @@ func (a *app) connect(t target) (*session, error) {
 	if err != nil {
 		return nil, exitf(ExitError, "%v", err)
 	}
+	repoConn := grpc.ClientConnInterface(conn)
+	var cached *grpc.ClientConn
+	if os.Getenv("SG_NO_DAEMON") == "" {
+		sock := client.DefaultSocket()
+		dc, err := client.DialDaemon(context.Background(), sock, name, cred.Token)
+		switch {
+		case err == nil && dc != nil:
+			cached, repoConn = dc, dc
+		case err != nil && !errors.Is(err, client.ErrOtherUpstream):
+			fmt.Fprintf(a.io.Stderr, "sg: warning: sgd at %s is not usable (%v); connecting directly\n", sock, err)
+		}
+	}
 	return &session{
-		conn: conn, repo: sgitv1.NewRepoClient(conn), admin: sgitv1.NewAdminClient(conn),
+		conn: conn, cached: cached, repo: sgitv1.NewRepoClient(repoConn), admin: sgitv1.NewAdminClient(conn),
 		server: name, name: repo, wc: w,
 	}, nil
 }
