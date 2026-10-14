@@ -115,6 +115,8 @@ func (r *repoService) loadOwnedOpenDraft(ctx context.Context, h *repoHandle, u s
 }
 
 func (r *repoService) updateDraft(ctx context.Context, h *repoHandle, u store.User, id, base string, changes []*sgitv1.Change, message string) (store.Draft, error) {
+	h.landMu.Lock()
+	defer h.landMu.Unlock()
 	d, err := r.loadOwnedOpenDraft(ctx, h, u, id)
 	if err != nil {
 		return d, err
@@ -206,6 +208,8 @@ func (r *repoService) AbandonDraft(ctx context.Context, req *sgitv1.AbandonDraft
 	if err != nil {
 		return nil, err
 	}
+	h.landMu.Lock()
+	defer h.landMu.Unlock()
 	d, err := r.loadOwnedOpenDraft(ctx, h, u, req.Id)
 	if err != nil {
 		return nil, r.s.toStatus(ctx, err)

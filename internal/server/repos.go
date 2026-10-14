@@ -23,8 +23,9 @@ func ValidRepoName(name string) bool {
 }
 
 type repoHandle struct {
-	name string
-	git  *gitx.Repo
+	name   string
+	git    *gitx.Repo
+	landMu sync.Mutex // serializes lands and draft mutations per repo; main's correctness comes from CAS
 }
 
 type repoManager struct {
