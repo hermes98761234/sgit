@@ -9,7 +9,7 @@ Scion-style source control on top of git:
 
 Inspired by Anthropic's [Redesigning source control](https://www.anthropic.com/engineering/redesigning-source-control).
 
-> **Status:** phase 1 (server and Docker) and phase 2 (`sg` CLI) are implemented. The daemon (`sgd`) and GitHub mirroring are next. See the [design spec](docs/superpowers/specs/2026-10-14-sgit-design.md).
+> **Status:** phases 1–3 (server and Docker, `sg` CLI, `sgd` cache daemon) are implemented. GitHub mirroring and admin commands are next. See the [design spec](docs/superpowers/specs/2026-10-14-sgit-design.md).
 
 ## Run the server with Docker
 
@@ -62,6 +62,27 @@ sg commit -m "fix the thing" --land           # one round trip: draft + rebase +
 | 2 | not logged in, bad token, or no permission |
 | 3 | conflict |
 | 4 | `main` kept moving; retry |
+
+## Run the cache daemon (`sgd`)
+
+`sgd` keeps a per-user disk cache of git objects in front of one server, so several working copies and agents on the same machine share fetched objects.
+
+```bash
+sgd --upstream sg.example.com:7419 --ca cert.pem    # or run it as a systemd user service: contrib/sgd.service
+```
+
+- `--upstream` and `--ca` default to `$SGD_UPSTREAM` and `$SGD_CA`.
+- `sg` uses `sgd` automatically when it fronts the server you are logged in to. Otherwise `sg` connects directly.
+- `sg` prints one warning and connects directly whenever a socket path exists but cannot be used: sgd does not answer, the path is not a socket, or its ownership or permissions are unsafe. If there is no socket, or sgd fronts a different server, `sg` connects directly silently.
+- To bypass the daemon, set `SG_NO_DAEMON=1`.
+- **Socket:** `$XDG_RUNTIME_DIR/sg/sgd.sock`, mode 0600, one daemon per user. The path can be changed with `--socket` (sgd only) or `$SG_SOCKET` (sg and sgd). `sg` refuses to use a socket, or socket directory, that you do not own or that others can write to.
+- sgd refuses to start if something other than a socket already exists at the socket path.
+- sgd creates the socket directory with mode 0700, sets an existing one of yours to 0700, and refuses to start if it is group- or world-writable.
+- **Cache:** stored in the user cache directory (`$XDG_CACHE_HOME/sg/objects`, usually `~/.cache/sg/objects`; override with `--cache-dir`), with a default size limit of 10 GiB (`--cache-max 10G`) and least-recently-used eviction. Every object is checked against its hash when stored and again each time it is served.
+- **Security:**
+  - Every request still runs with your own token.
+  - Before serving cached objects for a repo, sgd re-checks your read access at least every 60 seconds.
+  - Objects cached for one repo can be served for another when requested by their hash. This is acceptable within a trusted team, as spec §7 describes.
 
 ## Run without Docker
 

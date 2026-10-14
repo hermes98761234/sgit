@@ -1,0 +1,12 @@
+# systemd user unit for sgd. Install:
+#   mkdir -p ~/.config/systemd/user && cp contrib/sgd.service ~/.config/systemd/user/
+#   edit --upstream / --ca below, then: systemctl --user enable --now sgd
+[Unit]
+Description=sgit object cache daemon (sgd)
+
+[Service]
+ExecStart=%h/.local/bin/sgd --upstream sg.example.com:7419 --ca %h/.config/sg/server-ca.pem
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

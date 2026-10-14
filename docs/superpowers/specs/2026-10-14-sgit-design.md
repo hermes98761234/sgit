@@ -197,6 +197,12 @@ There's no "have/want" negotiation and no packfile. An interrupted fetch simply 
   - The **first** request for a repo on each connection is forwarded to the server as an ACL check, `HasObjects` with an empty list. The result is cached for 60 s per token hash and repo.
   - Cached objects are shared between all users on the node. That's acceptable for the trusted-team deployment model, and it's documented in the README.
 
+### Phase 3 implementation notes
+
+- **Socket.** sgd runs as one daemon per user. The socket is mode 0600, inside a 0700 directory owned by the user, and sg checks that ownership before connecting. This replaces the 0660 system socket described above.
+- **`Daemon/Info`.** This RPC reports the upstream sgd fronts. sg calls it without a token and uses the daemon only when the upstream matches its own server.
+- **Which RPCs use the cache.** `HasObjects` and `ResolveRev` always go to the server. Only `GetObjects` is served from the cache: every object is checked on the way in and on every read, and in-flight fetches are deduplicated per (repo, sha).
+
 ## 8. Mirror and import
 
 - **Import.** `sg repo import <name> --from <git-url>` runs `git clone --bare --single-branch` (main plus release branches) into the data dir.
