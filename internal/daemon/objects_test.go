@@ -3,8 +3,10 @@ package daemon_test
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,8 +15,10 @@ import (
 	"github.com/hermes98761234/sgit/internal/daemon"
 	"github.com/hermes98761234/sgit/internal/daemontest"
 	"github.com/hermes98761234/sgit/internal/fetch"
+	"github.com/hermes98761234/sgit/internal/objfmt"
 	"github.com/hermes98761234/sgit/internal/testenv"
 	"github.com/klauspost/compress/zstd"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -153,5 +157,104 @@ func TestGetObjectsRejectsBadSHA(t *testing.T) {
 	}
 	if status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("want InvalidArgument, got %v", err)
+	}
+}
+
+func getObjects(c sgitv1.ProjectClient, project string, shas ...string) ([]*sgitv1.Object, error) {
+	stream, err := c.GetObjects(context.Background(), &sgitv1.GetObjectsRequest{Project: project, Shas: shas})
+	if err != nil {
+		return nil, err
+	}
+	var out []*sgitv1.Object
+	for {
+		o, err := stream.Recv()
+		if err == io.EOF {
+			return out, nil
+		}
+		if err != nil {
+			return out, err
+		}
+		out = append(out, o)
+	}
+}
+
+func TestCacheHitNeedsProjectConfirmation(t *testing.T) {
+	e := testenv.Start(t)
+	e.CreateRepo("core")
+	e.CommitDirect("core", map[string]string{"pub/a.txt": "public\n", "secret/k.txt": "top secret\n"}, "seed")
+	e.CreateProject("pub")
+	e.Mount("pub", "p", "core", "pub", false)
+	e.CreateProject("sec")
+	e.Mount("sec", "s", "core", "secret", false)
+	bob := e.NewUser("bob", "pub", "read")
+	d := daemontest.Start(t, e.Addr)
+	secret := objfmt.BlobSHA([]byte("top secret\n"))
+	public := objfmt.BlobSHA([]byte("public\n"))
+
+	// The admin warms the shared cache with the secret blob.
+	if objs, err := getObjects(d.Project(e.AdminToken), "sec", secret); err != nil || len(objs) != 1 {
+		t.Fatalf("admin fetch = %v, %v", objs, err)
+	}
+	if _, ok := d.Cache.Get(secret); !ok {
+		t.Fatal("secret blob not cached")
+	}
+	before := d.Counter.Total()
+	// bob asks for it through his own project: nothing may be served.
+	objs, err := getObjects(d.Project(bob), "pub", secret, public)
+	if status.Code(err) != codes.NotFound {
+		t.Fatalf("bob fetch of a foreign cached object = %v", err)
+	}
+	for _, o := range objs {
+		if o.Sha == secret {
+			t.Fatal("sgd served another project's cached object")
+		}
+	}
+	// bob's own objects still work, and a warm hit is confirmed, not refetched.
+	if objs, err := getObjects(d.Project(bob), "pub", public); err != nil || len(objs) != 1 {
+		t.Fatalf("bob own fetch = %v, %v", objs, err)
+	}
+	mid := d.Counter.Total()
+	if objs, err := getObjects(d.Project(bob), "pub", public); err != nil || len(objs) != 1 || d.Counter.Total() != mid {
+		t.Fatalf("warm fetch = %v, %v; upstream GetObjects SHAs %d -> %d (before %d)", objs, err, mid, d.Counter.Total(), before)
+	}
+}
+
+// failingConn makes HasObjects calls that name objects fail while broken is
+// set; the empty access probe still succeeds.
+type failingConn struct {
+	grpc.ClientConnInterface
+	broken atomic.Bool
+}
+
+func (c *failingConn) Invoke(ctx context.Context, method string, args, reply any, opts ...grpc.CallOption) error {
+	if r, ok := args.(*sgitv1.HasObjectsRequest); ok && len(r.Shas) > 0 && c.broken.Load() {
+		return status.Error(codes.Unavailable, "upstream down")
+	}
+	return c.ClientConnInterface.Invoke(ctx, method, args, reply, opts...)
+}
+
+func TestCacheHitFailsClosedWhenConfirmationFails(t *testing.T) {
+	e, commit := seeded(t)
+	fc := &failingConn{}
+	d := daemontest.Start(t, e.Addr, func(c *daemon.Config) { fc.ClientConnInterface = c.Conn; c.Conn = fc })
+	tree := readAll(t, d.Project(e.AdminToken), commit) // cache and access memo are warm now
+	sha := tree["a.txt"].SHA
+	fc.broken.Store(true)
+	objs, err := getObjects(d.Project(e.AdminToken), "web", sha)
+	if status.Code(err) != codes.Unavailable || len(objs) != 0 {
+		t.Fatalf("unconfirmed cache hit = %v, %v; want no objects and Unavailable", objs, err)
+	}
+}
+
+func TestCacheHitAfterRevokeWithinACLTTL(t *testing.T) {
+	e, commit := seeded(t)
+	d := daemontest.Start(t, e.Addr, func(c *daemon.Config) { c.ACLTTL = time.Hour })
+	reader := e.NewUser("bob", "web", "read")
+	tree := readAll(t, d.Project(reader), commit) // cache and bob's access memo are warm now
+	sha := tree["a.txt"].SHA
+	testenv.Must(e.Admin(e.AdminToken).RevokeACL(context.Background(), &sgitv1.RevokeACLRequest{User: "bob", Project: "web"}))
+	objs, err := getObjects(d.Project(reader), "web", sha)
+	if status.Code(err) != codes.NotFound || len(objs) != 0 {
+		t.Fatalf("revoked reader got %v, %v; want no objects and NotFound", objs, err)
 	}
 }

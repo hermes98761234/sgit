@@ -21,8 +21,8 @@ const maxBatch = 10000
 var shaRe = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 type aclKey struct {
-	token [32]byte
-	repo  string
+	token   [32]byte
+	project string
 }
 
 // call is one upstream fetch of an object that other requests may wait on.
@@ -32,14 +32,14 @@ type call struct {
 	err  error
 }
 
-// authorize checks (or recalls, for ACLTTL) that the caller may read repo by
-// probing the upstream with an empty HasObjects using the caller's token.
-func (d *Daemon) authorize(ctx context.Context, repo string) (context.Context, error) {
+// authorize checks (or recalls, for ACLTTL) that the caller may read project
+// by probing the upstream with an empty HasObjects using the caller's token.
+func (d *Daemon) authorize(ctx context.Context, project string) (context.Context, error) {
 	out, tok, err := forward(ctx)
 	if err != nil {
 		return nil, err
 	}
-	key := aclKey{sha256.Sum256([]byte(tok)), repo}
+	key := aclKey{sha256.Sum256([]byte(tok)), project}
 	now := time.Now()
 	d.mu.Lock()
 	exp, ok := d.acl[key]
@@ -47,7 +47,7 @@ func (d *Daemon) authorize(ctx context.Context, repo string) (context.Context, e
 	if ok && now.Before(exp) {
 		return out, nil
 	}
-	if _, err := d.up.HasObjects(out, &sgitv1.HasObjectsRequest{Project: repo}); err != nil {
+	if _, err := d.up.HasObjects(out, &sgitv1.HasObjectsRequest{Project: project}); err != nil {
 		return nil, err
 	}
 	d.mu.Lock()
@@ -61,6 +61,27 @@ func (d *Daemon) authorize(ctx context.Context, repo string) (context.Context, e
 	d.acl[key] = now.Add(d.cfg.ACLTTL)
 	d.mu.Unlock()
 	return out, nil
+}
+
+// confirm asks the server which of shas the caller can read in project. A
+// cache hit is served only after this check, so the shared cache never
+// leaks an object across projects (spec §9).
+func (d *Daemon) confirm(ctx context.Context, project string, shas []string) (map[string]bool, error) {
+	ok := make(map[string]bool, len(shas))
+	if len(shas) == 0 {
+		return ok, nil
+	}
+	resp, err := d.up.HasObjects(ctx, &sgitv1.HasObjectsRequest{Project: project, Shas: shas})
+	if err != nil {
+		return nil, err
+	}
+	if len(resp.Present) != len(shas) {
+		return nil, status.Errorf(codes.Internal, "upstream answered %d of %d objects", len(resp.Present), len(shas))
+	}
+	for i, s := range shas {
+		ok[s] = resp.Present[i]
+	}
+	return ok, nil
 }
 
 // verify decompresses o and checks that its content hashes to sha.
@@ -97,13 +118,13 @@ func toPB(sha string, o cache.Object) *sgitv1.Object {
 }
 
 // fetch returns the objects for shas from upstream, sharing in-flight fetches
-// of the same (repo, sha) with concurrent requests.
-func (d *Daemon) fetch(ctx context.Context, repo string, shas []string) (map[string]cache.Object, error) {
+// of the same (project, sha) with concurrent requests.
+func (d *Daemon) fetch(ctx context.Context, project string, shas []string) (map[string]cache.Object, error) {
 	d.mu.Lock()
 	calls := make(map[string]*call, len(shas))
 	var mine []string
 	for _, s := range shas {
-		key := repo + "\x00" + s
+		key := project + "\x00" + s
 		if c, ok := d.inflight[key]; ok {
 			calls[s] = c
 			continue
@@ -118,7 +139,7 @@ func (d *Daemon) fetch(ctx context.Context, repo string, shas []string) (map[str
 		// Detached from this caller's cancellation: other requests may be
 		// waiting on these objects. The caller's token travels in the values.
 		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
-		d.fetchUpstream(fctx, repo, mine)
+		d.fetchUpstream(fctx, project, mine)
 		cancel()
 	}
 	out := make(map[string]cache.Object, len(shas))
@@ -138,27 +159,39 @@ func (d *Daemon) fetch(ctx context.Context, repo string, shas []string) (map[str
 
 // fetchUpstream fetches shas from upstream, verifies and caches them, and
 // completes their in-flight calls.
-func (d *Daemon) fetchUpstream(ctx context.Context, repo string, shas []string) {
+func (d *Daemon) fetchUpstream(ctx context.Context, project string, shas []string) {
 	want := make(map[string]bool, len(shas))
 	for _, s := range shas {
 		want[s] = true
 	}
 	got := make(map[string]cache.Object, len(shas))
 	// A previous owner may have cached these between our cache miss and our
-	// in-flight registration; do not fetch them again.
+	// in-flight registration; do not fetch them again, but serve them only
+	// if the server confirms them for this project (a SHA the caller could
+	// not confirm also lands here and must go upstream, which refuses it).
 	all := shas
 	shas = nil
+	hits := map[string]cache.Object{}
+	var hitList []string
 	for _, s := range all {
 		if o, ok := d.cached(s); ok {
-			got[s] = o
+			hits[s] = o
+			hitList = append(hitList, s)
 		} else {
 			shas = append(shas, s)
 		}
 	}
-	var ferr error
+	confirmed, ferr := d.confirm(ctx, project, hitList)
+	for _, s := range hitList {
+		if confirmed[s] {
+			got[s] = hits[s]
+		} else {
+			shas = append(shas, s)
+		}
+	}
 	for start := 0; start < len(shas) && ferr == nil; start += fetch.Batch {
 		end := min(start+fetch.Batch, len(shas))
-		stream, err := d.up.GetObjects(ctx, &sgitv1.GetObjectsRequest{Project: repo, Shas: shas[start:end]})
+		stream, err := d.up.GetObjects(ctx, &sgitv1.GetObjectsRequest{Project: project, Shas: shas[start:end]})
 		if err != nil {
 			ferr = err
 			break
@@ -190,7 +223,7 @@ func (d *Daemon) fetchUpstream(ctx context.Context, repo string, shas []string) 
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for _, s := range all {
-		key := repo + "\x00" + s
+		key := project + "\x00" + s
 		c := d.inflight[key]
 		delete(d.inflight, key)
 		switch o, ok := got[s]; {

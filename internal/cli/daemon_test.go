@@ -126,3 +126,31 @@ func TestNoDaemonEnvDisablesSgd(t *testing.T) {
 		t.Fatal("SG_NO_DAEMON=1 must bypass sgd")
 	}
 }
+
+func TestProjectsThroughDaemon(t *testing.T) {
+	h, _ := coreProject(t)
+	h.env.CreateProject("other")
+	d := h.startDaemon()
+	var res struct {
+		Projects []struct {
+			Name  string `json:"name"`
+			Level string `json:"level"`
+		} `json:"projects"`
+	}
+	decode(t, h.okAs("bob", t.TempDir(), "projects", "--json"), &res)
+	if len(res.Projects) != 1 || res.Projects[0].Name != "web" || res.Projects[0].Level != "write" {
+		t.Fatalf("bob projects via sgd = %+v", res)
+	}
+	saw := false
+	for _, c := range d.SeenCalls() {
+		if c.Method == "/sgit.v1.Project/ListProjects" {
+			saw = true
+			if !strings.HasPrefix(c.Auth, "Bearer ") {
+				t.Fatalf("ListProjects via sgd without token: %+v", c)
+			}
+		}
+	}
+	if !saw {
+		t.Fatalf("sg projects did not go through sgd: %+v", d.SeenCalls())
+	}
+}

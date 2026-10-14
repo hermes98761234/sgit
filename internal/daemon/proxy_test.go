@@ -97,3 +97,33 @@ func TestInfo(t *testing.T) {
 		t.Fatalf("Info = %+v", info)
 	}
 }
+
+func TestListProjectsThroughDaemon(t *testing.T) {
+	e := testenv.Start(t)
+	e.CreateRepoProject("web")
+	e.CreateRepoProject("api")
+	bob := e.NewUser("bob", "web", "read")
+	d := daemontest.Start(t, e.Addr)
+	ctx := context.Background()
+	names := func(token string) []string {
+		var out []string
+		for _, p := range testenv.Must(d.Project(token).ListProjects(ctx, &sgitv1.ListProjectsRequest{})).Projects {
+			out = append(out, p.Name+":"+p.Level)
+		}
+		return out
+	}
+	if got := names(bob); len(got) != 1 || got[0] != "web:read" {
+		t.Fatalf("bob via sgd = %v", got)
+	}
+	if got := names(e.AdminToken); len(got) != 2 {
+		t.Fatalf("admin via sgd = %v", got)
+	}
+	// Nothing is cached: a new grant shows up on the next call.
+	testenv.Must(e.Admin(e.AdminToken).GrantACL(ctx, &sgitv1.GrantACLRequest{User: "bob", Project: "api", Level: "write"}))
+	if got := names(bob); len(got) != 2 {
+		t.Fatalf("bob via sgd after grant = %v", got)
+	}
+	if _, err := d.Project("sgt_nope").ListProjects(ctx, &sgitv1.ListProjectsRequest{}); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("bad token via sgd = %v", err)
+	}
+}

@@ -43,7 +43,7 @@ type Daemon struct {
 	dec      *zstd.Decoder
 	mu       sync.Mutex
 	acl      map[aclKey]time.Time // successful read probes, until expiry
-	inflight map[string]*call     // repo+"\x00"+sha -> shared upstream fetch
+	inflight map[string]*call     // project+"\x00"+sha -> shared upstream fetch
 }
 
 // New validates cfg and returns a Daemon.
