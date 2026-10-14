@@ -43,9 +43,15 @@ func (r *projectService) CommitAndLand(ctx context.Context, req *sgitv1.CommitAn
 
 var errAlreadyOnMain = errors.New("changes already on main")
 
+// errOutsideMounts means the landed tree would change a source path the
+// caller may not write (merge-tree follows upstream renames, so a clean
+// rebase can move the draft's content out of its folder).
+var errOutsideMounts = errors.New("land would change paths outside the writable mounts")
+
 // landSource lands head (a commit whose parent is base) onto main of a
 // source repo: compare-and-swap, with a merge-tree rebase when main moved.
-func (s *Server) landSource(ctx context.Context, h *repoHandle, base, head string) (string, []gitx.ConflictFile, error) {
+// Every path the land changes relative to main must pass allowed.
+func (s *Server) landSource(ctx context.Context, h *repoHandle, base, head string, allowed func(sourcePath string) bool) (string, []gitx.ConflictFile, error) {
 	h.landMu.Lock()
 	defer h.landMu.Unlock()
 	dc, err := h.git.ReadCommit(ctx, head)
@@ -74,6 +80,15 @@ func (s *Server) landSource(ctx context.Context, h *repoHandle, base, head strin
 		}
 		if tree == mc.Tree {
 			return mainOld, nil, errAlreadyOnMain
+		}
+		changed, err := h.git.DiffTree(ctx, mc.Tree, tree)
+		if err != nil {
+			return "", nil, err
+		}
+		for _, c := range changed {
+			if !allowed(c.Path) {
+				return "", nil, errOutsideMounts
+			}
 		}
 		committer := dc.Committer
 		committer.When = s.cfg.Now()
@@ -266,9 +281,12 @@ func (r *projectService) landGroup(ctx context.Context, pr *proj, d store.Draft,
 	if err != nil {
 		return nil, r.s.hide(ctx, err)
 	}
-	_, conflicts, err := r.s.landSource(ctx, rh, srcBase, sc)
+	_, conflicts, err := r.s.landSource(ctx, rh, srcBase, sc, func(sp string) bool { return writableSource(pr.mounts, g.repo, sp) })
 	if errors.Is(err, errAlreadyOnMain) {
 		return nil, err
+	}
+	if errors.Is(err, errOutsideMounts) { // never name the source path
+		return nil, status.Errorf(codes.FailedPrecondition, "draft %s: main changed under the draft (files moved outside the writable mounts); sync and commit again", d.ID)
 	}
 	if st, ok := status.FromError(err); ok && st.Code() == codes.ResourceExhausted {
 		return nil, err // our own message, safe
@@ -278,8 +296,8 @@ func (r *projectService) landGroup(ctx context.Context, pr *proj, d store.Draft,
 	}
 	for i := range conflicts {
 		p, ok := projectPath(pr.mounts, g.repo, conflicts[i].Path)
-		if !ok { // a conflict outside the touched folders is impossible; never leak it
-			return nil, r.s.hide(ctx, fmt.Errorf("conflict outside mounts in %s", g.repo))
+		if !ok { // e.g. an upstream rename out of the mounts; never name the source path
+			return nil, status.Errorf(codes.FailedPrecondition, "draft %s: main changed under the draft (files moved outside the project); sync and commit again", d.ID)
 		}
 		conflicts[i].Path = p
 	}

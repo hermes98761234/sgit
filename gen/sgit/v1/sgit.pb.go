@@ -1766,6 +1766,7 @@ func (x *BlameResponse) GetLines() []*BlameLine {
 	return nil
 }
 
+// a and b are revisions of the project (or draft ids); empty means main.
 type DiffRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`

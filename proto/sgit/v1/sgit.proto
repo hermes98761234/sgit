@@ -122,6 +122,7 @@ message BlameRequest { string project = 1; string rev = 2; string path = 3; }
 message BlameLine { string sha = 1; string author = 2; int32 line = 3; bytes text = 4; }
 message BlameResponse { repeated BlameLine lines = 1; }
 
+// a and b are revisions of the project (or draft ids); empty means main.
 message DiffRequest { string project = 1; string a = 2; string b = 3; repeated string paths = 4; }
 message DiffResponse { bytes patch = 1; }
 

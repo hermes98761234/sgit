@@ -7,8 +7,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
+	"github.com/hermes98761234/sgit/internal/gitx"
 	"github.com/hermes98761234/sgit/internal/rpc"
 	"github.com/hermes98761234/sgit/internal/server"
 	"github.com/hermes98761234/sgit/internal/testenv"
@@ -432,5 +434,36 @@ func TestSourceFailuresAreHidden(t *testing.T) {
 		if strings.Contains(msg, leak) {
 			t.Errorf("error %q leaks %q", msg, leak)
 		}
+	}
+}
+
+// An upstream rename must not carry a draft's content to a source path
+// outside the project's writable mounts (merge-tree follows renames).
+func TestLandRefusesRenameOutOfMounts(t *testing.T) {
+	ctx := context.Background()
+	e, _ := coreWeb(t)
+	alice := e.NewUser("alice", "web", "write")
+	c := e.Project(alice)
+	head := testenv.Must(c.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web"})).Sha
+	// Upstream moves src/a.go out of the mounted folder.
+	g := e.Git("core")
+	main := testenv.Must(g.ReadRef(ctx, "refs/heads/main"))
+	blob := testenv.Must(g.ListFiles(ctx, main))["src/a.go"].SHA
+	tree := testenv.Must(g.BuildTree(ctx, main, []gitx.Change{{Path: "src/a.go", Op: gitx.OpDelete}, {Path: "secret/a.go", Op: gitx.OpAdd, BlobSHA: blob}}))
+	sig := gitx.Signature{Name: "direct", Email: "direct@sgit.local", When: time.Now()}
+	moved := testenv.Must(g.CommitTree(ctx, tree, []string{main}, "move a", sig, sig))
+	if err := g.UpdateRef(ctx, "refs/heads/main", moved, main); err != nil {
+		t.Fatal(err)
+	}
+	g.Close()
+	sha := e.Upload(alice, "web", []byte("package a // edited by alice\n"))[0]
+	_, err := c.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{Project: "web", Base: head, Message: "edit",
+		Changes: []*sgitv1.Change{testenv.Modify("lib/a.go", sha)}})
+	if status.Code(err) != codes.FailedPrecondition || strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "core") {
+		t.Fatalf("land through an upstream rename = %v", err)
+	}
+	files := e.Files("core", "main")
+	if files["secret/a.go"] != "package a\n" || len(files) != 2 {
+		t.Fatalf("source files = %v", files)
 	}
 }

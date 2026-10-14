@@ -73,3 +73,26 @@ func checkPaths(mounts []store.Mount, paths []string) error {
 	}
 	return nil
 }
+
+// writableSource reports whether source path sp of repo lies in a writable
+// mount: every mount of repo with the longest folder holding sp must be
+// writable (a folder mounted twice counts as read-only if either is).
+func writableSource(mounts []store.Mount, repo, sp string) bool {
+	best, ok := -1, false
+	for _, m := range mounts {
+		if m.Repo != repo || !(m.Folder == "." || strings.HasPrefix(sp, m.Folder+"/")) {
+			continue
+		}
+		n := len(m.Folder)
+		if m.Folder == "." {
+			n = 0
+		}
+		switch {
+		case n > best:
+			best, ok = n, !m.ReadOnly
+		case n == best:
+			ok = ok && !m.ReadOnly
+		}
+	}
+	return best >= 0 && ok
+}

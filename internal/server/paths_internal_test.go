@@ -49,3 +49,31 @@ func TestMountMapping(t *testing.T) {
 		t.Errorf("read-only = %v", err)
 	}
 }
+
+func TestWritableSource(t *testing.T) {
+	ms := []store.Mount{
+		{Path: "lib", Repo: "core", Folder: "src"},
+		{Path: "gen", Repo: "core", Folder: "src/gen", ReadOnly: true},
+		{Path: "all", Repo: "docs", Folder: ".", ReadOnly: true},
+		{Path: "w", Repo: "docs", Folder: "w"},
+		{Path: "x1", Repo: "dup", Folder: "f"},
+		{Path: "x2", Repo: "dup", Folder: "f", ReadOnly: true},
+	}
+	for _, c := range []struct {
+		repo, sp string
+		ok       bool
+	}{
+		{"core", "src/a.go", true},
+		{"core", "src/gen/z.go", false}, // nested read-only folder wins
+		{"core", "secret/k.txt", false}, // unmounted
+		{"core", "src", false},          // the folder itself is not inside it
+		{"docs", "w/a", true},
+		{"docs", "r/a", false},
+		{"dup", "f/a", false}, // mounted twice, once read-only
+		{"other", "src/a.go", false},
+	} {
+		if got := writableSource(ms, c.repo, c.sp); got != c.ok {
+			t.Errorf("writableSource(%s, %s) = %v, want %v", c.repo, c.sp, got, c.ok)
+		}
+	}
+}
