@@ -1,0 +1,115 @@
+syntax = "proto3";
+
+package sgit.v1;
+
+option go_package = "github.com/hermes98761234/sgit/gen/sgit/v1;sgitv1";
+
+// Repo is served by both sg-server and sgd (phase 3).
+service Repo {
+  rpc ResolveRev(ResolveRevRequest) returns (ResolveRevResponse);
+  rpc GetObjects(GetObjectsRequest) returns (stream Object);
+  rpc HasObjects(HasObjectsRequest) returns (HasObjectsResponse);
+  rpc UploadBlobs(stream BlobChunk) returns (UploadBlobsResponse);
+  rpc CreateDraft(CreateDraftRequest) returns (Draft);
+  rpc UpdateDraft(UpdateDraftRequest) returns (Draft);
+  rpc GetDraft(GetDraftRequest) returns (Draft);
+  rpc ListDrafts(ListDraftsRequest) returns (ListDraftsResponse);
+  rpc AbandonDraft(AbandonDraftRequest) returns (Draft);
+  rpc Land(LandRequest) returns (LandResponse);
+  rpc CommitAndLand(CommitAndLandRequest) returns (LandResponse);
+  rpc Log(LogRequest) returns (LogResponse);
+  rpc Blame(BlameRequest) returns (BlameResponse);
+  rpc Diff(DiffRequest) returns (DiffResponse);
+  rpc MergeFile(MergeFileRequest) returns (MergeFileResponse);
+}
+
+// Admin is only served by sg-server; clients dial it directly.
+service Admin {
+  rpc WhoAmI(WhoAmIRequest) returns (WhoAmIResponse);
+  rpc CreateRepo(CreateRepoRequest) returns (CreateRepoResponse);
+  rpc CreateToken(CreateTokenRequest) returns (CreateTokenResponse);
+  rpc RevokeToken(RevokeTokenRequest) returns (RevokeTokenResponse);
+  rpc GrantACL(GrantACLRequest) returns (GrantACLResponse);
+  rpc RevokeACL(RevokeACLRequest) returns (RevokeACLResponse);
+}
+
+message ResolveRevRequest { string repo = 1; string rev = 2; }
+message ResolveRevResponse { string sha = 1; }
+
+message GetObjectsRequest { string repo = 1; repeated string shas = 2; }
+message Object {
+  string sha = 1;
+  string type = 2;      // blob | tree | commit
+  uint64 size = 3;      // uncompressed size
+  bytes zstd_data = 4;  // zstd-compressed raw object content
+}
+message HasObjectsRequest { string repo = 1; repeated string shas = 2; }
+message HasObjectsResponse { repeated bool present = 1; }
+
+// BlobChunk streams blobs in <= 1 MiB chunks; repo is required on the first chunk.
+message BlobChunk { string repo = 1; bytes data = 2; bool end_of_blob = 3; }
+message UploadBlobsResponse { repeated string shas = 1; }
+
+enum ChangeOp {
+  CHANGE_OP_UNSPECIFIED = 0;
+  CHANGE_OP_ADD = 1;
+  CHANGE_OP_MODIFY = 2;
+  CHANGE_OP_DELETE = 3;
+}
+message Change { string path = 1; ChangeOp op = 2; string blob_sha = 3; string mode = 4; }
+
+message CreateDraftRequest { string repo = 1; string base = 2; repeated Change changes = 3; string title = 4; string message = 5; }
+message UpdateDraftRequest { string repo = 1; string id = 2; string base = 3; repeated Change changes = 4; string message = 5; }
+message GetDraftRequest { string repo = 1; string id = 2; }
+message ListDraftsRequest { string repo = 1; bool mine = 2; string status = 3; }
+message ListDraftsResponse { repeated Draft drafts = 1; }
+message AbandonDraftRequest { string repo = 1; string id = 2; }
+message Draft {
+  string id = 1;
+  string repo = 2;
+  string owner = 3;
+  string title = 4;
+  string base = 5;
+  string head = 6;
+  int32 version = 7;
+  string status = 8;
+  string landed_as = 9;
+  int64 created_at = 10;
+  int64 updated_at = 11;
+}
+
+message LandRequest { string repo = 1; string id = 2; }
+message CommitAndLandRequest { string repo = 1; string draft_id = 2; string base = 3; repeated Change changes = 4; string title = 5; string message = 6; }
+message LandResponse { string commit = 1; string draft_id = 2; }
+
+// Attached as a status detail to ABORTED errors from Land/CommitAndLand.
+// "ours" is main, "theirs" is the draft.
+message ConflictFile { string path = 1; string base_sha = 2; string ours_sha = 3; string theirs_sha = 4; }
+message ConflictDetail { string draft_id = 1; string main = 2; repeated ConflictFile files = 3; }
+
+message LogRequest { string repo = 1; string rev = 2; string path = 3; int32 n = 4; }
+message LogEntry { string sha = 1; string author_name = 2; string author_email = 3; int64 time = 4; string subject = 5; }
+message LogResponse { repeated LogEntry entries = 1; }
+
+message BlameRequest { string repo = 1; string rev = 2; string path = 3; }
+message BlameLine { string sha = 1; string author = 2; int32 line = 3; bytes text = 4; }
+message BlameResponse { repeated BlameLine lines = 1; }
+
+message DiffRequest { string repo = 1; string a = 2; string b = 3; repeated string paths = 4; }
+message DiffResponse { bytes patch = 1; }
+
+message MergeFileRequest { string repo = 1; string base_sha = 2; string ours_sha = 3; string theirs_sha = 4; string ours_label = 5; string theirs_label = 6; }
+message MergeFileResponse { bytes content = 1; bool conflicted = 2; }
+
+message WhoAmIRequest {}
+message WhoAmIResponse { string user = 1; string email = 2; bool admin = 3; }
+message CreateRepoRequest { string name = 1; }
+message CreateRepoResponse { string main = 1; }
+message CreateTokenRequest { string user = 1; string email = 2; bool admin = 3; }
+message CreateTokenResponse { string id = 1; string token = 2; string user = 3; }
+message RevokeTokenRequest { string id = 1; }
+message RevokeTokenResponse {}
+message GrantACLRequest { string user = 1; string repo = 2; string level = 3; }
+message GrantACLResponse {}
+message RevokeACLRequest { string user = 1; string repo = 2; }
+message RevokeACLResponse {}
