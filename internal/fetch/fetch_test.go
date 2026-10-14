@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
@@ -161,5 +162,58 @@ func TestUnrequestedObject(t *testing.T) {
 	_, err := Blobs(context.Background(), c, "web", []string{want})
 	if err == nil || !strings.Contains(err.Error(), "unrequested") {
 		t.Fatalf("want unrequested-object error, got %v", err)
+	}
+}
+
+// recordingRepo records every SHA requested through GetObjects and delegates
+// to the real client.
+type recordingRepo struct {
+	sgitv1.RepoClient
+	mu        sync.Mutex
+	requested map[string]bool
+}
+
+func (r *recordingRepo) GetObjects(ctx context.Context, req *sgitv1.GetObjectsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[sgitv1.Object], error) {
+	r.mu.Lock()
+	for _, s := range req.Shas {
+		r.requested[s] = true
+	}
+	r.mu.Unlock()
+	return r.RepoClient.GetObjects(ctx, req, opts...)
+}
+
+func TestSparseTreeSkipsOtherSubtrees(t *testing.T) {
+	e := testenv.Start(t)
+	e.CreateRepo("web")
+	commit := e.CommitDirect("web", map[string]string{"src/x.go": "X\n", "docs/z.md": "Z\n", "docs/deep/w.md": "W\n"}, "seed")
+	ctx := context.Background()
+	g := e.Git("web")
+	defer g.Close()
+	// subtree returns the SHA of the tree entry name inside tree, read with git.
+	subtree := func(tree, name string) string {
+		t.Helper()
+		obj := testenv.Must(g.ReadObject(ctx, tree))
+		for _, e := range testenv.Must(objfmt.ParseTree(obj.Data)) {
+			if e.Name == name && e.IsTree() {
+				return e.SHA
+			}
+		}
+		t.Fatalf("no tree %q in %s", name, tree)
+		return ""
+	}
+	root := testenv.Must(g.ReadCommit(ctx, commit)).Tree
+	docsTree, srcTree := subtree(root, "docs"), subtree(root, "src")
+	deepTree := subtree(docsTree, "deep")
+
+	r := &recordingRepo{RepoClient: e.Repo(e.AdminToken), requested: map[string]bool{}}
+	files := testenv.Must(Tree(ctx, r, "web", commit, []string{"src"}))
+	if len(files) != 1 || files["src/x.go"].SHA == "" {
+		t.Fatalf("sparse tree = %v", files)
+	}
+	if !r.requested[srcTree] {
+		t.Fatal("the src tree must be fetched")
+	}
+	if r.requested[docsTree] || r.requested[deepTree] || r.requested[objfmt.BlobSHA([]byte("Z\n"))] {
+		t.Fatalf("a sparse walk of src requested objects under docs: %v", r.requested)
 	}
 }

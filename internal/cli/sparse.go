@@ -17,18 +17,28 @@ import (
 
 func cmdSparse(ctx context.Context, a *app, args []string) error {
 	const u = "sparse list | add <path>... | rm <path>..."
-	if len(args) == 0 {
+	// The subcommand is the first non-flag argument (`sg sparse --json list`).
+	at := slices.IndexFunc(args, func(s string) bool { return !strings.HasPrefix(s, "-") })
+	if at < 0 {
 		return usageErr(u)
 	}
-	sub := args[0]
+	sub := args[at]
 	fs := a.newFlags("sparse " + sub)
-	pos, err := parse(fs, args[1:])
+	pos, err := parse(fs, append(append([]string{}, args[:at]...), args[at+1:]...))
 	if err != nil {
 		return err
 	}
 	w, err := openWC(a)
 	if err != nil {
 		return err
+	}
+	if sub == "add" || sub == "rm" {
+		fresh, unlock, err := lockWC(w)
+		if err != nil {
+			return err
+		}
+		defer unlock()
+		w = fresh
 	}
 	switch sub {
 	case "list":
@@ -147,20 +157,25 @@ func cmdSparse(ctx context.Context, a *app, args []string) error {
 				return exitf(ExitError, "uncommitted change in %s; commit or revert it first", c.Path)
 			}
 		}
-		removed := 0
+		// Narrow the sparse set and save it before deleting anything: an
+		// interrupted removal then leaves only untracked files outside the set.
+		var drop []string
 		for _, p := range w.SortedPaths() {
 			if !wc.InSparse(remaining, p) {
-				if err := wc.RemoveLocal(w.Root, p); err != nil {
-					return err
-				}
+				drop = append(drop, p)
 				delete(w.Index, p)
-				removed++
 			}
 		}
 		w.Config.Sparse = remaining
 		if err := w.Save(); err != nil {
 			return err
 		}
+		for _, p := range drop {
+			if err := wc.RemoveLocal(w.Root, p); err != nil {
+				return err
+			}
+		}
+		removed := len(drop)
 		return a.emit(map[string]any{"sparse": remaining, "files_removed": removed}, func(out io.Writer) {
 			fmt.Fprintf(out, "sparse set: %v (%d files removed)\n", remaining, removed)
 		})

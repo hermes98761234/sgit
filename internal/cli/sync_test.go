@@ -10,6 +10,7 @@ import (
 
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
 	"github.com/hermes98761234/sgit/internal/testenv"
+	"github.com/hermes98761234/sgit/internal/wc"
 )
 
 func (h *harness) mainSHA() string {
@@ -340,5 +341,65 @@ func TestSyncFileBecomesDirUnchanged(t *testing.T) {
 	}
 	if _, m := h.status(w); len(m) != 0 {
 		t.Fatalf("status = %v", m)
+	}
+}
+
+func TestSyncRefusesWhileLocked(t *testing.T) {
+	h := newHarness(t)
+	h.seed(seedFiles)
+	w := h.checkout(t.TempDir())
+	base := readFile(t, filepath.Join(w, ".sg", "base"))
+	h.upstream(map[string]string{"a.txt": "A2\n"})
+	lw := testenv.Must(wc.Open(w))
+	unlock := testenv.Must(lw.Lock())
+	defer unlock()
+	code, _, errs := h.run(w, "sync")
+	if code != 1 || !strings.Contains(errs, "another sg command is running in this working copy") {
+		t.Fatalf("sync while locked: exit %d %q", code, errs)
+	}
+	if readFile(t, filepath.Join(w, "a.txt")) != "A\n" || readFile(t, filepath.Join(w, ".sg", "base")) != base {
+		t.Fatal("locked working copy was changed")
+	}
+	writeFile(t, filepath.Join(w, "a.txt"), "edited\n")
+	if _, m := h.status(w); m["a.txt"] != "modified" {
+		t.Fatalf("status must work while locked: %v", m)
+	}
+	if code, _, errs := h.run(w, "commit", "-m", "x"); code != 1 || !strings.Contains(errs, "another sg command") {
+		t.Fatalf("commit while locked: exit %d %q", code, errs)
+	}
+}
+
+func TestSyncRecordsConflictsBeforeApplying(t *testing.T) {
+	h := newHarness(t)
+	h.seed(map[string]string{"a/f.txt": "1\n2\n3\n", "b/g.txt": "1\n2\n3\n4\n5\n"})
+	w := h.checkout(t.TempDir())
+	writeFile(t, filepath.Join(w, "a", "f.txt"), "1\nL\n3\n")
+	writeFile(t, filepath.Join(w, "b", "g.txt"), "L1\n2\n3\n4\n5\n")
+	h.upstream(map[string]string{"a/f.txt": "1\nU\n3\n", "b/g.txt": "1\n2\n3\n4\nU5\n"})
+	bdir := filepath.Join(w, "b")
+	if err := os.Chmod(bdir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(bdir, 0o755) })
+	if code, _, errs := h.run(w, "sync"); code != 1 {
+		t.Fatalf("sync with an unwritable merge target: exit %d %q", code, errs)
+	}
+	if !strings.Contains(readFile(t, filepath.Join(w, "a", "f.txt")), "<<<<<<< main") {
+		t.Fatal("expected the conflicted merge to be written first")
+	}
+	if got := readFile(t, filepath.Join(w, ".sg", "conflicts")); got != "a/f.txt\n" {
+		t.Fatalf(".sg/conflicts = %q", got)
+	}
+}
+
+func TestCommitRefusesMarkersNotListedInConflicts(t *testing.T) {
+	h := newHarness(t)
+	h.seed(seedFiles)
+	w := h.checkout(t.TempDir())
+	writeFile(t, filepath.Join(w, "a.txt"), "<<<<<<< main\nA\n=======\nB\n>>>>>>> local\n")
+	writeFile(t, filepath.Join(w, "new.txt"), "x\n<<<<<<< main\ny\n")
+	code, _, errs := h.run(w, "commit", "-m", "m")
+	if code != 3 || !strings.Contains(errs, "a.txt") || !strings.Contains(errs, "new.txt") {
+		t.Fatalf("markers without .sg/conflicts: exit %d %q", code, errs)
 	}
 }

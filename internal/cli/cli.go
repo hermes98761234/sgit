@@ -51,7 +51,7 @@ func commandTable() []command {
 		{"checkout", "checkout <repo> [dir] [--path P]... [--at REV] [--server S]", cmdCheckout},
 		{"status", "status", cmdStatus},
 		{"diff", "diff [path...]", cmdDiff},
-		{"commit", "commit -m MSG [--title T] [--land]", cmdCommit},
+		{"commit", "commit -m MSG [--title T] [--land] [--draft ID]", cmdCommit},
 		{"land", "land [draft-id] [--repo R] [--server S]", cmdLand},
 		{"drafts", "drafts [--mine] [--status open|landed|abandoned|all] [--repo R] [--server S]", cmdDrafts},
 		{"show", "show <draft-id|rev> [--repo R] [--server S]", cmdShow},

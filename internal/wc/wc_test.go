@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -115,5 +116,48 @@ func TestRepoPath(t *testing.T) {
 	}
 	if _, err := w.RepoPath(sub, "../../outside"); err == nil {
 		t.Error("path outside the working copy must fail")
+	}
+}
+
+func TestLockIsExclusive(t *testing.T) {
+	w, err := Create(t.TempDir(), Config{Server: "s:1", Repo: "r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := w.Lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Lock(); err == nil || !strings.Contains(err.Error(), "another sg command is running") {
+		t.Fatalf("second lock: %v", err)
+	}
+	unlock()
+	unlock2, err := w.Lock()
+	if err != nil {
+		t.Fatalf("lock after unlock: %v", err)
+	}
+	unlock2()
+}
+
+func TestSaveIndexWritesOnlyIndex(t *testing.T) {
+	w, err := Create(t.TempDir(), Config{Server: "s:1", Repo: "r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Base = "b1"
+	if err := w.Save(); err != nil {
+		t.Fatal(err)
+	}
+	w.Base, w.Draft = "b2", "dddddddd"
+	w.Index["a"] = Entry{Path: "a", Mode: "100644", SHA: "s", Size: 1, MtimeNs: 2}
+	if err := w.SaveIndex(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Open(w.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Base != "b1" || got.Draft != "" || got.Index["a"] != w.Index["a"] {
+		t.Fatalf("after SaveIndex: base %q draft %q index %v", got.Base, got.Draft, got.Index)
 	}
 }

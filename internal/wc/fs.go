@@ -47,10 +47,39 @@ func ValidPath(p string) error {
 	return nil
 }
 
+// errBadParent means an ancestor of a repo path exists but is not a real
+// directory (a file, or a symlink that could lead outside the working copy).
+var errBadParent = errors.New("not a directory")
+
+// checkParents Lstats every ancestor of repo path p under root and fails if
+// one exists and is not a real directory. A missing ancestor is fine.
+func checkParents(root, p string) error {
+	dir := root
+	parts := strings.Split(p, "/")
+	for _, part := range parts[:len(parts)-1] {
+		dir = filepath.Join(dir, part)
+		fi, err := os.Lstat(dir)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !fi.IsDir() {
+			rel, _ := filepath.Rel(root, dir)
+			return fmt.Errorf("%s: %w", filepath.ToSlash(rel), errBadParent)
+		}
+	}
+	return nil
+}
+
 // ReadLocal returns the content of repo path p as git would store it (the
 // target for symlinks) and its mode.
 func ReadLocal(root, p string) ([]byte, string, error) {
 	if err := ValidPath(p); err != nil {
+		return nil, "", err
+	}
+	if err := checkParents(root, p); err != nil {
 		return nil, "", err
 	}
 	f := full(root, p)
@@ -130,6 +159,9 @@ func WriteLocal(root, p string, data []byte, mode string) error {
 // empty. The root itself is never removed.
 func RemoveLocal(root, p string) error {
 	if err := ValidPath(p); err != nil {
+		return err
+	}
+	if err := checkParents(root, p); err != nil {
 		return err
 	}
 	f := full(root, p)

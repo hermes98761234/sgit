@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/hermes98761234/sgit/internal/objfmt"
@@ -69,6 +70,13 @@ func (w *WC) Status() ([]Change, error) {
 			continue
 		}
 		e := w.Index[p]
+		// A tracked file under a symlink or a file is gone from the tree.
+		if err := checkParents(w.Root, p); errors.Is(err, errBadParent) {
+			out = append(out, Change{Path: p, Kind: Deleted})
+			continue
+		} else if err != nil {
+			return nil, err
+		}
 		fi, err := os.Lstat(w.Abs(p))
 		if errors.Is(err, os.ErrNotExist) {
 			out = append(out, Change{Path: p, Kind: Deleted})
@@ -116,7 +124,7 @@ func (w *WC) Status() ([]Change, error) {
 			}
 			return nil
 		}
-		if _, tracked := w.Index[p]; tracked || !InSparse(w.Config.Sparse, p) || ign.MatchesPath(p) {
+		if _, tracked := w.Index[p]; tracked || !InSparse(w.Config.Sparse, p) || ign.MatchesPath(p) || isTempFile(d.Name()) {
 			return nil
 		}
 		fi, err := d.Info()
@@ -139,4 +147,10 @@ func (w *WC) Status() ([]Change, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out, nil
+}
+
+// isTempFile reports whether name is a temp file left by an interrupted
+// atomic write (fsutil.WriteAtomic or WriteLocal's symlink swap).
+func isTempFile(name string) bool {
+	return (strings.HasPrefix(name, ".") && strings.Contains(name, ".tmp-")) || strings.HasSuffix(name, ".sg-tmp-link")
 }

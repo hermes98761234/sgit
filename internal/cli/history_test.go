@@ -60,6 +60,9 @@ func TestSparseAddRm(t *testing.T) {
 	if err := json.Unmarshal([]byte(h.ok(w, "sparse", "list", "--json")), &list); err != nil || len(list) != 1 || list[0] != "src" {
 		t.Fatalf("list = %v (%v)", list, err)
 	}
+	if err := json.Unmarshal([]byte(h.ok(w, "sparse", "--json", "list")), &list); err != nil || len(list) != 1 || list[0] != "src" {
+		t.Fatalf("sparse --json list = %v (%v)", list, err)
+	}
 	h.ok(w, "sparse", "add", "docs")
 	if readFile(t, filepath.Join(w, "docs", "d.md")) != "D\n" {
 		t.Fatal("sparse add did not fetch docs")
@@ -95,13 +98,13 @@ func TestNotLoggedInAndReadOnly(t *testing.T) {
 	if code, _, errs := h.runAs("nobody", t.TempDir(), "log", "--repo", "web"); code != 2 || !strings.Contains(errs, "not logged in") {
 		t.Fatalf("not logged in: exit %d %q", code, errs)
 	}
-	rita := h.env.NewUser("rita", "web", "read")
-	h.loginAs("rita", rita)
+	reader := h.env.NewUser("bob-reader", "web", "read")
+	h.loginAs("bob-reader", reader)
 	root := t.TempDir()
-	h.okAs("rita", root, "checkout", "web")
+	h.okAs("bob-reader", root, "checkout", "web")
 	w := filepath.Join(root, "web")
 	writeFile(t, filepath.Join(w, "a.txt"), "nope\n")
-	if code, _, _ := h.runAs("rita", w, "commit", "-m", "x"); code != 2 {
+	if code, _, _ := h.runAs("bob-reader", w, "commit", "-m", "x"); code != 2 {
 		t.Fatalf("read-only commit: exit %d, want 2", code)
 	}
 }
@@ -164,5 +167,56 @@ func TestSparseAddBlockedByFileAtAncestor(t *testing.T) {
 	var list []string
 	if err := json.Unmarshal([]byte(h.ok(w, "sparse", "list", "--json")), &list); err != nil || len(list) != 1 || list[0] != "src" {
 		t.Fatalf("list = %v (%v)", list, err)
+	}
+}
+
+var libFiles = map[string]string{"src/x.go": "X\n", "lib/l.txt": "L\n", "lib/sub/m.txt": "M\n"}
+
+func TestSparseRmDoesNotFollowSymlinkedDir(t *testing.T) {
+	h := newHarness(t)
+	h.seed(libFiles)
+	w := h.checkout(t.TempDir(), "--path", "src", "--path", "lib")
+	outside := t.TempDir()
+	writeFile(t, filepath.Join(outside, "l.txt"), "L\n")
+	writeFile(t, filepath.Join(outside, "sub", "m.txt"), "M\n")
+	if err := os.RemoveAll(filepath.Join(w, "lib")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(w, "lib")); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errs := h.run(w, "sparse", "rm", "lib")
+	if readFile(t, filepath.Join(outside, "l.txt")) != "L\n" || readFile(t, filepath.Join(outside, "sub", "m.txt")) != "M\n" {
+		t.Fatalf("sparse rm (exit %d, %q) deleted files outside the working copy", code, errs)
+	}
+	if code == 0 {
+		if _, err := os.Lstat(filepath.Join(w, "lib")); err == nil {
+			t.Fatal("sparse rm succeeded but left lib in place")
+		}
+	}
+	// Status must cope with the symlinked directory: its tracked files are gone.
+	if _, m := h.status(w); code != 0 && (m["lib/l.txt"] != "deleted" || m["lib/sub/m.txt"] != "deleted") {
+		t.Fatalf("status = %v", m)
+	}
+}
+
+func TestSparseRmNarrowsBeforeDeleting(t *testing.T) {
+	h := newHarness(t)
+	h.seed(libFiles)
+	w := h.checkout(t.TempDir(), "--path", "src", "--path", "lib")
+	sub := filepath.Join(w, "lib", "sub")
+	if err := os.Chmod(sub, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sub, 0o755) })
+	if code, _, _ := h.run(w, "sparse", "rm", "lib"); code != 1 {
+		t.Fatalf("sparse rm with an undeletable file: exit %d", code)
+	}
+	var list []string
+	if err := json.Unmarshal([]byte(h.ok(w, "sparse", "list", "--json")), &list); err != nil || len(list) != 1 || list[0] != "src" {
+		t.Fatalf("sparse set must be narrowed first: %v (%v)", list, err)
+	}
+	if _, m := h.status(w); len(m) != 0 {
+		t.Fatalf("status after a partial sparse rm = %v", m)
 	}
 }

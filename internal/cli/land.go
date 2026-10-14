@@ -6,6 +6,7 @@ import (
 	"io"
 
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
+	"github.com/hermes98761234/sgit/internal/wc"
 )
 
 func cmdLand(ctx context.Context, a *app, args []string) error {
@@ -33,7 +34,15 @@ func cmdLand(ctx context.Context, a *app, args []string) error {
 	if id == "" {
 		return exitf(ExitError, "no draft to land (commit first, or pass a draft id)")
 	}
-	touch := s.wc != nil && s.wc.Config.Server == s.server && s.wc.Config.Repo == s.name && s.wc.Draft == id
+	touch := s.ownsDraft(id)
+	if touch {
+		unlock, err := s.lock()
+		if err != nil {
+			return err
+		}
+		defer unlock()
+		touch = s.ownsDraft(id)
+	}
 	resp, err := s.repo.Land(ctx, &sgitv1.LandRequest{Repo: s.name, Id: id})
 	return a.finishLand(ctx, s, resp, err, touch)
 }
@@ -93,9 +102,21 @@ func (a *app) finishLand(ctx context.Context, s *session, resp *sgitv1.LandRespo
 	if w != nil && touchWC {
 		w.Draft = ""
 		if res, err = syncTo(ctx, s, resp.Commit); err != nil {
-			// syncTo left Base and Index alone; persist the cleared draft.
-			if serr := w.Save(); serr != nil {
+			// The in-memory w may hold a half-applied sync; never save it.
+			// Clear the draft on top of what is on disk instead.
+			disk, oerr := wc.Open(w.Root)
+			if oerr != nil {
+				return oerr
+			}
+			disk.Draft = ""
+			if serr := disk.Save(); serr != nil {
 				return serr
+			}
+			msg := errorMessage(err)
+			if eerr := a.emit(map[string]any{"landed": true, "commit": resp.Commit, "draft": resp.DraftId, "sync_error": msg}, func(out io.Writer) {
+				fmt.Fprintf(out, "landed %s (draft %s); the working copy was not updated: %s\n", short(resp.Commit), resp.DraftId, msg)
+			}); eerr != nil {
+				return eerr
 			}
 			return exitf(ExitError, "landed %s (draft %s), but the working copy was not updated: %v; fix that, then run `sg sync`", short(resp.Commit), resp.DraftId, err)
 		}

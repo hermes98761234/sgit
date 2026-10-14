@@ -42,6 +42,11 @@ func cmdSync(ctx context.Context, a *app, args []string) error {
 		return err
 	}
 	defer s.Close()
+	unlock, err := s.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	rr, err := s.repo.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Repo: s.name, Rev: "main"})
 	if err != nil {
 		return err
@@ -305,7 +310,32 @@ func syncTo(ctx context.Context, s *session, target string) (syncResult, error) 
 		}
 	}
 
-	// Phase D: apply locally.
+	// Phase D: apply locally. Record the conflicted paths first, so that an
+	// interruption can never leave conflict markers that .sg/conflicts does
+	// not list. Only Conflicts differs from the on-disk metadata here.
+	seen := map[string]bool{}
+	var conflicts []string
+	addConflict := func(p string) {
+		if !seen[p] {
+			seen[p] = true
+			conflicts = append(conflicts, p)
+		}
+	}
+	for _, p := range w.Conflicts {
+		addConflict(p)
+	}
+	pending := len(conflicts)
+	for _, m := range merges {
+		if m.conflicted {
+			addConflict(m.path)
+		}
+	}
+	if len(conflicts) > pending {
+		w.Conflicts = conflicts
+		if err := w.Save(); err != nil {
+			return res, err
+		}
+	}
 	for _, p := range removes {
 		if err := wc.RemoveLocal(w.Root, p); err != nil {
 			return res, err
@@ -344,14 +374,6 @@ func syncTo(ctx context.Context, s *session, target string) (syncResult, error) 
 		w.Index[p] = e
 	}
 	w.Base = target
-	seen := map[string]bool{}
-	var conflicts []string
-	for _, p := range append(append([]string{}, w.Conflicts...), res.Conflicts...) {
-		if !seen[p] {
-			seen[p] = true
-			conflicts = append(conflicts, p)
-		}
-	}
 	w.Conflicts = conflicts
 	return res, w.Save()
 }

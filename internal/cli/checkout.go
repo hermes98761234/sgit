@@ -2,11 +2,13 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"syscall"
 
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
 	"github.com/hermes98761234/sgit/internal/fetch"
@@ -42,6 +44,9 @@ func cmdCheckout(ctx context.Context, a *app, args []string) error {
 	if _, err := os.Stat(filepath.Join(dir, ".sg", "base")); err == nil {
 		return exitf(ExitError, "%s is already an sg working copy", dir)
 	}
+	if err := checkoutTarget(dir); err != nil {
+		return err
+	}
 	s, err := a.connect(target{server: *server, repo: repo, needRepo: true})
 	if err != nil {
 		return err
@@ -62,6 +67,11 @@ func cmdCheckout(ctx context.Context, a *app, args []string) error {
 	if err != nil {
 		return err
 	}
+	unlock, err := w.Lock()
+	if err != nil {
+		return exitf(ExitError, "%v", err)
+	}
+	defer unlock()
 	index, err := materialize(ctx, s.repo, repo, w.Root, files)
 	if err != nil {
 		return err
@@ -74,6 +84,25 @@ func cmdCheckout(ctx context.Context, a *app, args []string) error {
 	return a.emit(res, func(out io.Writer) {
 		fmt.Fprintf(out, "checked out %s@%s (%d files) into %s\n", repo, short(rr.Sha), len(index), w.Root)
 	})
+}
+
+// checkoutTarget accepts a missing or empty directory, or an interrupted
+// checkout to resume: .sg/ exists but .sg/base does not. Anything else would
+// put the user's files at risk.
+func checkoutTarget(dir string) error {
+	if fi, err := os.Stat(filepath.Join(dir, ".sg")); err == nil && fi.IsDir() {
+		return nil
+	}
+	entries, err := os.ReadDir(dir)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return nil
+	case err == nil && len(entries) == 0:
+		return nil
+	case err != nil && !errors.Is(err, syscall.ENOTDIR):
+		return err
+	}
+	return exitf(ExitError, "%s exists and is not empty", dir)
 }
 
 // materialize writes files under root and returns their index entries. Files

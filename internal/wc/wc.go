@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/BurntSushi/toml"
 	"github.com/hermes98761234/sgit/internal/fsutil"
@@ -186,14 +187,7 @@ func (w *WC) Save() error {
 	if err := fsutil.WriteAtomic(filepath.Join(m, "config"), cfg.Bytes(), 0o644); err != nil {
 		return err
 	}
-	var idx bytes.Buffer
-	enc := json.NewEncoder(&idx)
-	for _, p := range w.SortedPaths() {
-		if err := enc.Encode(w.Index[p]); err != nil {
-			return err
-		}
-	}
-	if err := fsutil.WriteAtomic(filepath.Join(m, "index"), idx.Bytes(), 0o644); err != nil {
+	if err := w.SaveIndex(); err != nil {
 		return err
 	}
 	var draft []byte
@@ -212,4 +206,41 @@ func (w *WC) Save() error {
 		return err
 	}
 	return fsutil.WriteAtomic(filepath.Join(m, "base"), []byte(w.Base+"\n"), 0o644)
+}
+
+// SaveIndex writes only .sg/index (atomically). Status uses it to persist a
+// refreshed stat cache without rewriting the rest of the metadata.
+func (w *WC) SaveIndex() error {
+	var idx bytes.Buffer
+	enc := json.NewEncoder(&idx)
+	for _, p := range w.SortedPaths() {
+		if err := enc.Encode(w.Index[p]); err != nil {
+			return err
+		}
+	}
+	return fsutil.WriteAtomic(filepath.Join(w.Root, metaDir, "index"), idx.Bytes(), 0o644)
+}
+
+// ErrLocked means another sg command holds the working-copy lock.
+var ErrLocked = errors.New("another sg command is running in this working copy")
+
+// Lock takes an exclusive, non-blocking lock on .sg/lock. It fails with
+// ErrLocked while another process (or another open of the same working copy)
+// holds it. The returned func releases the lock.
+func (w *WC) Lock() (unlock func(), err error) {
+	f, err := os.OpenFile(filepath.Join(w.Root, metaDir, "lock"), os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, ErrLocked
+		}
+		return nil, fmt.Errorf("lock .sg/lock: %w", err)
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		f.Close()
+	}, nil
 }

@@ -133,3 +133,31 @@ func TestStatEntry(t *testing.T) {
 		t.Fatalf("StatEntry = %+v, %v", e, err)
 	}
 }
+
+func TestRemoveAndReadRefuseSymlinkedParent(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "x"), []byte("precious"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "lib")); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveLocal(root, "lib/x"); err == nil {
+		t.Fatal("RemoveLocal through a symlinked directory must fail")
+	}
+	if _, _, err := ReadLocal(root, "lib/x"); err == nil {
+		t.Fatal("ReadLocal through a symlinked directory must fail")
+	}
+	if b, err := os.ReadFile(filepath.Join(outside, "x")); err != nil || string(b) != "precious" {
+		t.Fatalf("outside file damaged: %q %v", b, err)
+	}
+	// A file where a directory is expected is an error too; a missing parent is not.
+	_ = os.WriteFile(filepath.Join(root, "f"), []byte("f"), 0o644)
+	if err := RemoveLocal(root, "f/y"); err == nil {
+		t.Fatal("RemoveLocal under a regular file must fail")
+	}
+	if err := RemoveLocal(root, "missing/y"); err != nil {
+		t.Fatalf("missing parent: %v", err)
+	}
+}

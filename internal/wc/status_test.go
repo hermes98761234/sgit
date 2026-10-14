@@ -246,3 +246,42 @@ func TestStatusSkipsInvalidRepoPaths(t *testing.T) {
 		t.Fatalf("changes = %+v", changes)
 	}
 }
+
+func TestStatusTrackedFileUnderSymlinkedDirIsDeleted(t *testing.T) {
+	w := newWC(t)
+	track(t, w, "lib/x", "x\n", "100644")
+	track(t, w, "keep.txt", "k\n", "100644")
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "x"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(w.Abs("lib")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, w.Abs("lib")); err != nil {
+		t.Fatal(err)
+	}
+	got := kinds(testStatus(t, w))
+	if len(got) != 2 || got["lib/x"] != Deleted || got["lib"] != Added {
+		t.Fatalf("status = %v", got)
+	}
+}
+
+func TestStatusSkipsSgTempFiles(t *testing.T) {
+	w := newWC(t)
+	track(t, w, "keep.txt", "k\n", "100644")
+	for _, p := range []string{".keep.txt.tmp-123456", "d/.x.go.tmp-9", "link.sg-tmp-link"} {
+		if err := os.MkdirAll(filepath.Dir(w.Abs(p)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(w.Abs(p), []byte("tmp"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = os.WriteFile(w.Abs(".env"), []byte("real"), 0o644)
+	_ = os.WriteFile(w.Abs("a.tmp-1"), []byte("real"), 0o644)
+	got := kinds(testStatus(t, w))
+	if len(got) != 2 || got[".env"] != Added || got["a.tmp-1"] != Added {
+		t.Fatalf("status = %v", got)
+	}
+}

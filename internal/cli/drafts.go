@@ -141,11 +141,20 @@ func cmdAbandon(ctx context.Context, a *app, args []string) error {
 	if id == "" {
 		return exitf(ExitError, "no draft to abandon")
 	}
+	touch := s.ownsDraft(id)
+	if touch {
+		unlock, err := s.lock()
+		if err != nil {
+			return err
+		}
+		defer unlock()
+		touch = s.ownsDraft(id)
+	}
 	d, err := s.repo.AbandonDraft(ctx, &sgitv1.AbandonDraftRequest{Repo: s.name, Id: id})
 	if err != nil {
 		return err
 	}
-	if s.wc != nil && s.wc.Draft == id {
+	if touch {
 		s.wc.Draft = ""
 		if err := s.wc.Save(); err != nil {
 			return err

@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
+
+	"github.com/hermes98761234/sgit/internal/wc"
 )
 
 func cmdStatus(ctx context.Context, a *app, args []string) error {
@@ -19,12 +22,13 @@ func cmdStatus(ctx context.Context, a *app, args []string) error {
 	if err != nil {
 		return err
 	}
+	before := maps.Clone(w.Index)
 	changes, err := w.Status()
 	if err != nil {
 		return err
 	}
-	if err := w.Save(); err != nil { // persist the refreshed stat cache
-		return err
+	if !maps.Equal(before, w.Index) {
+		saveStatCache(w, before)
 	}
 	type item struct {
 		Path   string `json:"path"`
@@ -57,4 +61,21 @@ func cmdStatus(ctx context.Context, a *app, args []string) error {
 			fmt.Fprintf(out, "  %-9s %s\n", "conflict:", p)
 		}
 	})
+}
+
+// saveStatCache persists the stat cache that Status refreshed, as a best
+// effort: only when the working-copy lock is free right now, and only when
+// the index on disk is still the one Status started from (before). Otherwise
+// it skips silently; the next status re-hashes.
+func saveStatCache(w *wc.WC, before map[string]wc.Entry) {
+	unlock, err := w.Lock()
+	if err != nil {
+		return
+	}
+	defer unlock()
+	disk, err := wc.Open(w.Root)
+	if err != nil || disk.Base != w.Base || !maps.Equal(disk.Index, before) {
+		return
+	}
+	_ = w.SaveIndex()
 }

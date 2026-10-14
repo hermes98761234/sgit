@@ -182,3 +182,26 @@ func TestCommitLargeFile(t *testing.T) {
 		t.Fatal("big file corrupted")
 	}
 }
+
+func TestCommitDraftFlagUpdatesThatDraft(t *testing.T) {
+	h := newHarness(t)
+	h.seed(seedFiles)
+	w := h.checkout(t.TempDir())
+	writeFile(t, filepath.Join(w, "a.txt"), "v1\n")
+	h.ok(w, "commit", "-m", "v1")
+	id := h.draftOf(w)
+	if err := os.Remove(filepath.Join(w, ".sg", "draft")); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(w, "a.txt"), "v2\n")
+	out := h.ok(w, "commit", "-m", "v2", "--draft", id)
+	if !strings.Contains(out, id) || !strings.Contains(out, "v2") || h.draftOf(w) != id {
+		t.Fatalf("commit --draft = %q, .sg/draft = %q", out, h.draftOf(w))
+	}
+	if h.env.Files("web", h.getDraft(id).Head)["a.txt"] != "v2\n" {
+		t.Fatal("draft not updated")
+	}
+	if code, _, _ := h.run(w, "commit", "-m", "x", "--draft", "NOT-AN-ID"); code != 1 {
+		t.Fatalf("bad draft id: exit %d", code)
+	}
+}

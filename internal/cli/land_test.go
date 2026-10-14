@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -169,31 +170,99 @@ func TestLandExhaustedExit4(t *testing.T) {
 }
 
 func TestLandSucceedsButSyncBlocked(t *testing.T) {
+	for _, asJSON := range []bool{false, true} {
+		t.Run(fmt.Sprintf("json=%v", asJSON), func(t *testing.T) {
+			h := newHarness(t)
+			h.seed(seedFiles)
+			w := h.checkout(t.TempDir())
+			h.upstream(map[string]string{"d/u.txt": "U\n"})
+			writeFile(t, filepath.Join(w, "a.txt"), "landed\n")
+			h.ok(w, "commit", "-m", "x")
+			id := h.draftOf(w)
+			// created after the commit, so it is not part of the draft
+			writeFile(t, filepath.Join(w, "d"), "local\n")
+			args := []string{"land"}
+			if asJSON {
+				args = append(args, "--json")
+			}
+			code, out, errs := h.run(w, args...)
+			if code != 1 || !strings.Contains(errs, "landed") {
+				t.Fatalf("exit %d: %s", code, errs)
+			}
+			if asJSON {
+				var res struct {
+					Landed    bool   `json:"landed"`
+					Commit    string `json:"commit"`
+					Draft     string `json:"draft"`
+					SyncError string `json:"sync_error"`
+				}
+				if err := json.Unmarshal([]byte(out), &res); err != nil {
+					t.Fatalf("json %q: %v", out, err)
+				}
+				if !res.Landed || res.Commit != h.mainSHA() || res.Draft != id || res.SyncError == "" {
+					t.Fatalf("json = %+v", res)
+				}
+			} else if !strings.Contains(out, "landed") {
+				t.Fatalf("stdout = %q", out)
+			}
+			if h.env.Files("web", "main")["a.txt"] != "landed\n" {
+				t.Fatal("change not on main")
+			}
+			if h.draftOf(w) != "" {
+				t.Fatal("draft must be cleared after landing")
+			}
+			if readFile(t, filepath.Join(w, "d")) != "local\n" {
+				t.Fatal("local file d clobbered")
+			}
+			if err := os.Remove(filepath.Join(w, "d")); err != nil {
+				t.Fatal(err)
+			}
+			h.ok(w, "sync")
+		})
+	}
+}
+
+func TestCommitAfterDraftLandedElsewhere(t *testing.T) {
 	h := newHarness(t)
 	h.seed(seedFiles)
 	w := h.checkout(t.TempDir())
-	h.upstream(map[string]string{"d/u.txt": "U\n"})
-	writeFile(t, filepath.Join(w, "a.txt"), "landed\n")
-	h.ok(w, "commit", "-m", "x")
-	// created after the commit, so it is not part of the draft
-	writeFile(t, filepath.Join(w, "d"), "local\n")
-	code, _, errs := h.run(w, "land")
-	if code != 1 || !strings.Contains(errs, "landed") {
-		t.Fatalf("exit %d: %s", code, errs)
+	landElsewhere := func() string {
+		id := h.draftOf(w)
+		testenv.Must(h.env.Repo(h.env.AdminToken).Land(context.Background(), &sgitv1.LandRequest{Repo: "web", Id: id}))
+		return id
 	}
-	if h.env.Files("web", "main")["a.txt"] != "landed\n" {
-		t.Fatal("change not on main")
+	writeFile(t, filepath.Join(w, "a.txt"), "one\n")
+	h.ok(w, "commit", "-m", "one")
+	old := landElsewhere()
+	writeFile(t, filepath.Join(w, "a.txt"), "two\n")
+	h.ok(w, "commit", "-m", "two")
+	if nd := h.draftOf(w); nd == "" || nd == old {
+		t.Fatalf("commit: expected a new draft, got %q (old %q)", nd, old)
+	}
+
+	// The same through commit --land, in a fresh working copy on the new main.
+	w = h.checkout(t.TempDir())
+	writeFile(t, filepath.Join(w, "src", "x.go"), "X2\n")
+	h.ok(w, "commit", "-m", "x2")
+	old = landElsewhere()
+	writeFile(t, filepath.Join(w, "new.txt"), "new\n")
+	code, out, errs := h.run(w, "commit", "-m", "three", "--land", "--json")
+	if code != 0 {
+		t.Fatalf("commit --land: exit %d\n%s\n%s", code, out, errs)
+	}
+	var res struct {
+		Landed bool   `json:"landed"`
+		Draft  string `json:"draft"`
+	}
+	if err := json.Unmarshal([]byte(out), &res); err != nil || !res.Landed || res.Draft == "" || res.Draft == old {
+		t.Fatalf("commit --land = %+v (%v), old draft %q", res, err, old)
+	}
+	if files := h.env.Files("web", "main"); files["new.txt"] != "new\n" || files["src/x.go"] != "X2\n" {
+		t.Fatalf("main = %v", files)
 	}
 	if h.draftOf(w) != "" {
 		t.Fatal("draft must be cleared after landing")
 	}
-	if readFile(t, filepath.Join(w, "d")) != "local\n" {
-		t.Fatal("local file d clobbered")
-	}
-	if err := os.Remove(filepath.Join(w, "d")); err != nil {
-		t.Fatal(err)
-	}
-	h.ok(w, "sync")
 }
 
 func TestLandConflictSyncBlockedKeepsExit3(t *testing.T) {

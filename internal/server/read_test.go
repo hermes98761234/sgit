@@ -92,7 +92,7 @@ func TestReadPermissions(t *testing.T) {
 	e := testenv.Start(t)
 	e.CreateRepo("web")
 	ctx := context.Background()
-	reader := e.NewUser("rita", "web", "read")
+	reader := e.NewUser("bob-reader", "web", "read")
 	stranger := e.NewUser("sam", "", "")
 	testenv.Must(e.Repo(reader).ResolveRev(ctx, &sgitv1.ResolveRevRequest{Repo: "web"}))
 	if _, err := rpc.UploadBlobs(ctx, e.Repo(reader), "web", [][]byte{[]byte("x")}); status.Code(err) != codes.PermissionDenied {

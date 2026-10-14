@@ -23,27 +23,36 @@ func cmdCommit(ctx context.Context, a *app, args []string) error {
 	msg := fs.String("m", "", "commit message (required)")
 	title := fs.String("title", "", "draft title (default: first line of the message)")
 	land := fs.Bool("land", false, "land on main right away (rebase on the server)")
+	draft := fs.String("draft", "", "update this draft instead of the one in .sg/draft")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) != 0 {
-		return usageErr("commit -m MSG [--title T] [--land]")
+		return usageErr("commit -m MSG [--title T] [--land] [--draft ID]")
 	}
 	if strings.TrimSpace(*msg) == "" {
 		return exitf(ExitError, "a commit message is required (-m)")
+	}
+	if *draft != "" && !draftIDRe.MatchString(*draft) {
+		return exitf(ExitError, "invalid draft id %q", *draft)
 	}
 	s, err := a.connect(target{needWC: true, needRepo: true})
 	if err != nil {
 		return err
 	}
 	defer s.Close()
-	w := s.wc
-	if err := checkConflicts(w); err != nil {
+	unlock, err := s.lock()
+	if err != nil {
 		return err
 	}
+	defer unlock()
+	w := s.wc
 	changes, err := w.Status()
 	if err != nil {
+		return err
+	}
+	if err := checkConflicts(w, changes); err != nil {
 		return err
 	}
 	if len(changes) == 0 {
@@ -52,6 +61,9 @@ func cmdCommit(ctx context.Context, a *app, args []string) error {
 	pb, err := uploadChanges(ctx, s, changes)
 	if err != nil {
 		return err
+	}
+	if *draft != "" {
+		w.Draft = *draft
 	}
 	if *land {
 		return a.commitAndLand(ctx, s, pb, *title, *msg)
@@ -74,10 +86,14 @@ func hasMarkers(b []byte) bool {
 }
 
 // checkConflicts drops resolved paths from w.Conflicts and fails while any
-// listed file still contains conflict markers.
-func checkConflicts(w *wc.WC) error {
+// listed file still contains conflict markers. As a second line of defence
+// (a sync interrupted before it recorded its conflicts), every added or
+// modified regular file in changes is scanned for markers too.
+func checkConflicts(w *wc.WC, changes []wc.Change) error {
 	var still []string
+	listed := map[string]bool{}
 	for _, p := range w.Conflicts {
+		listed[p] = true
 		if data, _, err := wc.ReadLocal(w.Root, p); err == nil && hasMarkers(data) {
 			still = append(still, p)
 		}
@@ -88,8 +104,22 @@ func checkConflicts(w *wc.WC) error {
 			return err
 		}
 	}
-	if len(still) > 0 {
-		return exitf(ExitConflict, "unresolved conflicts in %s (remove the conflict markers first)", strings.Join(still, ", "))
+	bad := append([]string{}, still...)
+	for _, c := range changes {
+		if listed[c.Path] || c.Kind == wc.Deleted || c.Mode == "120000" {
+			continue
+		}
+		data, _, err := wc.ReadLocal(w.Root, c.Path)
+		if err != nil {
+			return err
+		}
+		if hasMarkers(data) {
+			bad = append(bad, c.Path)
+		}
+	}
+	if len(bad) > 0 {
+		sort.Strings(bad)
+		return exitf(ExitConflict, "unresolved conflicts in %s (remove the conflict markers first)", strings.Join(bad, ", "))
 	}
 	return nil
 }
@@ -130,6 +160,9 @@ func uploadMissing(ctx context.Context, s *session, paths map[string]string) err
 		resp, err := s.repo.HasObjects(ctx, &sgitv1.HasObjectsRequest{Repo: s.name, Shas: chunk})
 		if err != nil {
 			return err
+		}
+		if len(resp.Present) != len(chunk) {
+			return fmt.Errorf("server answered HasObjects with %d flags for %d objects", len(resp.Present), len(chunk))
 		}
 		for i, ok := range resp.Present {
 			if !ok {

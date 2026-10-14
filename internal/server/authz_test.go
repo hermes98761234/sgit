@@ -19,7 +19,7 @@ func TestAuthorizationMatrix(t *testing.T) {
 	shas := e.Upload(e.AdminToken, "web", []byte("blob\n"))
 	d := testenv.Must(e.Repo(e.AdminToken).CreateDraft(ctx, &sgitv1.CreateDraftRequest{
 		Repo: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("a.txt", shas[0])}, Message: "a"}))
-	reader := e.NewUser("rita", "web", "read")
+	reader := e.NewUser("bob-reader", "web", "read")
 	stranger := e.NewUser("sam", "", "")
 	plain := e.NewUser("pat", "web", "write")
 
@@ -90,15 +90,15 @@ func TestAuthorizationMatrix(t *testing.T) {
 		{"CreateToken", func() error { _, err := ac.CreateToken(ctx, &sgitv1.CreateTokenRequest{User: "zed"}); return err }},
 		{"RevokeToken", func() error { _, err := ac.RevokeToken(ctx, &sgitv1.RevokeTokenRequest{Id: "abc"}); return err }},
 		{"GrantACL", func() error {
-			_, err := ac.GrantACL(ctx, &sgitv1.GrantACLRequest{User: "rita", Repo: "web", Level: "write"})
+			_, err := ac.GrantACL(ctx, &sgitv1.GrantACLRequest{User: "bob-reader", Repo: "web", Level: "write"})
 			return err
 		}},
 		{"GrantACL bad level", func() error {
-			_, err := ac.GrantACL(ctx, &sgitv1.GrantACLRequest{User: "rita", Repo: "web", Level: "bogus"})
+			_, err := ac.GrantACL(ctx, &sgitv1.GrantACLRequest{User: "bob-reader", Repo: "web", Level: "bogus"})
 			return err
 		}},
 		{"RevokeACL", func() error {
-			_, err := ac.RevokeACL(ctx, &sgitv1.RevokeACLRequest{User: "rita", Repo: "web"})
+			_, err := ac.RevokeACL(ctx, &sgitv1.RevokeACLRequest{User: "bob-reader", Repo: "web"})
 			return err
 		}},
 	})

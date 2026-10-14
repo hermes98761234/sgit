@@ -78,6 +78,10 @@ func TestCheckoutResumes(t *testing.T) {
 	h.seed(seedFiles)
 	root := t.TempDir()
 	w := filepath.Join(root, "web")
+	// An interrupted checkout leaves .sg/ (without .sg/base) and partial files.
+	if err := os.MkdirAll(filepath.Join(w, ".sg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	writeFile(t, filepath.Join(w, "a.txt"), "A\n")
 	writeFile(t, filepath.Join(w, "src", "x.go"), "WRONG half-written\n")
 	writeFile(t, filepath.Join(w, "extra.txt"), "mine\n")
@@ -90,6 +94,34 @@ func TestCheckoutResumes(t *testing.T) {
 	}
 	if _, m := h.status(w); len(m) != 1 || m["extra.txt"] != "added" {
 		t.Fatalf("status after resume = %v", m)
+	}
+}
+
+func TestCheckoutRefusesNonEmptyDir(t *testing.T) {
+	h := newHarness(t)
+	h.seed(seedFiles)
+	root := t.TempDir()
+	w := filepath.Join(root, "web")
+	writeFile(t, filepath.Join(w, "a.txt"), "mine")
+	writeFile(t, filepath.Join(w, "src"), "my file")
+	code, _, errs := h.run(root, "checkout", "web")
+	if code != 1 || !strings.Contains(errs, "exists and is not empty") {
+		t.Fatalf("checkout into a non-empty dir: exit %d %q", code, errs)
+	}
+	if readFile(t, filepath.Join(w, "a.txt")) != "mine" || readFile(t, filepath.Join(w, "src")) != "my file" {
+		t.Fatal("user files were changed")
+	}
+	if _, err := os.Stat(filepath.Join(w, ".sg")); err == nil {
+		t.Fatal(".sg must not be created")
+	}
+	// An empty directory is fine.
+	empty := filepath.Join(root, "empty")
+	if err := os.Mkdir(empty, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h.ok(root, "checkout", "web", "empty")
+	if readFile(t, filepath.Join(empty, "a.txt")) != "A\n" {
+		t.Fatal("checkout into an empty dir failed")
 	}
 }
 

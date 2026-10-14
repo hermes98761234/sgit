@@ -39,6 +39,37 @@ func openWC(a *app) (*wc.WC, error) {
 	return w, err
 }
 
+// lockWC takes the working-copy lock and reloads the metadata, so the
+// command works on the state as of the lock rather than the earlier open.
+func lockWC(w *wc.WC) (*wc.WC, func(), error) {
+	unlock, err := w.Lock()
+	if err != nil {
+		return nil, nil, exitf(ExitError, "%v", err)
+	}
+	fresh, err := wc.Open(w.Root)
+	if err != nil {
+		unlock()
+		return nil, nil, err
+	}
+	return fresh, unlock, nil
+}
+
+// lock locks the session's working copy and reloads it (see lockWC).
+func (s *session) lock() (func(), error) {
+	w, unlock, err := lockWC(s.wc)
+	if err != nil {
+		return nil, err
+	}
+	s.wc = w
+	return unlock, nil
+}
+
+// ownsDraft reports whether draft id belongs to the session's working copy
+// (same server and repo, and recorded in .sg/draft).
+func (s *session) ownsDraft(id string) bool {
+	return s.wc != nil && s.wc.Config.Server == s.server && s.wc.Config.Repo == s.name && s.wc.Draft == id
+}
+
 func (a *app) connect(t target) (*session, error) {
 	w, err := wc.Open(a.io.Dir)
 	switch {
