@@ -61,6 +61,9 @@ func commandTable() []command {
 		{"blame", "blame <path> [--rev REV] [--repo R] [--server S]", cmdBlame},
 		{"cat", "cat <rev>:<path> [--repo R] [--server S]", cmdCat},
 		{"sparse", "sparse list | add <path>... | rm <path>...", cmdSparse},
+		{"repo", repoUsage, cmdRepo},
+		{"token", tokenUsage, cmdToken},
+		{"acl", aclUsage, cmdACL},
 	}
 }
 

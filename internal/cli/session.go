@@ -34,10 +34,11 @@ func (s *session) Close() {
 // target says which server/repo a command needs; empty fields come from the
 // working copy, then from the default login.
 type target struct {
-	server   string
-	repo     string
-	needWC   bool
-	needRepo bool
+	server    string
+	repo      string
+	needWC    bool
+	needRepo  bool
+	adminOnly bool // Admin RPCs only: never dial sgd
 }
 
 func openWC(a *app) (*wc.WC, error) {
@@ -120,7 +121,7 @@ func (a *app) connect(t target) (*session, error) {
 	}
 	repoConn := grpc.ClientConnInterface(conn)
 	var cached *grpc.ClientConn
-	if os.Getenv("SG_NO_DAEMON") == "" {
+	if os.Getenv("SG_NO_DAEMON") == "" && !t.adminOnly {
 		sock := client.DefaultSocket()
 		dc, err := client.DialDaemon(context.Background(), sock, name, cred.Token)
 		switch {
