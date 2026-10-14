@@ -94,8 +94,14 @@ func waitStatus(t *testing.T, ac sgitv1.AdminClient, repo string, cond func(*sgi
 	}
 }
 
+// landFile lands one file through the whole-repo project named after repo,
+// creating that project on first use.
 func landFile(t *testing.T, e *testenv.Env, repo, base, path, content string) string {
 	t.Helper()
+	if _, err := e.Store.ResolveProject(context.Background(), repo); err != nil {
+		e.CreateProject(repo)
+		e.Mount(repo, ".", repo, ".", false)
+	}
 	shas := e.Upload(e.AdminToken, repo, []byte(content))
 	resp := testenv.Must(e.Project(e.AdminToken).CommitAndLand(context.Background(), &sgitv1.CommitAndLandRequest{
 		Project: repo, Base: base, Changes: []*sgitv1.Change{testenv.Add(path, shas[0])}, Message: "add " + path,
@@ -268,7 +274,7 @@ func TestListRepos(t *testing.T) {
 func TestRepoAdminRPCsNeedAdmin(t *testing.T) {
 	e := mirrorEnv(t)
 	ctx := context.Background()
-	e.CreateRepo("web")
+	e.CreateRepoProject("web") // bob holds write on the project
 	bob := e.Admin(e.NewUser("bob", "web", "write"))
 	src, _ := sourceRepo(t)
 	calls := map[string]error{}

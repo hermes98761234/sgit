@@ -35,34 +35,47 @@ func firstLine(s string) string {
 	return strings.TrimSpace(l)
 }
 
-func draftPB(d store.Draft) *sgitv1.Draft {
+func draftPB(d store.Draft, project string) *sgitv1.Draft {
 	return &sgitv1.Draft{
-		Id: d.ID, Project: d.Repo, Owner: d.OwnerName, Title: d.Title, Base: d.Base, Head: d.Head,
+		Id: d.ID, Project: project, Owner: d.OwnerName, Title: d.Title, Base: d.Base, Head: d.Head,
 		Version: int32(d.Version), Status: d.Status, LandedAs: d.LandedAs,
 		CreatedAt: d.CreatedAt.Unix(), UpdatedAt: d.UpdatedAt.Unix(),
 	}
 }
 
-// buildDraftCommit creates (without any ref) a commit = base + changes.
-func (r *repoService) buildDraftCommit(ctx context.Context, h *repoHandle, u store.User, base string, changes []*sgitv1.Change, message string) (string, error) {
+// buildDraftCommit creates (without any ref) a commit = base + changes. The
+// base must be a project commit and every path must be writable (§6.1).
+func (r *projectService) buildDraftCommit(ctx context.Context, pr *proj, u store.User, base string, changes []*sgitv1.Change, message string) (string, error) {
 	if strings.TrimSpace(message) == "" {
 		return "", status.Error(codes.InvalidArgument, "commit message required")
 	}
 	if !gitx.IsSHA(base) {
 		return "", status.Errorf(codes.InvalidArgument, "invalid base %q", base)
 	}
-	bc, err := h.git.ReadCommit(ctx, base)
+	if ok, err := r.s.store.IsProjectCommit(ctx, pr.p.ID, base); err != nil {
+		return "", r.s.toStatus(ctx, err)
+	} else if !ok {
+		return "", status.Errorf(codes.InvalidArgument, "base commit %s not found", base)
+	}
+	bc, err := pr.h.Git.ReadCommit(ctx, base)
 	if errors.Is(err, gitx.ErrNotFound) || errors.Is(err, gitx.ErrInvalid) {
 		return "", status.Errorf(codes.InvalidArgument, "base commit %s not found", base)
 	}
 	if err != nil {
 		return "", err
 	}
-	gc, err := r.s.convertChanges(ctx, h, changes)
+	gc, err := r.s.convertChanges(ctx, pr.h.Git, changes)
 	if err != nil {
 		return "", err
 	}
-	tree, err := h.git.BuildTree(ctx, base, gc)
+	paths := make([]string, len(gc))
+	for i, c := range gc {
+		paths[i] = c.Path
+	}
+	if err := checkPaths(pr.mounts, paths); err != nil {
+		return "", err
+	}
+	tree, err := pr.h.Git.BuildTree(ctx, base, gc)
 	if err != nil {
 		return "", err
 	}
@@ -70,11 +83,11 @@ func (r *repoService) buildDraftCommit(ctx context.Context, h *repoHandle, u sto
 		return "", status.Error(codes.InvalidArgument, "changes produce no difference from base")
 	}
 	sig := r.s.sig(u)
-	return h.git.CommitTree(ctx, tree, []string{base}, message, sig, sig)
+	return pr.h.Git.CommitTree(ctx, tree, []string{base}, message, sig, sig)
 }
 
-func (r *repoService) createDraft(ctx context.Context, h *repoHandle, u store.User, base string, changes []*sgitv1.Change, title, message string) (store.Draft, error) {
-	c, err := r.buildDraftCommit(ctx, h, u, base, changes, message)
+func (r *projectService) createDraft(ctx context.Context, pr *proj, u store.User, base string, changes []*sgitv1.Change, title, message string) (store.Draft, error) {
+	c, err := r.buildDraftCommit(ctx, pr, u, base, changes, message)
 	if err != nil {
 		return store.Draft{}, err
 	}
@@ -84,26 +97,33 @@ func (r *repoService) createDraft(ctx context.Context, h *repoHandle, u store.Us
 	}
 	// From the first ref write on, a cancelled client must not leave a partial draft.
 	bg := context.WithoutCancel(ctx)
-	if err := h.git.UpdateRef(bg, headRef(id), c, ""); err != nil {
+	if err := pr.h.Git.UpdateRef(bg, headRef(id), c, ""); err != nil {
 		return store.Draft{}, err
 	}
-	if err := h.git.UpdateRef(bg, versionRef(id, 1), c, ""); err != nil {
+	if err := pr.h.Git.UpdateRef(bg, versionRef(id, 1), c, ""); err != nil {
 		return store.Draft{}, err
 	}
 	if title == "" {
 		title = firstLine(message)
 	}
 	now := r.s.cfg.Now()
-	d := store.Draft{ID: id, Repo: h.name, OwnerID: u.ID, OwnerName: u.Name, Title: title, Base: base, Head: c,
+	d := store.Draft{ID: id, ProjectID: pr.p.ID, OwnerID: u.ID, OwnerName: u.Name, Title: title, Base: base, Head: c,
 		Version: 1, Status: store.DraftOpen, CreatedAt: now, UpdatedAt: now}
-	return d, r.s.store.InsertDraft(bg, d)
+	// The insert is refused if the project was deleted meanwhile.
+	if err := r.s.store.InsertDraft(bg, d); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return d, auth.ProjectNotFound(pr.ref)
+		}
+		return d, err
+	}
+	return d, nil
 }
 
-func (r *repoService) loadOwnedOpenDraft(ctx context.Context, h *repoHandle, u store.User, id string) (store.Draft, error) {
+func (r *projectService) loadOwnedOpenDraft(ctx context.Context, pr *proj, u store.User, id string) (store.Draft, error) {
 	if !draftIDRe.MatchString(id) {
 		return store.Draft{}, status.Errorf(codes.InvalidArgument, "invalid draft id %q", id)
 	}
-	d, err := r.s.store.GetDraft(ctx, h.name, id)
+	d, err := r.s.store.GetDraft(ctx, pr.p.ID, id)
 	if err != nil {
 		return d, err
 	}
@@ -116,18 +136,21 @@ func (r *repoService) loadOwnedOpenDraft(ctx context.Context, h *repoHandle, u s
 	return d, nil
 }
 
-func (r *repoService) updateDraft(ctx context.Context, h *repoHandle, u store.User, id, base string, changes []*sgitv1.Change, message string) (store.Draft, error) {
-	h.landMu.Lock()
-	defer h.landMu.Unlock()
-	d, err := r.loadOwnedOpenDraft(ctx, h, u, id)
+func (r *projectService) updateDraft(ctx context.Context, pr *proj, u store.User, id, base string, changes []*sgitv1.Change, message string) (store.Draft, error) {
+	unlock, err := r.s.lock(ctx, pr)
+	if err != nil {
+		return store.Draft{}, err
+	}
+	defer unlock()
+	d, err := r.loadOwnedOpenDraft(ctx, pr, u, id)
 	if err != nil {
 		return d, err
 	}
-	c, err := r.buildDraftCommit(ctx, h, u, base, changes, message)
+	c, err := r.buildDraftCommit(ctx, pr, u, base, changes, message)
 	if err != nil {
 		return d, err
 	}
-	if err := h.git.UpdateRef(ctx, headRef(id), c, d.Head); err != nil {
+	if err := pr.h.Git.UpdateRef(ctx, headRef(id), c, d.Head); err != nil {
 		if errors.Is(err, gitx.ErrRefMoved) {
 			return d, status.Errorf(codes.Aborted, "draft %s was updated concurrently", id)
 		}
@@ -136,54 +159,54 @@ func (r *repoService) updateDraft(ctx context.Context, h *repoHandle, u store.Us
 	// The head ref moved; finish the bookkeeping even if the client went away.
 	bg := context.WithoutCancel(ctx)
 	d.Version++
-	if err := h.git.UpdateRef(bg, versionRef(id, d.Version), c, ""); err != nil {
+	if err := pr.h.Git.UpdateRef(bg, versionRef(id, d.Version), c, ""); err != nil {
 		return d, err
 	}
 	d.Base, d.Head, d.UpdatedAt = base, c, r.s.cfg.Now()
 	return d, r.s.store.UpdateDraft(bg, d)
 }
 
-func (r *repoService) CreateDraft(ctx context.Context, req *sgitv1.CreateDraftRequest) (*sgitv1.Draft, error) {
-	h, u, err := r.s.open(ctx, req.Project, auth.ActionWrite)
+func (r *projectService) CreateDraft(ctx context.Context, req *sgitv1.CreateDraftRequest) (*sgitv1.Draft, error) {
+	pr, u, err := r.s.open(ctx, req.Project, auth.ActionWrite)
 	if err != nil {
 		return nil, err
 	}
-	d, err := r.createDraft(ctx, h, u, req.Base, req.Changes, req.Title, req.Message)
+	d, err := r.createDraft(ctx, pr, u, req.Base, req.Changes, req.Title, req.Message)
 	if err != nil {
 		return nil, r.s.toStatus(ctx, err)
 	}
-	return draftPB(d), nil
+	return draftPB(d, pr.p.Name), nil
 }
 
-func (r *repoService) UpdateDraft(ctx context.Context, req *sgitv1.UpdateDraftRequest) (*sgitv1.Draft, error) {
-	h, u, err := r.s.open(ctx, req.Project, auth.ActionWrite)
+func (r *projectService) UpdateDraft(ctx context.Context, req *sgitv1.UpdateDraftRequest) (*sgitv1.Draft, error) {
+	pr, u, err := r.s.open(ctx, req.Project, auth.ActionWrite)
 	if err != nil {
 		return nil, err
 	}
-	d, err := r.updateDraft(ctx, h, u, req.Id, req.Base, req.Changes, req.Message)
+	d, err := r.updateDraft(ctx, pr, u, req.Id, req.Base, req.Changes, req.Message)
 	if err != nil {
 		return nil, r.s.toStatus(ctx, err)
 	}
-	return draftPB(d), nil
+	return draftPB(d, pr.p.Name), nil
 }
 
-func (r *repoService) GetDraft(ctx context.Context, req *sgitv1.GetDraftRequest) (*sgitv1.Draft, error) {
-	h, _, err := r.s.open(ctx, req.Project, auth.ActionRead)
+func (r *projectService) GetDraft(ctx context.Context, req *sgitv1.GetDraftRequest) (*sgitv1.Draft, error) {
+	pr, _, err := r.s.open(ctx, req.Project, auth.ActionRead)
 	if err != nil {
 		return nil, err
 	}
 	if !draftIDRe.MatchString(req.Id) {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid draft id %q", req.Id)
 	}
-	d, err := r.s.store.GetDraft(ctx, h.name, req.Id)
+	d, err := r.s.store.GetDraft(ctx, pr.p.ID, req.Id)
 	if err != nil {
 		return nil, r.s.toStatus(ctx, err)
 	}
-	return draftPB(d), nil
+	return draftPB(d, pr.p.Name), nil
 }
 
-func (r *repoService) ListDrafts(ctx context.Context, req *sgitv1.ListDraftsRequest) (*sgitv1.ListDraftsResponse, error) {
-	h, u, err := r.s.open(ctx, req.Project, auth.ActionRead)
+func (r *projectService) ListDrafts(ctx context.Context, req *sgitv1.ListDraftsRequest) (*sgitv1.ListDraftsResponse, error) {
+	pr, u, err := r.s.open(ctx, req.Project, auth.ActionRead)
 	if err != nil {
 		return nil, err
 	}
@@ -196,25 +219,28 @@ func (r *repoService) ListDrafts(ctx context.Context, req *sgitv1.ListDraftsRequ
 	if req.Mine {
 		owner = u.ID
 	}
-	ds, err := r.s.store.ListDrafts(ctx, h.name, owner, req.Status)
+	ds, err := r.s.store.ListDrafts(ctx, pr.p.ID, owner, req.Status)
 	if err != nil {
 		return nil, r.s.toStatus(ctx, err)
 	}
 	resp := &sgitv1.ListDraftsResponse{}
 	for _, d := range ds {
-		resp.Drafts = append(resp.Drafts, draftPB(d))
+		resp.Drafts = append(resp.Drafts, draftPB(d, pr.p.Name))
 	}
 	return resp, nil
 }
 
-func (r *repoService) AbandonDraft(ctx context.Context, req *sgitv1.AbandonDraftRequest) (*sgitv1.Draft, error) {
-	h, u, err := r.s.open(ctx, req.Project, auth.ActionWrite)
+func (r *projectService) AbandonDraft(ctx context.Context, req *sgitv1.AbandonDraftRequest) (*sgitv1.Draft, error) {
+	pr, u, err := r.s.open(ctx, req.Project, auth.ActionWrite)
 	if err != nil {
 		return nil, err
 	}
-	h.landMu.Lock()
-	defer h.landMu.Unlock()
-	d, err := r.loadOwnedOpenDraft(ctx, h, u, req.Id)
+	unlock, err := r.s.lock(ctx, pr)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	d, err := r.loadOwnedOpenDraft(ctx, pr, u, req.Id)
 	if err != nil {
 		return nil, r.s.toStatus(ctx, err)
 	}
@@ -222,5 +248,5 @@ func (r *repoService) AbandonDraft(ctx context.Context, req *sgitv1.AbandonDraft
 	if err := r.s.store.UpdateDraft(ctx, d); err != nil {
 		return nil, r.s.toStatus(ctx, err)
 	}
-	return draftPB(d), nil
+	return draftPB(d, pr.p.Name), nil
 }

@@ -19,7 +19,7 @@ import (
 
 func TestTreeAndBlobs(t *testing.T) {
 	e := testenv.Start(t)
-	e.CreateRepo("web")
+	e.CreateRepoProject("web")
 	commit := e.CommitDirect("web", map[string]string{
 		"a.txt": "A\n", "src/x.go": "X\n", "src/sub/y.go": "Y\n", "docs/z.md": "Z\n",
 	}, "seed")
@@ -56,7 +56,7 @@ func TestTreeAndBlobs(t *testing.T) {
 
 func TestBatching(t *testing.T) {
 	e := testenv.Start(t)
-	e.CreateRepo("web")
+	e.CreateRepoProject("web")
 	files := map[string]string{}
 	for i := 0; i < Batch+150; i++ {
 		files[fmt.Sprintf("d%02d/f%04d.txt", i%7, i)] = fmt.Sprintf("content %d\n", i)
@@ -184,7 +184,7 @@ func (r *recordingRepo) GetObjects(ctx context.Context, req *sgitv1.GetObjectsRe
 
 func TestSparseTreeSkipsOtherSubtrees(t *testing.T) {
 	e := testenv.Start(t)
-	e.CreateRepo("web")
+	e.CreateRepoProject("web")
 	commit := e.CommitDirect("web", map[string]string{"src/x.go": "X\n", "docs/z.md": "Z\n", "docs/deep/w.md": "W\n"}, "seed")
 	ctx := context.Background()
 	g := e.Git("web")

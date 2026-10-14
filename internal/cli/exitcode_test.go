@@ -28,6 +28,7 @@ func TestExitCode(t *testing.T) {
 		{"aborted without detail", status.Error(codes.Aborted, "a"), ExitError},
 		{"resource exhausted", status.Error(codes.ResourceExhausted, "r"), ExitCAS},
 		{"not found", status.Error(codes.NotFound, "n"), ExitError},
+		{"project not found or no access", status.Error(codes.NotFound, `project "web" not found or no access`), ExitAuth},
 		{"plain error", errors.New("boom"), ExitError},
 		{"wrapped exitError", fmt.Errorf("context: %w", exitf(ExitAuth, "x")), ExitAuth},
 	}

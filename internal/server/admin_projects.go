@@ -12,20 +12,40 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// resolveProject finds a project by name, alias or "#<id>" and opens its repo.
-func (a *adminService) resolveProject(ctx context.Context, ref string) (store.Project, *project.Handle, error) {
+// resolveProject finds a project by name, alias or "#<id>" in the store. It
+// never opens (or rebuilds) the project repo, so a project whose repo cannot
+// be rebuilt can still be renamed, inspected or deleted.
+func (a *adminService) resolveProject(ctx context.Context, ref string) (store.Project, error) {
 	p, err := a.s.store.ResolveProject(ctx, ref)
 	if errors.Is(err, store.ErrNotFound) {
-		return p, nil, auth.ProjectNotFound(ref)
+		return p, auth.ProjectNotFound(ref)
 	}
 	if err != nil {
-		return p, nil, a.s.toStatus(ctx, err)
+		return p, a.s.toStatus(ctx, err)
+	}
+	return p, nil
+}
+
+// lockProject resolves ref, opens its repo and takes its land lock, so a
+// mount change never runs in the middle of a land (which checks the mounts
+// once, under the same lock). The caller must call the returned unlock.
+func (a *adminService) lockProject(ctx context.Context, ref string) (store.Project, *project.Handle, func(), error) {
+	p, err := a.resolveProject(ctx, ref)
+	if err != nil {
+		return p, nil, nil, err
 	}
 	h, err := a.s.projects.Get(ctx, p.ID)
-	if err != nil {
-		return p, nil, a.s.toStatus(ctx, err)
+	if errors.Is(err, store.ErrNotFound) {
+		return p, nil, nil, auth.ProjectNotFound(ref)
 	}
-	return p, h, nil
+	if err != nil {
+		return p, nil, nil, a.s.toStatus(ctx, err)
+	}
+	unlock, err := a.s.lock(ctx, &proj{h: h, p: p, ref: ref})
+	if err != nil {
+		return p, nil, nil, err
+	}
+	return p, h, unlock, nil
 }
 
 func (a *adminService) projectInfo(ctx context.Context, p store.Project) (*sgitv1.ProjectInfo, error) {
@@ -41,9 +61,20 @@ func (a *adminService) projectInfo(ctx context.Context, p store.Project) (*sgitv
 	if err != nil {
 		return nil, a.s.toStatus(ctx, err)
 	}
+	grants, err := a.s.store.ListACL(ctx, "", p.ID)
+	if err != nil {
+		return nil, a.s.toStatus(ctx, err)
+	}
 	info := &sgitv1.ProjectInfo{Id: p.ID, Name: p.Name, Aliases: p.Aliases, Head: head, CreatedUnix: p.CreatedAt.Unix()}
 	for _, m := range mounts {
 		info.Mounts = append(info.Mounts, &sgitv1.MountInfo{Path: m.Path, Repo: m.Repo, Folder: m.Folder, ReadOnly: m.ReadOnly, AddedUnix: m.AddedAt.Unix()})
+	}
+	for _, g := range grants {
+		lvl := "read"
+		if g.Level == store.LevelWrite {
+			lvl = "write"
+		}
+		info.Grants = append(info.Grants, &sgitv1.GrantInfo{User: g.User, Level: lvl})
 	}
 	return info, nil
 }
@@ -93,10 +124,11 @@ func (a *adminService) MountProject(ctx context.Context, req *sgitv1.MountProjec
 	if err := validMountPath(req.Folder); err != nil {
 		return nil, err
 	}
-	p, h, err := a.resolveProject(ctx, req.Project)
+	p, h, unlock, err := a.lockProject(ctx, req.Project)
 	if err != nil {
 		return nil, err
 	}
+	defer unlock()
 	if _, err := a.s.store.GetRepo(ctx, req.Repo); err != nil {
 		return nil, a.s.toStatus(ctx, notFound(err, "repo %q not found", req.Repo))
 	}
@@ -112,10 +144,11 @@ func (a *adminService) UnmountProject(ctx context.Context, req *sgitv1.UnmountPr
 	if err != nil {
 		return nil, err
 	}
-	p, h, err := a.resolveProject(ctx, req.Project)
+	p, h, unlock, err := a.lockProject(ctx, req.Project)
 	if err != nil {
 		return nil, err
 	}
+	defer unlock()
 	if _, err := a.s.projects.Unmount(ctx, h, req.Path, a.s.sig(u)); err != nil {
 		return nil, a.s.toStatus(ctx, err)
 	}
@@ -129,7 +162,7 @@ func (a *adminService) AddProjectAlias(ctx context.Context, req *sgitv1.AddProje
 	if err := validProjectName("alias", req.Alias); err != nil {
 		return nil, err
 	}
-	p, _, err := a.resolveProject(ctx, req.Project)
+	p, err := a.resolveProject(ctx, req.Project)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +190,7 @@ func (a *adminService) RenameProject(ctx context.Context, req *sgitv1.RenameProj
 	if err := validProjectName("project name", req.NewName); err != nil {
 		return nil, err
 	}
-	p, _, err := a.resolveProject(ctx, req.Project)
+	p, err := a.resolveProject(ctx, req.Project)
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +223,7 @@ func (a *adminService) GetProject(ctx context.Context, req *sgitv1.GetProjectReq
 	if _, err := a.requireAdmin(ctx); err != nil {
 		return nil, err
 	}
-	p, _, err := a.resolveProject(ctx, req.Project)
+	p, err := a.resolveProject(ctx, req.Project)
 	if err != nil {
 		return nil, err
 	}
@@ -201,17 +234,26 @@ func (a *adminService) DeleteProject(ctx context.Context, req *sgitv1.DeleteProj
 	if _, err := a.requireAdmin(ctx); err != nil {
 		return nil, err
 	}
-	p, h, err := a.resolveProject(ctx, req.Project)
+	p, err := a.resolveProject(ctx, req.Project)
 	if err != nil {
 		return nil, err
 	}
-	h.LandMu.Lock() // no draft change or land is mid-flight
-	defer h.LandMu.Unlock()
-	if err := a.s.store.DeleteProjectRows(ctx, p.ID); err != nil {
-		return nil, a.s.toStatus(ctx, err)
+	// The engine deletes the rows while no open, draft change, land, mount or
+	// catch-up of the project runs; each of those re-checks the project after.
+	var drafts, acls int
+	var rowsErr error
+	err = a.s.projects.Delete(p.ID, func() error {
+		drafts, acls, rowsErr = a.s.store.DeleteProjectRows(context.WithoutCancel(ctx), p.ID)
+		return rowsErr
+	})
+	if errors.Is(rowsErr, store.ErrNotFound) { // deleted concurrently
+		return nil, auth.ProjectNotFound(req.Project)
 	}
-	if err := a.s.projects.Delete(p.ID); err != nil {
+	if rowsErr != nil {
+		return nil, a.s.toStatus(ctx, rowsErr)
+	}
+	if err != nil {
 		a.s.log.ErrorContext(ctx, "project rows deleted but repo not removed", "project", p.ID, "err", err)
 	}
-	return &sgitv1.DeleteProjectResponse{}, nil
+	return &sgitv1.DeleteProjectResponse{DraftsRemoved: int32(drafts), AclsRemoved: int32(acls)}, nil
 }

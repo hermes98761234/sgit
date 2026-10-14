@@ -533,3 +533,41 @@ func TestRebuildDoesNotBlockOtherProjects(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A handle obtained before Delete must not write rows for the deleted
+// project, and Get must not recreate its repo.
+func TestDeleteThenStaleHandle(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	e.repo("core")
+	e.commit("core", "seed", map[string]string{"src/a.go": "a\n"}, true)
+	h := e.project("web")
+	e.mount(h, "lib", "core", "src")
+	e.repo("docs")
+	var rowsDeleted bool
+	if err := e.eng.Delete(h.ID, func() error {
+		_, _, err := e.st.DeleteProjectRows(ctx, h.ID)
+		rowsDeleted = err == nil
+		return err
+	}); err != nil || !rowsDeleted {
+		t.Fatalf("Delete = %v (rows deleted %v)", err, rowsDeleted)
+	}
+	if _, err := e.eng.Mount(ctx, h, store.Mount{Path: "doc", Repo: "docs", Folder: "."}, admin); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Mount on a deleted project = %v", err)
+	}
+	if _, err := e.eng.Unmount(ctx, h, "lib", admin); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Unmount on a deleted project = %v", err)
+	}
+	if _, err := e.eng.Get(ctx, h.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Get of a deleted project = %v", err)
+	}
+	if _, err := os.Stat(e.eng.Path(h.ID)); !os.IsNotExist(err) {
+		t.Fatalf("deleted project repo recreated: %v", err)
+	}
+	for _, table := range []string{"project_mounts", "project_commits", "project_commit_sources", "project_cursors"} {
+		var n int
+		if err := e.st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table+` WHERE project_id=?`, h.ID).Scan(&n); err != nil || n != 0 {
+			t.Errorf("%s rows = %d %v", table, n, err)
+		}
+	}
+}

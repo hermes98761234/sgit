@@ -39,6 +39,9 @@ type Config struct {
 	Now               func() time.Time // default time.Now
 	// BeforeCAS is a test hook called right before main is compare-and-swapped.
 	BeforeCAS func(repo string)
+	// BeforeLand is a test hook called when a land through a project starts,
+	// after the project was opened and before the land takes its lock.
+	BeforeLand func(projectID int64)
 }
 
 func (c *Config) defaults() {
@@ -89,6 +92,11 @@ func New(cfg Config, st *store.Store, log *slog.Logger) (*Server, error) {
 		Store:   st,
 		Sources: s.repos,
 		Now:     cfg.Now,
+		// A rebuilt repo lost the objects of every open draft.
+		AfterRebuild: func(ctx context.Context, id int64) error {
+			_, err := st.AbandonOpenDrafts(ctx, id)
+			return err
+		},
 	})
 	s.mirror = mirror.New(mirror.Config{
 		RepoDir:    s.repos.path,
@@ -120,7 +128,7 @@ func NewGRPC(st *store.Store, extra ...grpc.ServerOption) *grpc.Server {
 }
 
 func (s *Server) Register(g *grpc.Server) {
-	sgitv1.RegisterProjectServer(g, &repoService{s: s})
+	sgitv1.RegisterProjectServer(g, &projectService{s: s})
 	sgitv1.RegisterAdminServer(g, &adminService{s: s})
 	healthpb.RegisterHealthServer(g, health.NewServer())
 }
@@ -168,18 +176,84 @@ func (s *Server) toStatus(ctx context.Context, err error) error {
 	return status.Errorf(codes.Internal, "internal error (request %s)", id)
 }
 
-// open authenticates, authorizes and opens the repo for a Repo RPC.
-func (s *Server) open(ctx context.Context, repo string, a auth.Action) (*repoHandle, store.User, error) {
+// proj is an opened, authorized and caught-up project for one RPC.
+type proj struct {
+	h      *project.Handle
+	p      store.Project
+	ref    string // what the caller sent; used in errors
+	mounts []store.Mount
+}
+
+// open resolves ref, authorizes the caller and catches the project up.
+// Unknown projects and projects the caller cannot read give the identical
+// ProjectNotFound error.
+func (s *Server) open(ctx context.Context, ref string, a auth.Action) (*proj, store.User, error) {
 	u, ok := auth.UserFrom(ctx)
 	if !ok {
 		return nil, u, status.Error(codes.Unauthenticated, "no user")
 	}
-	if err := auth.Authorize(ctx, s.store, u, repo, a); err != nil {
+	p, err := s.store.ResolveProject(ctx, ref)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, u, auth.ProjectNotFound(ref)
+	}
+	if err != nil {
+		return nil, u, s.hide(ctx, err)
+	}
+	if err := auth.Authorize(ctx, s.store, u, p.ID, a); err != nil {
+		if errors.Is(err, auth.ErrNoAccess) {
+			return nil, u, auth.ProjectNotFound(ref)
+		}
 		return nil, u, err
 	}
-	h, err := s.repos.get(ctx, repo)
-	if err != nil {
-		return nil, u, s.toStatus(ctx, err)
+	h, err := s.projects.Get(ctx, p.ID)
+	if errors.Is(err, store.ErrNotFound) { // deleted since it was resolved
+		return nil, u, auth.ProjectNotFound(ref)
 	}
-	return h, u, nil
+	if err != nil {
+		return nil, u, s.hide(ctx, err)
+	}
+	if _, err := s.projects.CatchUp(ctx, h); err != nil {
+		if errors.Is(err, store.ErrNotFound) && s.gone(ctx, p.ID) {
+			return nil, u, auth.ProjectNotFound(ref)
+		}
+		return nil, u, s.hide(ctx, err)
+	}
+	mounts, err := s.store.Mounts(ctx, p.ID)
+	if err != nil {
+		return nil, u, s.hide(ctx, err)
+	}
+	return &proj{h: h, p: p, ref: ref, mounts: mounts}, u, nil
+}
+
+// gone reports whether project id no longer exists.
+func (s *Server) gone(ctx context.Context, id int64) bool {
+	_, err := s.store.GetProject(ctx, id)
+	return errors.Is(err, store.ErrNotFound)
+}
+
+// lock takes the project's land lock for a draft change or a land, and
+// re-checks that the project still exists (a delete holds the same lock
+// while it removes the rows). The caller must call the returned unlock.
+func (s *Server) lock(ctx context.Context, pr *proj) (unlock func(), err error) {
+	pr.h.LandMu.Lock()
+	if _, err := s.store.GetProject(ctx, pr.p.ID); err != nil {
+		pr.h.LandMu.Unlock()
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, auth.ProjectNotFound(pr.ref)
+		}
+		return nil, s.hide(ctx, err)
+	}
+	return pr.h.LandMu.Unlock, nil
+}
+
+// hide logs err and returns a generic Internal error. Every failure inside a
+// source repo goes through it: such messages can name repos, source paths or
+// source SHAs, none of which may reach a client.
+func (s *Server) hide(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return status.FromContextError(ctx.Err()).Err()
+	}
+	id := auth.RequestID(ctx)
+	s.log.ErrorContext(ctx, "project operation failed", "request_id", id, "err", err)
+	return status.Errorf(codes.Internal, "internal error (request %s)", id)
 }

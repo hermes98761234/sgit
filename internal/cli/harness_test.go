@@ -69,7 +69,7 @@ func (h *harness) ok(dir string, args ...string) string {
 // seed creates repo "web" with files committed directly on main and returns main.
 func (h *harness) seed(files map[string]string) string {
 	h.t.Helper()
-	h.env.CreateRepo("web")
+	h.env.CreateRepoProject("web")
 	return h.env.CommitDirect("web", files, "seed")
 }
 

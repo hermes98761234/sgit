@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -13,10 +14,10 @@ import (
 	"google.golang.org/grpc/tap"
 )
 
-type fakeACL map[string]store.Level
+type fakeACL map[int64]store.Level
 
-func (f fakeACL) ACL(_ context.Context, _ int64, repo string) (store.Level, error) {
-	return f[repo], nil
+func (f fakeACL) ACL(_ context.Context, _ int64, project int64) (store.Level, error) {
+	return f[project], nil
 }
 
 type fakeTokens map[string]store.User
@@ -42,30 +43,39 @@ func TestNewToken(t *testing.T) {
 
 func TestAuthorize(t *testing.T) {
 	ctx := context.Background()
-	acl := fakeACL{"r": store.LevelRead, "w": store.LevelWrite}
+	const r, w, none = 1, 2, 3
+	acl := fakeACL{r: store.LevelRead, w: store.LevelWrite}
 	user := store.User{ID: 1, Name: "bob"}
 	admin := store.User{ID: 2, Name: "admin", Admin: true}
-	cases := []struct {
-		u    store.User
-		repo string
-		a    Action
-		ok   bool
-	}{
-		{user, "r", ActionRead, true},
-		{user, "r", ActionWrite, false},
-		{user, "w", ActionWrite, true},
-		{user, "w", ActionRead, true},
-		{user, "none", ActionRead, false},
-		{user, "", ActionAdmin, false},
-		{user, "w", Action(0), false},
-		{admin, "none", ActionWrite, true},
-		{admin, "", ActionAdmin, true},
-	}
-	for _, c := range cases {
-		err := Authorize(ctx, acl, c.u, c.repo, c.a)
-		if c.ok != (err == nil) || (err != nil && status.Code(err) != codes.PermissionDenied) {
-			t.Errorf("Authorize(%s,%s,%s) = %v", c.u.Name, c.repo, c.a, err)
+	for _, c := range []struct {
+		project int64
+		a       Action
+	}{{r, ActionRead}, {none, ActionWrite}, {0, ActionAdmin}, {none, ActionRead}} {
+		if err := Authorize(ctx, acl, admin, c.project, c.a); err != nil {
+			t.Errorf("admin Authorize(%d,%s) = %v", c.project, c.a, err)
 		}
+	}
+	for _, c := range []struct {
+		project int64
+		a       Action
+	}{{r, ActionRead}, {w, ActionWrite}, {w, ActionRead}} {
+		if err := Authorize(ctx, acl, user, c.project, c.a); err != nil {
+			t.Errorf("Authorize(%d,%s) = %v", c.project, c.a, err)
+		}
+	}
+	for _, a := range []Action{ActionRead, ActionWrite} {
+		if err := Authorize(ctx, acl, user, none, a); !errors.Is(err, ErrNoAccess) {
+			t.Errorf("Authorize(no grant,%s) = %v, want ErrNoAccess", a, err)
+		}
+	}
+	if err := Authorize(ctx, acl, user, r, ActionWrite); status.Code(err) != codes.PermissionDenied {
+		t.Errorf("read grant + write = %v", err)
+	}
+	if err := Authorize(ctx, acl, user, 0, ActionAdmin); status.Code(err) != codes.PermissionDenied || status.Convert(err).Message() != "admin role required" {
+		t.Errorf("non-admin admin action = %v", err)
+	}
+	if err := Authorize(ctx, acl, user, w, Action(0)); status.Code(err) != codes.PermissionDenied {
+		t.Errorf("unknown action = %v", err)
 	}
 }
 

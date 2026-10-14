@@ -2,7 +2,6 @@ package server_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
@@ -35,7 +34,7 @@ func TestWhoAmIAndHealth(t *testing.T) {
 func TestCreateRepo(t *testing.T) {
 	e := testenv.Start(t)
 	ctx := context.Background()
-	main := e.CreateRepo("web")
+	main := e.CreateRepoProject("web")
 	if len(main) != 40 {
 		t.Fatalf("main = %q", main)
 	}
@@ -60,7 +59,7 @@ func TestCreateRepo(t *testing.T) {
 func TestTokensAndACL(t *testing.T) {
 	e := testenv.Start(t)
 	ctx := context.Background()
-	e.CreateRepo("web")
+	e.CreateRepoProject("web")
 	adm := e.Admin(e.AdminToken)
 	tok := testenv.Must(adm.CreateToken(ctx, &sgitv1.CreateTokenRequest{User: "carol"}))
 	if tok.User != "carol" || len(tok.Id) != 8 {
@@ -82,8 +81,8 @@ func TestTokensAndACL(t *testing.T) {
 	testenv.Must(adm.GrantACL(ctx, &sgitv1.GrantACLRequest{User: "carol", Project: "web", Level: "read"}))
 	testenv.Must(e.Project(tok.Token).ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web", Rev: "main"}))
 	testenv.Must(adm.RevokeACL(ctx, &sgitv1.RevokeACLRequest{User: "carol", Project: "web"}))
-	if _, err := e.Project(tok.Token).ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web", Rev: "main"}); status.Code(err) != codes.PermissionDenied {
-		t.Fatalf("after revoke ACL: want PermissionDenied, got %v", err)
+	if _, err := e.Project(tok.Token).ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web", Rev: "main"}); status.Code(err) != codes.NotFound {
+		t.Fatalf("after revoke ACL: want NotFound, got %v", err)
 	}
 	testenv.Must(adm.RevokeToken(ctx, &sgitv1.RevokeTokenRequest{Id: tok.Id}))
 	if _, err := e.Admin(tok.Token).WhoAmI(ctx, &sgitv1.WhoAmIRequest{}); status.Code(err) != codes.Unauthenticated {
@@ -96,7 +95,7 @@ func TestTokensAndACL(t *testing.T) {
 
 func TestUnauthenticatedRejectedBeforeBody(t *testing.T) {
 	e := testenv.Start(t)
-	e.CreateRepo("web")
+	e.CreateRepoProject("web")
 	ctx := context.Background()
 	if _, err := e.Project("").ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web"}); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("unary: want Unauthenticated, got %v", err)
@@ -109,15 +108,14 @@ func TestUnauthenticatedRejectedBeforeBody(t *testing.T) {
 func TestNotFoundNamesWhatIsMissing(t *testing.T) {
 	e := testenv.Start(t)
 	ctx := context.Background()
-	e.CreateRepo("web")
+	e.CreateRepoProject("web")
 	ac := e.Admin(e.AdminToken)
 	cases := map[string]error{}
 	_, cases[`repo "nope" not found`] = ac.RepoStatus(ctx, &sgitv1.RepoStatusRequest{Name: "nope"})
 	_, cases[`user "ghost" not found`] = ac.GrantACL(ctx, &sgitv1.GrantACLRequest{User: "ghost", Project: "web", Level: "read"})
-	_, cases[`repo "nope" not found`+" (acl)"] = ac.GrantACL(ctx, &sgitv1.GrantACLRequest{User: "admin", Project: "nope", Level: "read"})
+	_, cases[`project "nope" not found or no access`] = ac.GrantACL(ctx, &sgitv1.GrantACLRequest{User: "admin", Project: "nope", Level: "read"})
 	_, cases[`token "nosuch" not found (or already revoked)`] = ac.RevokeToken(ctx, &sgitv1.RevokeTokenRequest{Id: "nosuch"})
 	for want, err := range cases {
-		want = strings.TrimSuffix(want, " (acl)")
 		if status.Code(err) != codes.NotFound || status.Convert(err).Message() != want {
 			t.Errorf("got %v, want NotFound %q", err, want)
 		}

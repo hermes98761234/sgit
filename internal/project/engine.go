@@ -37,7 +37,7 @@ type Config struct {
 type Handle struct {
 	ID     int64
 	Git    *gitx.Repo
-	LandMu sync.Mutex // drafts and lands through this project (Task 7)
+	LandMu sync.Mutex // draft changes and lands through this project
 	mu     sync.Mutex // translation: catch-up, mount, unmount
 }
 
@@ -94,6 +94,10 @@ func (e *Engine) Get(ctx context.Context, id int64) (*Handle, error) {
 	}
 	dir := e.Path(id)
 	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
+		// A deleted project's repo is never recreated.
+		if _, err := e.cfg.Store.GetProject(ctx, id); err != nil {
+			return nil, err
+		}
 		head, _, err := e.cfg.Store.ProjectHead(ctx, id)
 		if err != nil {
 			return nil, err
@@ -155,6 +159,11 @@ func (e *Engine) CatchUp(ctx context.Context, h *Handle) (string, error) {
 
 func (e *Engine) catchUpLocked(ctx context.Context, h *Handle) (string, error) {
 	st := e.cfg.Store
+	// Delete removes the rows under h.mu, so a handle that outlived its
+	// project finds it gone here and writes nothing.
+	if _, err := st.GetProject(ctx, h.ID); err != nil {
+		return "", err
+	}
 	head, seq, err := st.ProjectHead(ctx, h.ID)
 	if err != nil {
 		return "", err
@@ -613,8 +622,14 @@ func (e *Engine) rebuild(ctx context.Context, id int64, dir string) (err error) 
 	return os.Rename(stage, dir)
 }
 
-// Delete closes and removes a project's derived repo (the DB rows are the caller's).
-func (e *Engine) Delete(id int64) error {
+// Delete removes project id: rows deletes its DB rows, then its repo is
+// closed and removed. rows runs while no open or rebuild (the open lock),
+// draft change or land (LandMu) and no mount, unmount or catch-up (mu) of the
+// project is in flight. Whatever starts afterwards finds the project gone
+// (Get and catchUpLocked check here; LandMu holders must re-check), so
+// nothing leaves rows behind. Lock order: open lock, LandMu, mu. If rows
+// fails, nothing is removed.
+func (e *Engine) Delete(id int64, rows func() error) error {
 	e.mu.Lock()
 	l := e.opening[id]
 	if l == nil {
@@ -622,16 +637,25 @@ func (e *Engine) Delete(id int64) error {
 		e.opening[id] = l
 	}
 	e.mu.Unlock()
-	l.Lock() // wait for a running open or rebuild
+	l.Lock() // wait for a running open or rebuild; block new ones
 	defer l.Unlock()
 	e.mu.Lock()
 	h := e.open[id]
-	delete(e.open, id)
 	e.mu.Unlock()
 	if h != nil {
-		h.mu.Lock() // wait for a running catch-up
+		h.LandMu.Lock()
+		defer h.LandMu.Unlock()
+		h.mu.Lock()
+		defer h.mu.Unlock()
+	}
+	if err := rows(); err != nil {
+		return err
+	}
+	if h != nil {
+		e.mu.Lock()
+		delete(e.open, id)
+		e.mu.Unlock()
 		h.Git.Close()
-		h.mu.Unlock()
 	}
 	return os.RemoveAll(e.Path(id))
 }

@@ -70,36 +70,39 @@ func (a Action) String() string {
 	return "unknown"
 }
 
+// ErrNoAccess means the caller cannot read the project. Callers must turn it
+// into ProjectNotFound, so that it looks exactly like an unknown project.
+var ErrNoAccess = errors.New("auth: no access")
+
 type ACLReader interface {
-	ACL(ctx context.Context, userID int64, repo string) (store.Level, error)
+	ACL(ctx context.Context, userID, projectID int64) (store.Level, error)
 }
 
 type TokenLookup interface {
 	UserByTokenHash(ctx context.Context, hash []byte) (store.User, error)
 }
 
-// Authorize is the single permission decision point. Per-directory ACLs
-// would be added here.
-func Authorize(ctx context.Context, acl ACLReader, u store.User, repo string, a Action) error {
+// Authorize is the single permission decision point (spec §8).
+func Authorize(ctx context.Context, acl ACLReader, u store.User, projectID int64, a Action) error {
 	if u.Admin {
 		return nil
 	}
-	if a != ActionRead && a != ActionWrite && a != ActionAdmin {
+	switch a {
+	case ActionAdmin:
+		return status.Error(codes.PermissionDenied, "admin role required")
+	case ActionRead, ActionWrite:
+	default:
 		return status.Error(codes.PermissionDenied, "unknown action")
 	}
-	if a == ActionAdmin {
-		return status.Error(codes.PermissionDenied, "admin role required")
-	}
-	lvl, err := acl.ACL(ctx, u.ID, repo)
+	lvl, err := acl.ACL(ctx, u.ID, projectID)
 	if err != nil {
 		return status.Errorf(codes.Internal, "acl lookup: %v", err)
 	}
-	need := store.LevelRead
-	if a == ActionWrite {
-		need = store.LevelWrite
+	if lvl < store.LevelRead {
+		return ErrNoAccess
 	}
-	if lvl < need {
-		return status.Errorf(codes.PermissionDenied, "%s access to repo %q denied", a, repo)
+	if a == ActionWrite && lvl < store.LevelWrite {
+		return status.Error(codes.PermissionDenied, "write access denied")
 	}
 	return nil
 }

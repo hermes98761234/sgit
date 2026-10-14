@@ -12,7 +12,7 @@ import (
 
 func TestCreateAndUpdateDraft(t *testing.T) {
 	e := testenv.Start(t)
-	main := e.CreateRepo("web")
+	main := e.CreateRepoProject("web")
 	alice := e.NewUser("alice", "web", "write")
 	c := e.Project(alice)
 	ctx := context.Background()
@@ -22,14 +22,14 @@ func TestCreateAndUpdateDraft(t *testing.T) {
 	if len(d.Id) != 8 || d.Owner != "alice" || d.Title != "add a" || d.Version != 1 || d.Status != "open" || d.Base != main {
 		t.Fatalf("draft = %+v", d)
 	}
-	g := e.Git("web")
+	g := e.ProjectGit(e.ProjectID("web"))
 	defer g.Close()
 	head := testenv.Must(g.ReadRef(ctx, "refs/sg/drafts/"+d.Id+"/head"))
 	v1 := testenv.Must(g.ReadRef(ctx, "refs/sg/drafts/"+d.Id+"/v1"))
 	if head != d.Head || v1 != d.Head {
 		t.Fatalf("refs head=%s v1=%s draft.head=%s", head, v1, d.Head)
 	}
-	if got := e.Files("web", d.Head); got["a.txt"] != "v1\n" {
+	if got := e.ProjectFiles("web", d.Head); got["a.txt"] != "v1\n" {
 		t.Fatalf("draft files = %v", got)
 	}
 	if got := e.Files("web", "main"); len(got) != 0 {
@@ -47,7 +47,7 @@ func TestCreateAndUpdateDraft(t *testing.T) {
 	if testenv.Must(g.ReadRef(ctx, "refs/sg/drafts/"+d.Id+"/v1")) != d.Head {
 		t.Fatal("v1 ref must be preserved")
 	}
-	if e.Files("web", d2.Head)["a.txt"] != "v2\n" {
+	if e.ProjectFiles("web", d2.Head)["a.txt"] != "v2\n" {
 		t.Fatal("update must be a full delta vs base")
 	}
 	got := testenv.Must(c.GetDraft(ctx, &sgitv1.GetDraftRequest{Project: "web", Id: d.Id}))
@@ -72,7 +72,7 @@ func TestCreateAndUpdateDraft(t *testing.T) {
 
 func TestCreateDraftValidation(t *testing.T) {
 	e := testenv.Start(t)
-	main := e.CreateRepo("web")
+	main := e.CreateRepoProject("web")
 	c := e.Project(e.AdminToken)
 	ctx := context.Background()
 	sha := e.Upload(e.AdminToken, "web", []byte("x"))[0]
@@ -100,21 +100,21 @@ func TestCreateDraftValidation(t *testing.T) {
 
 func TestCreateDraftUnicodePath(t *testing.T) {
 	e := testenv.Start(t)
-	main := e.CreateRepo("web")
+	main := e.CreateRepoProject("web")
 	c := e.Project(e.AdminToken)
 	sha := e.Upload(e.AdminToken, "web", []byte("x\n"))[0]
 	d := testenv.Must(c.CreateDraft(context.Background(), &sgitv1.CreateDraftRequest{
 		Project: "web", Base: main, Message: "unicode",
 		Changes: []*sgitv1.Change{testenv.Add("docs/my notes/файл ü.md", sha)},
 	}))
-	if e.Files("web", d.Head)["docs/my notes/файл ü.md"] != "x\n" {
-		t.Fatalf("files = %v", e.Files("web", d.Head))
+	if e.ProjectFiles("web", d.Head)["docs/my notes/файл ü.md"] != "x\n" {
+		t.Fatalf("files = %v", e.ProjectFiles("web", d.Head))
 	}
 }
 
 func TestDraftOwnership(t *testing.T) {
 	e := testenv.Start(t)
-	main := e.CreateRepo("web")
+	main := e.CreateRepoProject("web")
 	alice := e.NewUser("alice", "web", "write")
 	bob := e.NewUser("bob", "web", "write")
 	ctx := context.Background()
@@ -139,7 +139,7 @@ func TestDraftOwnership(t *testing.T) {
 
 func TestCreateDraftQuotedPathCannotSmuggleSgDir(t *testing.T) {
 	e := testenv.Start(t)
-	main := e.CreateRepo("web")
+	main := e.CreateRepoProject("web")
 	alice := e.NewUser("alice", "web", "write")
 	sha := e.Upload(alice, "web", []byte("x\n"))[0]
 	const p = `"\056sg/config"`
@@ -151,7 +151,7 @@ func TestCreateDraftQuotedPathCannotSmuggleSgDir(t *testing.T) {
 		}
 		return
 	}
-	files := e.Files("web", d.Head)
+	files := e.ProjectFiles("web", d.Head)
 	if _, ok := files[".sg/config"]; ok {
 		t.Fatalf(".sg/config smuggled in: %v", files)
 	}

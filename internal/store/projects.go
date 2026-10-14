@@ -264,14 +264,29 @@ func (s *Store) RemoveProjectAlias(ctx context.Context, alias string) (int64, er
 	return id, tx.Commit()
 }
 
-// DeleteProjectRows removes a project and its derived rows, atomically. Ids
-// are never reused (AUTOINCREMENT).
-func (s *Store) DeleteProjectRows(ctx context.Context, id int64) error {
+// DeleteProjectRows removes a project and its derived rows, drafts and
+// grants, atomically, and returns how many drafts and grants went with it.
+// Ids are never reused (AUTOINCREMENT).
+func (s *Store) DeleteProjectRows(ctx context.Context, id int64) (drafts, acls int, err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	count := func(q string) (int, error) {
+		r, err := tx.ExecContext(ctx, q, id)
+		if err != nil {
+			return 0, err
+		}
+		n, _ := r.RowsAffected()
+		return int(n), nil
+	}
+	if drafts, err = count(`DELETE FROM drafts WHERE project_id=?`); err != nil {
+		return 0, 0, err
+	}
+	if acls, err = count(`DELETE FROM acl WHERE project_id=?`); err != nil {
+		return 0, 0, err
+	}
 	for _, q := range []string{
 		`DELETE FROM project_aliases WHERE project_id=?`,
 		`DELETE FROM project_mounts WHERE project_id=?`,
@@ -279,18 +294,18 @@ func (s *Store) DeleteProjectRows(ctx context.Context, id int64) error {
 		`DELETE FROM project_commit_sources WHERE project_id=?`,
 		`DELETE FROM project_cursors WHERE project_id=?`,
 	} {
-		if _, err := tx.ExecContext(ctx, q, id); err != nil {
-			return err
+		if _, err := count(q); err != nil {
+			return 0, 0, err
 		}
 	}
-	res, err := tx.ExecContext(ctx, `DELETE FROM projects WHERE id=?`, id)
+	n, err := count(`DELETE FROM projects WHERE id=?`)
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return fmt.Errorf("%w: project %d", ErrNotFound, id)
+	if n == 0 {
+		return 0, 0, fmt.Errorf("%w: project %d", ErrNotFound, id)
 	}
-	return tx.Commit()
+	return drafts, acls, tx.Commit()
 }
 
 // ResetProject removes a project's mounts, commits and cursors in one

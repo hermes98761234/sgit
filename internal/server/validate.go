@@ -49,7 +49,7 @@ func validMode(m string) bool {
 }
 
 // convertChanges validates a client change list and checks referenced blobs exist.
-func (s *Server) convertChanges(ctx context.Context, h *repoHandle, in []*sgitv1.Change) ([]gitx.Change, error) {
+func (s *Server) convertChanges(ctx context.Context, g *gitx.Repo, in []*sgitv1.Change) ([]gitx.Change, error) {
 	if len(in) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "empty change list")
 	}
@@ -77,7 +77,7 @@ func (s *Server) convertChanges(ctx context.Context, h *repoHandle, in []*sgitv1
 			if !gitx.IsSHA(c.BlobSha) {
 				return nil, status.Errorf(codes.InvalidArgument, "invalid blob id %q for %q", c.BlobSha, c.Path)
 			}
-			typ, _, err := h.git.ObjectInfo(ctx, c.BlobSha)
+			typ, _, err := g.ObjectInfo(ctx, c.BlobSha)
 			if errors.Is(err, gitx.ErrNotFound) || (err == nil && typ != "blob") {
 				return nil, status.Errorf(codes.InvalidArgument, "blob %s for %q not uploaded", c.BlobSha, c.Path)
 			}

@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"testing"
@@ -84,7 +86,7 @@ func TestProjectIDsAreNeverReused(t *testing.T) {
 	ctx := context.Background()
 	s := open(t)
 	a, _ := s.CreateProject(ctx, "a", t0)
-	if err := s.DeleteProjectRows(ctx, a.ID); err != nil {
+	if _, _, err := s.DeleteProjectRows(ctx, a.ID); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := s.CreateProject(ctx, "b", t0)
@@ -214,7 +216,7 @@ func TestRepoDeleteGuardCoversProjectHistory(t *testing.T) {
 	if err := s.DeleteRepo(ctx, "free"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.DeleteProjectRows(ctx, p.ID); err != nil {
+	if _, _, err := s.DeleteProjectRows(ctx, p.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.DeleteRepo(ctx, "core"); err != nil {
@@ -248,4 +250,52 @@ func sha(c byte) string {
 		b[i] = c
 	}
 	return string(b)
+}
+
+func TestOldPerRepoTablesAreDropped(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sg.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE acl (user_id INTEGER, repo TEXT, level INTEGER, PRIMARY KEY (user_id, repo));
+		CREATE TABLE drafts (id TEXT PRIMARY KEY, repo TEXT NOT NULL);`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for _, tc := range []struct{ table, col string }{{"acl", "project_id"}, {"drafts", "project_id"}} {
+		if ok, err := hasColumn(s.db, tc.table, tc.col); err != nil || !ok {
+			t.Fatalf("%s.%s missing after Open: %v", tc.table, tc.col, err)
+		}
+	}
+}
+
+func TestDeleteProjectRowsCountsDraftsAndGrants(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	u, _ := s.CreateUser(ctx, "alice", "a@x", false)
+	p, _ := s.CreateProject(ctx, "web", t0)
+	keep, _ := s.CreateProject(ctx, "keep", t0)
+	_ = s.SetACL(ctx, u.ID, p.ID, LevelWrite)
+	_ = s.SetACL(ctx, u.ID, keep.ID, LevelRead)
+	for _, id := range []string{"aaaaaaaa", "bbbbbbbb"} {
+		if err := s.InsertDraft(ctx, Draft{ID: id, ProjectID: p.ID, OwnerID: u.ID, Status: DraftOpen, CreatedAt: t0, UpdatedAt: t0}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	drafts, acls, err := s.DeleteProjectRows(ctx, p.ID)
+	if err != nil || drafts != 2 || acls != 1 {
+		t.Fatalf("DeleteProjectRows = %d, %d, %v", drafts, acls, err)
+	}
+	if as, _ := s.ListACL(ctx, "", 0); len(as) != 1 || as[0].Project != "keep" {
+		t.Fatalf("ListACL = %+v", as)
+	}
+	if _, _, err := s.DeleteProjectRows(ctx, p.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("delete twice = %v", err)
+	}
 }

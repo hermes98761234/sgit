@@ -38,7 +38,7 @@ func fetch(t *testing.T, c sgitv1.ProjectClient, repo string, shas ...string) ([
 
 func TestUploadHasGet(t *testing.T) {
 	e := testenv.Start(t)
-	e.CreateRepo("web")
+	e.CreateRepoProject("web")
 	c := e.Project(e.AdminToken)
 	ctx := context.Background()
 	shas := e.Upload(e.AdminToken, "web", []byte("hello\n"), nil)
@@ -67,7 +67,7 @@ func TestUploadHasGet(t *testing.T) {
 
 func TestLargeBlobRoundTrip(t *testing.T) {
 	e := testenv.Start(t)
-	e.CreateRepo("web")
+	e.CreateRepoProject("web")
 	big := make([]byte, 10<<20)
 	_, _ = rand.Read(big)
 	shas := e.Upload(e.AdminToken, "web", big)
@@ -81,7 +81,7 @@ func TestLargeBlobRoundTrip(t *testing.T) {
 
 func TestBlobSizeLimit(t *testing.T) {
 	e := testenv.Start(t, func(c *server.Config) { c.MaxBlobBytes = 1 << 20 })
-	e.CreateRepo("web")
+	e.CreateRepoProject("web")
 	_, err := rpc.UploadBlobs(context.Background(), e.Project(e.AdminToken), "web", [][]byte{make([]byte, 2<<20)})
 	if status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("oversized blob: want InvalidArgument, got %v", err)
@@ -90,7 +90,7 @@ func TestBlobSizeLimit(t *testing.T) {
 
 func TestReadPermissions(t *testing.T) {
 	e := testenv.Start(t)
-	e.CreateRepo("web")
+	e.CreateRepoProject("web")
 	ctx := context.Background()
 	reader := e.NewUser("bob-reader", "web", "read")
 	stranger := e.NewUser("sam", "", "")
@@ -98,8 +98,8 @@ func TestReadPermissions(t *testing.T) {
 	if _, err := rpc.UploadBlobs(ctx, e.Project(reader), "web", [][]byte{[]byte("x")}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("reader upload: want PermissionDenied, got %v", err)
 	}
-	if _, err := e.Project(stranger).ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web"}); status.Code(err) != codes.PermissionDenied {
-		t.Fatalf("stranger: want PermissionDenied, got %v", err)
+	if _, err := e.Project(stranger).ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web"}); status.Code(err) != codes.NotFound {
+		t.Fatalf("stranger: want NotFound, got %v", err)
 	}
 	if _, err := e.Project(e.AdminToken).ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "nope"}); status.Code(err) != codes.NotFound {
 		t.Fatalf("unknown repo: want NotFound, got %v", err)
@@ -107,14 +107,14 @@ func TestReadPermissions(t *testing.T) {
 	if _, err := e.Project(e.AdminToken).ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web", Rev: "nope"}); status.Code(err) != codes.NotFound {
 		t.Fatalf("unknown rev: want NotFound, got %v", err)
 	}
-	if _, err := e.Project(e.AdminToken).ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "Bad/Name"}); status.Code(err) != codes.InvalidArgument {
-		t.Fatalf("bad repo name: want InvalidArgument, got %v", err)
+	if _, err := e.Project(e.AdminToken).ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "Bad/Name"}); status.Code(err) != codes.NotFound {
+		t.Fatalf("bad project name: want NotFound, got %v", err)
 	}
 }
 
 func TestLogBlameDiffMergeFile(t *testing.T) {
 	e := testenv.Start(t)
-	first := e.CreateRepo("web")
+	first := e.CreateRepoProject("web")
 	c := e.Project(e.AdminToken)
 	ctx := context.Background()
 	c1 := e.CommitDirect("web", map[string]string{"f.txt": "one\n"}, "add f")

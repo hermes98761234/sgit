@@ -184,6 +184,10 @@ func exitCode(err error) int {
 		}
 	case codes.ResourceExhausted:
 		return ExitCAS
+	case codes.NotFound:
+		if strings.HasSuffix(st.Message(), " not found or no access") {
+			return ExitAuth
+		}
 	}
 	return ExitError
 }

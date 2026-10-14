@@ -68,8 +68,8 @@ func TestCheckoutFullAndSparse(t *testing.T) {
 	if code, _, _ := h.run(root, "checkout", "web", "part"); code != 1 {
 		t.Fatalf("checkout over an existing working copy: exit %d", code)
 	}
-	if code, _, _ := h.run(root, "checkout", "nope"); code != 1 {
-		t.Fatalf("unknown repo: exit %d", code)
+	if code, _, _ := h.run(root, "checkout", "nope"); code != 2 {
+		t.Fatalf("unknown project: exit %d", code)
 	}
 }
 

@@ -28,7 +28,7 @@ func TestLandSequenceIsRecordedBeforeMainMoves(t *testing.T) {
 			seenAtCAS = n
 		}
 	})
-	main := e.CreateRepo("web")
+	main := e.CreateRepoProject("web")
 	seqs := testenv.Must(e.Store.LandSeqs(ctx, "web", []string{main}))
 	if len(seqs) != 1 {
 		t.Fatalf("create did not record main: %v", seqs)
@@ -81,7 +81,7 @@ func TestCreateRollsBackWhenRecordLandFails(t *testing.T) {
 func TestRecordLandIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	e := testenv.Start(t)
-	main := e.CreateRepo("web")
+	main := e.CreateRepoProject("web")
 	before := testenv.Must(e.Store.LandSeqs(ctx, "web", []string{main}))
 	if err := e.Store.RecordLand(ctx, "web", main, time.Now()); err != nil {
 		t.Fatal(err)

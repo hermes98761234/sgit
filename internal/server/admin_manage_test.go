@@ -24,7 +24,7 @@ func wantCode(t *testing.T, what string, err error, want codes.Code) {
 
 func TestManageNeedsAdmin(t *testing.T) {
 	e := testenv.Start(t)
-	e.CreateRepo("web")
+	e.CreateRepoProject("web")
 	bob := e.NewUser("bob", "web", "write")
 	ctx := context.Background()
 	c := e.Admin(bob)
@@ -77,7 +77,7 @@ func TestListUsersPromoteDemote(t *testing.T) {
 func TestDeleteUser(t *testing.T) {
 	e := testenv.Start(t)
 	ctx := context.Background()
-	main := e.CreateRepo("web")
+	main := e.CreateRepoProject("web")
 	adm := e.Admin(e.AdminToken)
 	bob := e.NewUser("bob", "web", "write")
 	rc := e.Project(bob)
@@ -115,7 +115,7 @@ func TestDeleteUser(t *testing.T) {
 	// Name reuse yields a fresh user without the old access.
 	nb := e.NewUser("bob", "", "")
 	_, err = e.Project(nb).ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web", Rev: "main"})
-	wantCode(t, "reused name has no ACL", err, codes.PermissionDenied)
+	wantCode(t, "reused name has no ACL", err, codes.NotFound)
 }
 
 func TestDeleteLastAdminGuard(t *testing.T) {
@@ -131,8 +131,8 @@ func TestDeleteLastAdminGuard(t *testing.T) {
 func TestListTokensAndACL(t *testing.T) {
 	e := testenv.Start(t)
 	ctx := context.Background()
-	e.CreateRepo("web")
-	e.CreateRepo("api")
+	e.CreateRepoProject("web")
+	e.CreateRepoProject("api")
 	adm := e.Admin(e.AdminToken)
 	e.NewUser("bob", "web", "write")
 	e.NewUser("carol", "web", "read")
@@ -185,7 +185,7 @@ func TestListTokensAndACL(t *testing.T) {
 func TestDeleteRepo(t *testing.T) {
 	e := testenv.Start(t)
 	ctx := context.Background()
-	main := e.CreateRepo("web")
+	main := e.CreateRepoProject("web")
 	adm := e.Admin(e.AdminToken)
 	bob := e.NewUser("bob", "web", "write")
 	sha := e.Upload(bob, "web", []byte("x\n"))[0]
@@ -196,6 +196,12 @@ func TestDeleteRepo(t *testing.T) {
 	_, err = adm.DeleteRepo(ctx, &sgitv1.DeleteRepoRequest{Name: "../x"})
 	wantCode(t, "bad name", err, codes.InvalidArgument)
 
+	_, err = adm.DeleteRepo(ctx, &sgitv1.DeleteRepoRequest{Name: "web"})
+	wantCode(t, "mounted repo", err, codes.FailedPrecondition)
+	del := testenv.Must(adm.DeleteProject(ctx, &sgitv1.DeleteProjectRequest{Project: "web"}))
+	if del.DraftsRemoved != 1 || del.AclsRemoved != 1 {
+		t.Fatalf("DeleteProject = %+v", del)
+	}
 	resp := testenv.Must(adm.DeleteRepo(ctx, &sgitv1.DeleteRepoRequest{Name: "web"}))
 	if filepath.Dir(resp.MovedTo) != filepath.Join(e.DataDir, "deleted") ||
 		!strings.HasPrefix(filepath.Base(resp.MovedTo), "web.") || !strings.HasSuffix(resp.MovedTo, ".git") {
@@ -220,10 +226,11 @@ func TestDeleteRepo(t *testing.T) {
 		t.Fatalf("ACLs remain: %v", es)
 	}
 	// The name is free again, and bob does not inherit access.
-	e.CreateRepo("web")
+	e.CreateRepoProject("web")
 	_, err = e.Project(bob).ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web", Rev: "main"})
-	wantCode(t, "recreated repo", err, codes.PermissionDenied)
+	wantCode(t, "recreated repo", err, codes.NotFound)
 	// A second delete of the same name in the same second must not collide.
+	testenv.Must(adm.DeleteProject(ctx, &sgitv1.DeleteProjectRequest{Project: "web"}))
 	testenv.Must(adm.DeleteRepo(ctx, &sgitv1.DeleteRepoRequest{Name: "web"}))
 	ents, _ := os.ReadDir(filepath.Join(e.DataDir, "deleted"))
 	if len(ents) != 2 {
@@ -234,7 +241,7 @@ func TestDeleteRepo(t *testing.T) {
 func TestDeleteRepoDuringLands(t *testing.T) {
 	e := testenv.Start(t)
 	ctx := context.Background()
-	main := e.CreateRepo("web")
+	main := e.CreateRepoProject("web")
 	alice := e.NewUser("alice", "web", "write")
 	rc := e.Project(alice)
 	var wg sync.WaitGroup
@@ -250,6 +257,12 @@ func TestDeleteRepoDuringLands(t *testing.T) {
 		}()
 	}
 	close(start)
+	// The project goes first (a mounted repo cannot be deleted); its delete
+	// waits for the land in flight, and later lands find no project.
+	_, err := e.Admin(e.AdminToken).DeleteProject(ctx, &sgitv1.DeleteProjectRequest{Project: "web"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	resp, err := e.Admin(e.AdminToken).DeleteRepo(ctx, &sgitv1.DeleteRepoRequest{Name: "web"})
 	wg.Wait()
 	if err != nil {

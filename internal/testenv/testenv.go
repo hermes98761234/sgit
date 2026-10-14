@@ -84,22 +84,37 @@ func (e *Env) CreateRepo(name string) string {
 	return Must(e.Admin(e.AdminToken).CreateRepo(context.Background(), &sgitv1.CreateRepoRequest{Name: name})).Main
 }
 
-// NewUser creates a user and returns its token. If level is "read" or "write",
-// it is granted on repo.
-func (e *Env) NewUser(name, repo, level string) string {
+// NewUser creates a user and returns its token. If level is "read" or
+// "write", it is granted on project.
+func (e *Env) NewUser(name, project, level string) string {
 	e.t.Helper()
 	ctx := context.Background()
 	adm := e.Admin(e.AdminToken)
 	tok := Must(adm.CreateToken(ctx, &sgitv1.CreateTokenRequest{User: name}))
 	if level != "" {
-		Must(adm.GrantACL(ctx, &sgitv1.GrantACLRequest{User: name, Project: repo, Level: level}))
+		Must(adm.GrantACL(ctx, &sgitv1.GrantACLRequest{User: name, Project: project, Level: level}))
 	}
 	return tok.Token
 }
 
-func (e *Env) Upload(token, repo string, blobs ...[]byte) []string {
+// CreateRepoProject creates repo name and project name mounting the whole
+// repo at ".", and returns the project head (equal to the repo's main).
+func (e *Env) CreateRepoProject(name string) string {
 	e.t.Helper()
-	return Must(rpc.UploadBlobs(context.Background(), e.Project(token), repo, blobs))
+	e.CreateRepo(name)
+	e.CreateProject(name)
+	return e.Mount(name, ".", name, ".", false)
+}
+
+// ProjectID returns the id of the project ref names.
+func (e *Env) ProjectID(ref string) int64 {
+	e.t.Helper()
+	return Must(e.Admin(e.AdminToken).GetProject(context.Background(), &sgitv1.GetProjectRequest{Project: ref})).Id
+}
+
+func (e *Env) Upload(token, project string, blobs ...[]byte) []string {
+	e.t.Helper()
+	return Must(rpc.UploadBlobs(context.Background(), e.Project(token), project, blobs))
 }
 
 // Git opens the repo's bare git dir directly (caller closes).
@@ -130,6 +145,20 @@ func (e *Env) Files(repo, rev string) map[string]string {
 	e.t.Helper()
 	ctx := context.Background()
 	r := e.Git(repo)
+	defer r.Close()
+	out := map[string]string{}
+	for p, fe := range Must(r.ListFiles(ctx, rev)) {
+		out[p] = string(Must(r.ReadObject(ctx, fe.SHA)).Data)
+	}
+	return out
+}
+
+// ProjectFiles returns path -> content of every file at rev of a project's
+// derived repo (where drafts live).
+func (e *Env) ProjectFiles(project, rev string) map[string]string {
+	e.t.Helper()
+	ctx := context.Background()
+	r := e.ProjectGit(e.ProjectID(project))
 	defer r.Close()
 	out := map[string]string{}
 	for p, fe := range Must(r.ListFiles(ctx, rev)) {

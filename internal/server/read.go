@@ -10,30 +10,77 @@ import (
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
 	"github.com/hermes98761234/sgit/internal/auth"
 	"github.com/hermes98761234/sgit/internal/gitx"
+	"github.com/hermes98761234/sgit/internal/store"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-type repoService struct {
+type projectService struct {
 	sgitv1.UnimplementedProjectServer
 	s *Server
 }
 
-func (r *repoService) ResolveRev(ctx context.Context, req *sgitv1.ResolveRevRequest) (*sgitv1.ResolveRevResponse, error) {
-	h, _, err := r.s.open(ctx, req.Project, auth.ActionRead)
-	if err != nil {
-		return nil, err
-	}
-	rev := req.Rev
+// resolve accepts any revision of the project repo, plus a draft id.
+func (r *projectService) resolve(ctx context.Context, pr *proj, rev string) (string, error) {
 	if rev == "" {
 		rev = "main"
 	}
-	sha, err := h.git.ResolveRev(ctx, rev)
+	if draftIDRe.MatchString(rev) {
+		if sha, err := pr.h.Git.ReadRef(ctx, headRef(rev)); err == nil {
+			return sha, nil
+		}
+	}
+	sha, err := pr.h.Git.ResolveRev(ctx, rev)
+	if errors.Is(err, gitx.ErrNotFound) {
+		return "", status.Errorf(codes.NotFound, "revision %q not found", rev)
+	}
+	if err != nil {
+		return "", r.s.toStatus(ctx, err)
+	}
+	return sha, nil
+}
+
+func (r *projectService) ResolveRev(ctx context.Context, req *sgitv1.ResolveRevRequest) (*sgitv1.ResolveRevResponse, error) {
+	pr, _, err := r.s.open(ctx, req.Project, auth.ActionRead)
+	if err != nil {
+		return nil, err
+	}
+	sha, err := r.resolve(ctx, pr, req.Rev)
+	if err != nil {
+		return nil, err
+	}
+	return &sgitv1.ResolveRevResponse{Sha: sha, ProjectId: pr.p.ID, ProjectName: pr.p.Name}, nil
+}
+
+func (r *projectService) ListProjects(ctx context.Context, _ *sgitv1.ListProjectsRequest) (*sgitv1.ListProjectsResponse, error) {
+	u, ok := auth.UserFrom(ctx)
+	if !ok {
+		return nil, status.Error(codes.Unauthenticated, "no user")
+	}
+	resp := &sgitv1.ListProjectsResponse{}
+	if u.Admin {
+		ps, err := r.s.store.ListProjects(ctx)
+		if err != nil {
+			return nil, r.s.toStatus(ctx, err)
+		}
+		for _, p := range ps {
+			resp.Projects = append(resp.Projects, &sgitv1.ProjectSummary{Id: p.ID, Name: p.Name, Aliases: p.Aliases, Level: "admin"})
+		}
+		return resp, nil
+	}
+	acc, err := r.s.store.ListAccess(ctx, u.ID)
 	if err != nil {
 		return nil, r.s.toStatus(ctx, err)
 	}
-	return &sgitv1.ResolveRevResponse{Sha: sha}, nil
+	for _, a := range acc {
+		lvl := "read"
+		if a.Level == store.LevelWrite {
+			lvl = "write"
+		}
+		resp.Projects = append(resp.Projects, &sgitv1.ProjectSummary{Id: a.Project.ID, Name: a.Project.Name, Aliases: a.Project.Aliases, Level: lvl})
+	}
+	return resp, nil
 }
 
 const maxBatch = 10000 // max SHAs per GetObjects/HasObjects request
@@ -50,9 +97,9 @@ func checkBatch(shas []string) error {
 	return nil
 }
 
-func (r *repoService) GetObjects(req *sgitv1.GetObjectsRequest, stream grpc.ServerStreamingServer[sgitv1.Object]) error {
+func (r *projectService) GetObjects(req *sgitv1.GetObjectsRequest, stream grpc.ServerStreamingServer[sgitv1.Object]) error {
 	ctx := stream.Context()
-	h, _, err := r.s.open(ctx, req.Project, auth.ActionRead)
+	pr, _, err := r.s.open(ctx, req.Project, auth.ActionRead)
 	if err != nil {
 		return err
 	}
@@ -60,7 +107,7 @@ func (r *repoService) GetObjects(req *sgitv1.GetObjectsRequest, stream grpc.Serv
 		return err
 	}
 	for _, sha := range req.Shas {
-		obj, err := h.git.ReadObject(ctx, sha)
+		obj, err := pr.h.Git.ReadObject(ctx, sha)
 		if err != nil {
 			return r.s.toStatus(ctx, err)
 		}
@@ -72,8 +119,8 @@ func (r *repoService) GetObjects(req *sgitv1.GetObjectsRequest, stream grpc.Serv
 	return nil
 }
 
-func (r *repoService) HasObjects(ctx context.Context, req *sgitv1.HasObjectsRequest) (*sgitv1.HasObjectsResponse, error) {
-	h, _, err := r.s.open(ctx, req.Project, auth.ActionRead)
+func (r *projectService) HasObjects(ctx context.Context, req *sgitv1.HasObjectsRequest) (*sgitv1.HasObjectsResponse, error) {
+	pr, _, err := r.s.open(ctx, req.Project, auth.ActionRead)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +129,7 @@ func (r *repoService) HasObjects(ctx context.Context, req *sgitv1.HasObjectsRequ
 	}
 	present := make([]bool, len(req.Shas))
 	for i, sha := range req.Shas {
-		_, _, err := h.git.ObjectInfo(ctx, sha)
+		_, _, err := pr.h.Git.ObjectInfo(ctx, sha)
 		switch {
 		case err == nil:
 			present[i] = true
@@ -94,9 +141,9 @@ func (r *repoService) HasObjects(ctx context.Context, req *sgitv1.HasObjectsRequ
 	return &sgitv1.HasObjectsResponse{Present: present}, nil
 }
 
-func (r *repoService) UploadBlobs(stream grpc.ClientStreamingServer[sgitv1.BlobChunk, sgitv1.UploadBlobsResponse]) error {
+func (r *projectService) UploadBlobs(stream grpc.ClientStreamingServer[sgitv1.BlobChunk, sgitv1.UploadBlobsResponse]) error {
 	ctx := stream.Context()
-	var h *repoHandle
+	var pr *proj
 	var buf bytes.Buffer
 	var shas []string
 	pending := false
@@ -111,8 +158,8 @@ func (r *repoService) UploadBlobs(stream grpc.ClientStreamingServer[sgitv1.BlobC
 		if err != nil {
 			return err
 		}
-		if h == nil {
-			if h, _, err = r.s.open(ctx, c.Project, auth.ActionWrite); err != nil {
+		if pr == nil {
+			if pr, _, err = r.s.open(ctx, c.Project, auth.ActionWrite); err != nil {
 				return err
 			}
 		}
@@ -122,7 +169,7 @@ func (r *repoService) UploadBlobs(stream grpc.ClientStreamingServer[sgitv1.BlobC
 		buf.Write(c.Data)
 		pending = true
 		if c.EndOfBlob {
-			sha, err := h.git.WriteBlob(ctx, buf.Bytes())
+			sha, err := pr.h.Git.WriteBlob(ctx, buf.Bytes())
 			if err != nil {
 				return r.s.toStatus(ctx, err)
 			}
@@ -135,22 +182,23 @@ func (r *repoService) UploadBlobs(stream grpc.ClientStreamingServer[sgitv1.BlobC
 
 func clean(s string) string { return strings.ToValidUTF8(s, "�") }
 
-func (r *repoService) Log(ctx context.Context, req *sgitv1.LogRequest) (*sgitv1.LogResponse, error) {
-	h, _, err := r.s.open(ctx, req.Project, auth.ActionRead)
+func (r *projectService) Log(ctx context.Context, req *sgitv1.LogRequest) (*sgitv1.LogResponse, error) {
+	pr, _, err := r.s.open(ctx, req.Project, auth.ActionRead)
 	if err != nil {
 		return nil, err
 	}
-	rev, n := req.Rev, int(req.N)
-	if rev == "" {
-		rev = "main"
-	}
+	n := int(req.N)
 	if n <= 0 {
 		n = 50
 	}
 	if n > 1000 {
 		n = 1000
 	}
-	entries, err := h.git.Log(ctx, rev, req.Path, n)
+	rev, err := r.resolve(ctx, pr, req.Rev)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := pr.h.Git.Log(ctx, rev, req.Path, n)
 	if err != nil {
 		return nil, r.s.toStatus(ctx, err)
 	}
@@ -163,19 +211,19 @@ func (r *repoService) Log(ctx context.Context, req *sgitv1.LogRequest) (*sgitv1.
 	return resp, nil
 }
 
-func (r *repoService) Blame(ctx context.Context, req *sgitv1.BlameRequest) (*sgitv1.BlameResponse, error) {
-	h, _, err := r.s.open(ctx, req.Project, auth.ActionRead)
+func (r *projectService) Blame(ctx context.Context, req *sgitv1.BlameRequest) (*sgitv1.BlameResponse, error) {
+	pr, _, err := r.s.open(ctx, req.Project, auth.ActionRead)
 	if err != nil {
 		return nil, err
 	}
 	if err := validatePath(req.Path); err != nil {
 		return nil, err
 	}
-	rev := req.Rev
-	if rev == "" {
-		rev = "main"
+	rev, err := r.resolve(ctx, pr, req.Rev)
+	if err != nil {
+		return nil, err
 	}
-	lines, err := h.git.Blame(ctx, rev, req.Path)
+	lines, err := pr.h.Git.Blame(ctx, rev, req.Path)
 	if err != nil {
 		return nil, r.s.toStatus(ctx, err)
 	}
@@ -186,8 +234,8 @@ func (r *repoService) Blame(ctx context.Context, req *sgitv1.BlameRequest) (*sgi
 	return resp, nil
 }
 
-func (r *repoService) Diff(ctx context.Context, req *sgitv1.DiffRequest) (*sgitv1.DiffResponse, error) {
-	h, _, err := r.s.open(ctx, req.Project, auth.ActionRead)
+func (r *projectService) Diff(ctx context.Context, req *sgitv1.DiffRequest) (*sgitv1.DiffResponse, error) {
+	pr, _, err := r.s.open(ctx, req.Project, auth.ActionRead)
 	if err != nil {
 		return nil, err
 	}
@@ -196,18 +244,26 @@ func (r *repoService) Diff(ctx context.Context, req *sgitv1.DiffRequest) (*sgitv
 			return nil, err
 		}
 	}
-	patch, err := h.git.Diff(ctx, req.A, req.B, req.Paths)
+	a, err := r.resolve(ctx, pr, req.A)
+	if err != nil {
+		return nil, err
+	}
+	b, err := r.resolve(ctx, pr, req.B)
+	if err != nil {
+		return nil, err
+	}
+	patch, err := pr.h.Git.Diff(ctx, a, b, req.Paths)
 	if err != nil {
 		return nil, r.s.toStatus(ctx, err)
 	}
 	return &sgitv1.DiffResponse{Patch: patch}, nil
 }
 
-func (r *repoService) readBlobOrEmpty(ctx context.Context, h *repoHandle, sha string) ([]byte, error) {
+func (r *projectService) readBlobOrEmpty(ctx context.Context, g *gitx.Repo, sha string) ([]byte, error) {
 	if sha == "" {
 		return nil, nil
 	}
-	obj, err := h.git.ReadObject(ctx, sha)
+	obj, err := g.ReadObject(ctx, sha)
 	if err != nil {
 		return nil, err
 	}
@@ -217,14 +273,14 @@ func (r *repoService) readBlobOrEmpty(ctx context.Context, h *repoHandle, sha st
 	return obj.Data, nil
 }
 
-func (r *repoService) MergeFile(ctx context.Context, req *sgitv1.MergeFileRequest) (*sgitv1.MergeFileResponse, error) {
-	h, _, err := r.s.open(ctx, req.Project, auth.ActionRead)
+func (r *projectService) MergeFile(ctx context.Context, req *sgitv1.MergeFileRequest) (*sgitv1.MergeFileResponse, error) {
+	pr, _, err := r.s.open(ctx, req.Project, auth.ActionRead)
 	if err != nil {
 		return nil, err
 	}
 	var parts [3][]byte
 	for i, sha := range []string{req.BaseSha, req.OursSha, req.TheirsSha} {
-		if parts[i], err = r.readBlobOrEmpty(ctx, h, sha); err != nil {
+		if parts[i], err = r.readBlobOrEmpty(ctx, pr.h.Git, sha); err != nil {
 			return nil, r.s.toStatus(ctx, err)
 		}
 	}

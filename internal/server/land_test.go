@@ -45,7 +45,7 @@ func assertLinear(t *testing.T, e *testenv.Env, wantCommits int) {
 
 func TestLandFastPath(t *testing.T) {
 	e := testenv.Start(t)
-	main := e.CreateRepo("web")
+	main := e.CreateRepoProject("web")
 	alice := e.NewUser("alice", "web", "write")
 	c := e.Project(alice)
 	ctx := context.Background()
@@ -73,7 +73,7 @@ func TestLandFastPath(t *testing.T) {
 
 func TestLandRebasesOntoMovedMain(t *testing.T) {
 	e := testenv.Start(t)
-	main := e.CreateRepo("web")
+	main := e.CreateRepoProject("web")
 	c := e.Project(e.AdminToken)
 	ctx := context.Background()
 	shas := e.Upload(e.AdminToken, "web", []byte("a\n"), []byte("b\n"))
@@ -90,7 +90,7 @@ func TestLandRebasesOntoMovedMain(t *testing.T) {
 
 func TestLandConflict(t *testing.T) {
 	e := testenv.Start(t)
-	e.CreateRepo("web")
+	e.CreateRepoProject("web")
 	c := e.Project(e.AdminToken)
 	ctx := context.Background()
 	base := e.CommitDirect("web", map[string]string{"f.txt": "a\nb\nc\n"}, "base")
@@ -131,7 +131,7 @@ func TestLandConflict(t *testing.T) {
 
 func TestLandTwiceAndAbandoned(t *testing.T) {
 	e := testenv.Start(t)
-	main := e.CreateRepo("web")
+	main := e.CreateRepoProject("web")
 	c := e.Project(e.AdminToken)
 	ctx := context.Background()
 	sha := e.Upload(e.AdminToken, "web", []byte("x"))[0]
@@ -149,7 +149,7 @@ func TestLandTwiceAndAbandoned(t *testing.T) {
 
 func TestConcurrentLands(t *testing.T) {
 	e := testenv.Start(t)
-	main := e.CreateRepo("web")
+	main := e.CreateRepoProject("web")
 	c := e.Project(e.AdminToken)
 	const n = 50
 	var blobs [][]byte
@@ -190,7 +190,7 @@ func TestLandRetriesWhenMainMoves(t *testing.T) {
 			}
 		}
 	})
-	main := e.CreateRepo("web")
+	main := e.CreateRepoProject("web")
 	c := e.Project(e.AdminToken)
 	sha := e.Upload(e.AdminToken, "web", []byte("mine\n"))[0]
 	testenv.Must(commitAndLand(c, main, "mine.txt", sha, "mine"))
@@ -211,7 +211,7 @@ func TestLandGivesUpWhenMainKeepsMoving(t *testing.T) {
 			e.CommitDirect(repo, map[string]string{fmt.Sprintf("ext%d.txt", i): "x"}, "external")
 		}
 	})
-	main := e.CreateRepo("web")
+	main := e.CreateRepoProject("web")
 	c := e.Project(e.AdminToken)
 	ctx := context.Background()
 	sha := e.Upload(e.AdminToken, "web", []byte("mine\n"))[0]
@@ -233,7 +233,7 @@ func TestLandGivesUpWhenMainKeepsMoving(t *testing.T) {
 
 func TestLandByNonOwner(t *testing.T) {
 	e := testenv.Start(t)
-	main := e.CreateRepo("web")
+	main := e.CreateRepoProject("web")
 	alice := e.NewUser("alice", "web", "write")
 	bob := e.NewUser("bob", "web", "write")
 	ctx := context.Background()
@@ -264,7 +264,7 @@ func TestAbandonDuringLand(t *testing.T) {
 			}
 		}
 	})
-	main := e.CreateRepo("web")
+	main := e.CreateRepoProject("web")
 	c := e.Project(e.AdminToken)
 	ctx := context.Background()
 	sha := e.Upload(e.AdminToken, "web", []byte("mine\n"))[0]
@@ -304,7 +304,7 @@ func TestUpdateDuringLandCannotReopen(t *testing.T) {
 			}
 		}
 	})
-	main = e.CreateRepo("web")
+	main = e.CreateRepoProject("web")
 	c := e.Project(e.AdminToken)
 	ctx := context.Background()
 	shas := e.Upload(e.AdminToken, "web", []byte("mine\n"), []byte("other\n"))
@@ -335,13 +335,13 @@ func TestUpdateDuringLandCannotReopen(t *testing.T) {
 
 func TestLandRejectsInconsistentDraft(t *testing.T) {
 	e := testenv.Start(t)
-	main := e.CreateRepo("web")
+	main := e.CreateRepoProject("web")
 	alice := e.NewUser("alice", "web", "write")
 	c := e.Project(alice)
 	ctx := context.Background()
 	sha := e.Upload(alice, "web", []byte("1\n"))[0]
 	d := testenv.Must(c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Project: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("x.txt", sha)}, Message: "x"}))
-	g := e.Git("web")
+	g := e.ProjectGit(e.ProjectID("web"))
 	defer g.Close()
 	// simulate a half-applied update: the head ref moved but the DB did not
 	if err := g.UpdateRef(ctx, "refs/sg/drafts/"+d.Id+"/head", main, d.Head); err != nil {
@@ -358,7 +358,7 @@ func TestLandRejectsInconsistentDraft(t *testing.T) {
 
 func TestLandRejectsEmptyCommit(t *testing.T) {
 	e := testenv.Start(t)
-	main := e.CreateRepo("web")
+	main := e.CreateRepoProject("web")
 	alice := e.NewUser("alice", "web", "write")
 	c := e.Project(alice)
 	ctx := context.Background()

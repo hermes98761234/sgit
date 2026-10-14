@@ -14,7 +14,7 @@ import (
 // TestAuthorizationMatrix pins the spec section 11 permission matrix.
 func TestAuthorizationMatrix(t *testing.T) {
 	e := testenv.Start(t)
-	main := e.CreateRepo("web")
+	main := e.CreateRepoProject("web")
 	ctx := context.Background()
 	shas := e.Upload(e.AdminToken, "web", []byte("blob\n"))
 	d := testenv.Must(e.Project(e.AdminToken).CreateDraft(ctx, &sgitv1.CreateDraftRequest{
@@ -32,6 +32,15 @@ func TestAuthorizationMatrix(t *testing.T) {
 		for _, c := range cases {
 			if err := c.call(); status.Code(err) != codes.PermissionDenied {
 				t.Errorf("%s %s: want PermissionDenied, got %v", who, c.name, err)
+			}
+		}
+	}
+
+	// Without any grant, the project looks exactly like an unknown one.
+	hidden := func(who string, cases []tc) {
+		for _, c := range cases {
+			if err := c.call(); status.Code(err) != codes.NotFound || status.Convert(err).Message() != `project "web" not found or no access` {
+				t.Errorf("%s %s: want NotFound project \"web\" not found or no access, got %v", who, c.name, err)
 			}
 		}
 	}
@@ -59,7 +68,7 @@ func TestAuthorizationMatrix(t *testing.T) {
 	})
 
 	sc := e.Project(stranger)
-	denied("no-ACL", []tc{
+	hidden("no-ACL", []tc{
 		{"ResolveRev", func() error { _, err := sc.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web"}); return err }},
 		{"GetObjects", func() error {
 			s, err := sc.GetObjects(ctx, &sgitv1.GetObjectsRequest{Project: "web", Shas: shas})

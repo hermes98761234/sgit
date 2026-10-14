@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -74,17 +75,31 @@ func TestReposAndACL(t *testing.T) {
 	if rs, _ := s.ListRepos(ctx); len(rs) != 1 {
 		t.Fatalf("ListRepos = %+v", rs)
 	}
-	if l, _ := s.ACL(ctx, u.ID, "web"); l != LevelNone {
+	p, err := s.CreateProject(ctx, "site", time.Unix(1700000000, 0).UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l, _ := s.ACL(ctx, u.ID, p.ID); l != LevelNone {
 		t.Fatalf("default ACL = %d", l)
 	}
-	_ = s.SetACL(ctx, u.ID, "web", LevelRead)
-	_ = s.SetACL(ctx, u.ID, "web", LevelWrite)
-	if l, _ := s.ACL(ctx, u.ID, "web"); l != LevelWrite {
+	_ = s.SetACL(ctx, u.ID, p.ID, LevelRead)
+	_ = s.SetACL(ctx, u.ID, p.ID, LevelWrite)
+	if l, _ := s.ACL(ctx, u.ID, p.ID); l != LevelWrite {
 		t.Fatalf("upserted ACL = %d", l)
 	}
-	_ = s.SetACL(ctx, u.ID, "web", LevelNone)
-	if l, _ := s.ACL(ctx, u.ID, "web"); l != LevelNone {
+	if acc, err := s.ListAccess(ctx, u.ID); err != nil || len(acc) != 1 || acc[0].Project.Name != "site" || acc[0].Level != LevelWrite {
+		t.Fatalf("ListAccess = %+v, %v", acc, err)
+	}
+	_ = s.SetACL(ctx, u.ID, p.ID, LevelNone)
+	if l, _ := s.ACL(ctx, u.ID, p.ID); l != LevelNone {
 		t.Fatalf("revoked ACL = %d", l)
+	}
+	if acc, err := s.ListAccess(ctx, u.ID); err != nil || len(acc) != 0 {
+		t.Fatalf("ListAccess after revoke = %+v, %v", acc, err)
+	}
+	// A grant on a project that does not exist (or was just deleted) is refused.
+	if err := s.SetACL(ctx, u.ID, p.ID+1, LevelRead); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("grant on missing project = %v", err)
 	}
 }
 
@@ -94,31 +109,42 @@ func TestDrafts(t *testing.T) {
 	alice, _ := s.CreateUser(ctx, "alice", "a@sgit.local", false)
 	bob, _ := s.CreateUser(ctx, "bob", "b@sgit.local", false)
 	now := time.Unix(1700000000, 0).UTC()
-	d := Draft{ID: "aaaaaaaa", Repo: "web", OwnerID: alice.ID, Title: "t", Base: "b", Head: "h", Version: 1, Status: DraftOpen, CreatedAt: now, UpdatedAt: now}
+	p, _ := s.CreateProject(ctx, "web", now)
+	other, _ := s.CreateProject(ctx, "other", now)
+	d := Draft{ID: "aaaaaaaa", ProjectID: p.ID, OwnerID: alice.ID, Title: "t", Base: "b", Head: "h", Version: 1, Status: DraftOpen, CreatedAt: now, UpdatedAt: now}
 	if err := s.InsertDraft(ctx, d); err != nil {
 		t.Fatal(err)
 	}
-	_ = s.InsertDraft(ctx, Draft{ID: "bbbbbbbb", Repo: "web", OwnerID: bob.ID, Title: "u", Base: "b", Head: "h", Version: 1, Status: DraftOpen, CreatedAt: now, UpdatedAt: now.Add(time.Second)})
-	got, err := s.GetDraft(ctx, "web", "aaaaaaaa")
-	if err != nil || got.OwnerName != "alice" || got.Head != "h" || !got.CreatedAt.Equal(now) {
+	_ = s.InsertDraft(ctx, Draft{ID: "bbbbbbbb", ProjectID: p.ID, OwnerID: bob.ID, Title: "u", Base: "b", Head: "h", Version: 1, Status: DraftOpen, CreatedAt: now, UpdatedAt: now.Add(time.Second)})
+	if err := s.InsertDraft(ctx, Draft{ID: "cccccccc", ProjectID: other.ID + 1, OwnerID: bob.ID, Status: DraftOpen}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("draft in a missing project = %v", err)
+	}
+	got, err := s.GetDraft(ctx, p.ID, "aaaaaaaa")
+	if err != nil || got.OwnerName != "alice" || got.Head != "h" || got.ProjectID != p.ID || !got.CreatedAt.Equal(now) {
 		t.Fatalf("GetDraft = %+v, %v", got, err)
 	}
-	if _, err := s.GetDraft(ctx, "other", "aaaaaaaa"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("wrong repo: want ErrNotFound, got %v", err)
+	if _, err := s.GetDraft(ctx, other.ID, "aaaaaaaa"); !errors.Is(err, ErrNotFound) || strings.Contains(err.Error(), "web") {
+		t.Fatalf("wrong project: want ErrNotFound naming no project, got %v", err)
 	}
 	got.Status, got.LandedAs, got.Version = DraftLanded, "c", 2
 	if err := s.UpdateDraft(ctx, got); err != nil {
 		t.Fatal(err)
 	}
-	got, _ = s.GetDraft(ctx, "web", "aaaaaaaa")
+	got, _ = s.GetDraft(ctx, p.ID, "aaaaaaaa")
 	if got.Status != DraftLanded || got.LandedAs != "c" || got.Version != 2 {
 		t.Fatalf("after update = %+v", got)
 	}
-	all, _ := s.ListDrafts(ctx, "web", 0, "")
-	mine, _ := s.ListDrafts(ctx, "web", bob.ID, "")
-	openDrafts, _ := s.ListDrafts(ctx, "web", 0, DraftOpen)
+	all, _ := s.ListDrafts(ctx, p.ID, 0, "")
+	mine, _ := s.ListDrafts(ctx, p.ID, bob.ID, "")
+	openDrafts, _ := s.ListDrafts(ctx, p.ID, 0, DraftOpen)
 	if len(all) != 2 || all[0].ID != "bbbbbbbb" || len(mine) != 1 || mine[0].ID != "bbbbbbbb" || len(openDrafts) != 1 {
 		t.Fatalf("list: all=%v mine=%v open=%v", all, mine, openDrafts)
+	}
+	if n, err := s.AbandonOpenDrafts(ctx, p.ID); err != nil || n != 1 {
+		t.Fatalf("AbandonOpenDrafts = %d, %v", n, err)
+	}
+	if b, _ := s.GetDraft(ctx, p.ID, "bbbbbbbb"); b.Status != DraftAbandoned {
+		t.Fatalf("after AbandonOpenDrafts = %+v", b)
 	}
 }
 

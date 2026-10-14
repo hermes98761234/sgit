@@ -1,12 +1,15 @@
 package cli_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
 	"github.com/hermes98761234/sgit/internal/cli"
+	"github.com/hermes98761234/sgit/internal/testenv"
 )
 
 func rows(out string) [][]string {
@@ -142,6 +145,8 @@ func TestACLList(t *testing.T) {
 	h.seed(nil)
 	dir := t.TempDir()
 	h.ok(dir, "repo", "create", "api")
+	h.env.CreateProject("api") // grants are per project (Task 9 adds sg project)
+	h.env.Mount("api", ".", "api", ".", false)
 	h.ok(dir, "token", "create", "bob")
 	h.ok(dir, "token", "create", "carol")
 	h.ok(dir, "acl", "grant", "bob", "web", "write")
@@ -165,8 +170,8 @@ func TestACLList(t *testing.T) {
 	if len(j.ACL) != 2 || j.ACL[0].Level != "read" {
 		t.Fatalf("acl list --json = %+v", j)
 	}
-	if code, _, _ := h.run(dir, "acl", "list", "--repo", "nope"); code != cli.ExitError {
-		t.Fatalf("unknown repo exit %d", code)
+	if code, _, _ := h.run(dir, "acl", "list", "--repo", "nope"); code != cli.ExitAuth {
+		t.Fatalf("unknown project exit %d", code)
 	}
 }
 
@@ -185,6 +190,10 @@ func TestRepoDelete(t *testing.T) {
 		t.Fatalf("repo must be untouched: %v", err)
 	}
 	h.ok(dir, "repo", "status", "web")
+	if code, _, errs := h.run(dir, "repo", "delete", "web", "--yes"); code != cli.ExitError || !strings.Contains(errs, "mounted by project(s) web") {
+		t.Fatalf("mounted: exit %d err %q", code, errs)
+	}
+	testenv.Must(h.env.Admin(h.env.AdminToken).DeleteProject(context.Background(), &sgitv1.DeleteProjectRequest{Project: "web"}))
 
 	out := h.ok(dir, "repo", "delete", "web", "--yes")
 	if !strings.HasPrefix(out, "deleted repo web (git data moved to ") || !strings.Contains(out, filepath.Join(h.env.DataDir, "deleted", "web.")) {

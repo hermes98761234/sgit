@@ -22,7 +22,7 @@ import (
 func seeded(t *testing.T) (*testenv.Env, string) {
 	t.Helper()
 	e := testenv.Start(t)
-	e.CreateRepo("web")
+	e.CreateRepoProject("web")
 	return e, e.CommitDirect("web", map[string]string{"a.txt": "A\n", "src/x.go": "X\n", "docs/d.md": "D\n"}, "seed")
 }
 
@@ -92,14 +92,14 @@ func TestCachedObjectsStillRequireReadAccess(t *testing.T) {
 	ctx := context.Background()
 	readAll(t, d.Project(e.AdminToken), commit) // cache is warm now
 	nobody := e.NewUser("bob", "", "")
-	if _, err := fetch.Tree(ctx, d.Project(nobody), "web", commit, nil); status.Code(err) != codes.PermissionDenied {
+	if _, err := fetch.Tree(ctx, d.Project(nobody), "web", commit, nil); status.Code(err) != codes.NotFound {
 		t.Fatalf("user without access got cached objects: %v", err)
 	}
 	reader := e.NewUser("bob-reader", "web", "read")
 	testenv.Must(fetch.Tree(ctx, d.Project(reader), "web", commit, nil))
 	testenv.Must(e.Admin(e.AdminToken).RevokeACL(ctx, &sgitv1.RevokeACLRequest{User: "bob-reader", Project: "web"}))
 	time.Sleep(150 * time.Millisecond)
-	if _, err := fetch.Tree(ctx, d.Project(reader), "web", commit, nil); status.Code(err) != codes.PermissionDenied {
+	if _, err := fetch.Tree(ctx, d.Project(reader), "web", commit, nil); status.Code(err) != codes.NotFound {
 		t.Fatalf("revoked access still served after ACLTTL: %v", err)
 	}
 }

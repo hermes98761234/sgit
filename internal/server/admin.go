@@ -28,7 +28,7 @@ func (a *adminService) requireAdmin(ctx context.Context) (store.User, error) {
 	if !ok {
 		return u, status.Error(codes.Unauthenticated, "no user")
 	}
-	return u, auth.Authorize(ctx, a.s.store, u, "", auth.ActionAdmin)
+	return u, auth.Authorize(ctx, a.s.store, u, 0, auth.ActionAdmin)
 }
 
 func (a *adminService) WhoAmI(ctx context.Context, _ *sgitv1.WhoAmIRequest) (*sgitv1.WhoAmIResponse, error) {
@@ -173,7 +173,7 @@ func (a *adminService) RevokeToken(ctx context.Context, req *sgitv1.RevokeTokenR
 	return &sgitv1.RevokeTokenResponse{}, nil
 }
 
-func (a *adminService) setACL(ctx context.Context, user, repo string, lvl store.Level) error {
+func (a *adminService) setACL(ctx context.Context, user, ref string, lvl store.Level) error {
 	if _, err := a.requireAdmin(ctx); err != nil {
 		return err
 	}
@@ -181,10 +181,15 @@ func (a *adminService) setACL(ctx context.Context, user, repo string, lvl store.
 	if err != nil {
 		return a.s.toStatus(ctx, notFound(err, "user %q not found", user))
 	}
-	if _, err := a.s.store.GetRepo(ctx, repo); err != nil {
-		return a.s.toStatus(ctx, notFound(err, "repo %q not found", repo))
+	p, err := a.resolveProject(ctx, ref)
+	if err != nil {
+		return err
 	}
-	return a.s.toStatus(ctx, a.s.store.SetACL(ctx, u.ID, repo, lvl))
+	err = a.s.store.SetACL(ctx, u.ID, p.ID, lvl)
+	if errors.Is(err, store.ErrNotFound) { // deleted since it was resolved
+		return auth.ProjectNotFound(ref)
+	}
+	return a.s.toStatus(ctx, err)
 }
 
 func (a *adminService) GrantACL(ctx context.Context, req *sgitv1.GrantACLRequest) (*sgitv1.GrantACLResponse, error) {
@@ -297,12 +302,15 @@ func (a *adminService) ListACL(ctx context.Context, req *sgitv1.ListACLRequest) 
 			return nil, a.s.toStatus(ctx, notFound(err, "user %q not found", req.User))
 		}
 	}
+	var projectID int64
 	if req.Project != "" {
-		if _, err := a.s.store.GetRepo(ctx, req.Project); err != nil {
-			return nil, a.s.toStatus(ctx, notFound(err, "repo %q not found", req.Project))
+		p, err := a.resolveProject(ctx, req.Project)
+		if err != nil {
+			return nil, err
 		}
+		projectID = p.ID
 	}
-	rows, err := a.s.store.ListACL(ctx, req.User, req.Project)
+	rows, err := a.s.store.ListACL(ctx, req.User, projectID)
 	if err != nil {
 		return nil, a.s.toStatus(ctx, err)
 	}
@@ -312,7 +320,7 @@ func (a *adminService) ListACL(ctx context.Context, req *sgitv1.ListACLRequest) 
 		if r.Level == store.LevelWrite {
 			lvl = "write"
 		}
-		out.Entries = append(out.Entries, &sgitv1.ACLEntry{User: r.User, Project: r.Repo, Level: lvl})
+		out.Entries = append(out.Entries, &sgitv1.ACLEntry{User: r.User, Project: r.Project, Level: lvl})
 	}
 	return out, nil
 }

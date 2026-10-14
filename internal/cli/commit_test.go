@@ -52,7 +52,7 @@ func TestCommitCreatesAndUpdatesDraft(t *testing.T) {
 		t.Fatalf("commit = %+v, .sg/draft = %q", res, h.draftOf(w))
 	}
 	d := h.getDraft(res.Draft)
-	files := h.env.Files("web", d.Head)
+	files := h.env.ProjectFiles("web", d.Head)
 	if files["a.txt"] != "changed\n" || files["new.txt"] != "new\n" || files["docs/d.md"] != "" || d.Base != main || d.Title != "first change" {
 		t.Fatalf("draft files = %v, draft = %+v", files, d)
 	}
@@ -64,7 +64,7 @@ func TestCommitCreatesAndUpdatesDraft(t *testing.T) {
 	if !strings.Contains(out, res.Draft) || !strings.Contains(out, "v2") {
 		t.Fatalf("second commit = %q", out)
 	}
-	if h.env.Files("web", h.getDraft(res.Draft).Head)["a.txt"] != "changed again\n" {
+	if h.env.ProjectFiles("web", h.getDraft(res.Draft).Head)["a.txt"] != "changed again\n" {
 		t.Fatal("draft not updated")
 	}
 }
@@ -93,7 +93,7 @@ func TestCommitSymlinkAndExecRoundTrip(t *testing.T) {
 	}
 	h.ok(w, "commit", "-m", "modes")
 	d := h.getDraft(h.draftOf(w))
-	g := h.env.Git("web")
+	g := h.env.ProjectGit(h.env.ProjectID("web"))
 	defer g.Close()
 	files := testenv.Must(g.ListFiles(context.Background(), d.Head))
 	if files["run.sh"].Mode != "100755" || files["link"].Mode != "120000" {
@@ -178,7 +178,7 @@ func TestCommitLargeFile(t *testing.T) {
 	big := strings.Repeat("0123456789abcdef", 200<<10) // 3.2 MiB, multi-chunk upload
 	writeFile(t, filepath.Join(w, "big.txt"), big)
 	h.ok(w, "commit", "-m", "big")
-	if h.env.Files("web", h.getDraft(h.draftOf(w)).Head)["big.txt"] != big {
+	if h.env.ProjectFiles("web", h.getDraft(h.draftOf(w)).Head)["big.txt"] != big {
 		t.Fatal("big file corrupted")
 	}
 }
@@ -198,7 +198,7 @@ func TestCommitDraftFlagUpdatesThatDraft(t *testing.T) {
 	if !strings.Contains(out, id) || !strings.Contains(out, "v2") || h.draftOf(w) != id {
 		t.Fatalf("commit --draft = %q, .sg/draft = %q", out, h.draftOf(w))
 	}
-	if h.env.Files("web", h.getDraft(id).Head)["a.txt"] != "v2\n" {
+	if h.env.ProjectFiles("web", h.getDraft(id).Head)["a.txt"] != "v2\n" {
 		t.Fatal("draft not updated")
 	}
 	if code, _, _ := h.run(w, "commit", "-m", "x", "--draft", "NOT-AN-ID"); code != 1 {

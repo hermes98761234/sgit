@@ -17,7 +17,7 @@ import (
 
 func TestPassThrough(t *testing.T) {
 	e := testenv.Start(t)
-	main := e.CreateRepo("web")
+	main := e.CreateRepoProject("web")
 	d := daemontest.Start(t, e.Addr)
 	c := d.Project(e.AdminToken)
 	ctx := context.Background()
@@ -53,7 +53,7 @@ func TestPassThrough(t *testing.T) {
 
 func TestConflictDetailSurvivesProxy(t *testing.T) {
 	e := testenv.Start(t)
-	e.CreateRepo("web")
+	e.CreateRepoProject("web")
 	base := e.CommitDirect("web", map[string]string{"f.txt": "1\n2\n3\n"}, "base")
 	d := daemontest.Start(t, e.Addr)
 	c := d.Project(e.AdminToken)
@@ -78,7 +78,7 @@ func TestConflictDetailSurvivesProxy(t *testing.T) {
 
 func TestDaemonRequiresToken(t *testing.T) {
 	e := testenv.Start(t)
-	e.CreateRepo("web")
+	e.CreateRepoProject("web")
 	d := daemontest.Start(t, e.Addr)
 	ctx := context.Background()
 	if _, err := d.Project("").ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web"}); status.Code(err) != codes.Unauthenticated {
