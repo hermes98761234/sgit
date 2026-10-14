@@ -118,6 +118,7 @@ func (r *repoService) land(ctx context.Context, h *repoHandle, id string) (strin
 			// main already moved; report success but log the bookkeeping failure.
 			r.s.log.ErrorContext(bg, "landed but failed to mark draft", "draft", d.ID, "commit", newC, "err", err)
 		}
+		r.s.mirror.Notify(h.name)
 		return newC, nil
 	}
 	return "", status.Errorf(codes.ResourceExhausted, "main kept moving; gave up after %d attempts", r.s.cfg.LandRetries)

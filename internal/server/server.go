@@ -12,6 +12,7 @@ import (
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
 	"github.com/hermes98761234/sgit/internal/auth"
 	"github.com/hermes98761234/sgit/internal/gitx"
+	"github.com/hermes98761234/sgit/internal/mirror"
 	"github.com/hermes98761234/sgit/internal/rpc"
 	"github.com/hermes98761234/sgit/internal/store"
 	"github.com/klauspost/compress/zstd"
@@ -24,10 +25,16 @@ import (
 
 type Config struct {
 	DataDir      string
-	MaxBlobBytes int64            // default 100 MiB
-	MaxChanges   int              // default 10000
-	LandRetries  int              // default 5
-	Now          func() time.Time // default time.Now
+	MaxBlobBytes int64 // default 100 MiB
+	MaxChanges   int   // default 10000
+	LandRetries  int   // default 5
+	// AllowLocalRemotes permits file:// and path remotes for import and
+	// mirroring. Tests only; sg-server has no flag for it.
+	AllowLocalRemotes bool
+	MirrorBackoffMin  time.Duration    // first mirror retry delay; default 1s
+	MirrorBackoffMax  time.Duration    // mirror retry delay cap; default 5m
+	MirrorTimeout     time.Duration    // per mirror push; default 10m
+	Now               func() time.Time // default time.Now
 	// BeforeCAS is a test hook called right before main is compare-and-swapped.
 	BeforeCAS func(repo string)
 }
@@ -48,11 +55,12 @@ func (c *Config) defaults() {
 }
 
 type Server struct {
-	cfg   Config
-	store *store.Store
-	log   *slog.Logger
-	repos *repoManager
-	zenc  *zstd.Encoder
+	cfg    Config
+	store  *store.Store
+	log    *slog.Logger
+	repos  *repoManager
+	zenc   *zstd.Encoder
+	mirror *mirror.Manager
 }
 
 func New(cfg Config, st *store.Store, log *slog.Logger) (*Server, error) {
@@ -61,13 +69,27 @@ func New(cfg Config, st *store.Store, log *slog.Logger) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{
+	s := &Server{
 		cfg:   cfg,
 		store: st,
 		log:   log,
-		repos: newRepoManager(filepath.Join(cfg.DataDir, "repos"), st),
+		repos: newRepoManager(filepath.Join(cfg.DataDir, "repos"), st, cfg.AllowLocalRemotes),
 		zenc:  enc,
-	}, nil
+	}
+	s.mirror = mirror.New(mirror.Config{
+		RepoDir:    s.repos.path,
+		AllowLocal: cfg.AllowLocalRemotes,
+		BackoffMin: cfg.MirrorBackoffMin,
+		BackoffMax: cfg.MirrorBackoffMax,
+		Timeout:    cfg.MirrorTimeout,
+		Now:        cfg.Now,
+	}, st, log)
+	if err := s.mirror.Start(context.Background()); err != nil {
+		s.mirror.Close()
+		_ = enc.Close()
+		return nil, err
+	}
+	return s, nil
 }
 
 // NewGRPC returns a gRPC server with sgit's message limits and auth interceptors.
@@ -87,6 +109,7 @@ func (s *Server) Register(g *grpc.Server) {
 }
 
 func (s *Server) Close() {
+	s.mirror.Close()
 	s.repos.closeAll()
 	_ = s.zenc.Close()
 }

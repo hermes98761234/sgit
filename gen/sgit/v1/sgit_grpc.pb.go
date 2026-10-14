@@ -656,6 +656,9 @@ var Repo_ServiceDesc = grpc.ServiceDesc{
 const (
 	Admin_WhoAmI_FullMethodName      = "/sgit.v1.Admin/WhoAmI"
 	Admin_CreateRepo_FullMethodName  = "/sgit.v1.Admin/CreateRepo"
+	Admin_ImportRepo_FullMethodName  = "/sgit.v1.Admin/ImportRepo"
+	Admin_RepoStatus_FullMethodName  = "/sgit.v1.Admin/RepoStatus"
+	Admin_ListRepos_FullMethodName   = "/sgit.v1.Admin/ListRepos"
 	Admin_CreateToken_FullMethodName = "/sgit.v1.Admin/CreateToken"
 	Admin_RevokeToken_FullMethodName = "/sgit.v1.Admin/RevokeToken"
 	Admin_GrantACL_FullMethodName    = "/sgit.v1.Admin/GrantACL"
@@ -670,6 +673,9 @@ const (
 type AdminClient interface {
 	WhoAmI(ctx context.Context, in *WhoAmIRequest, opts ...grpc.CallOption) (*WhoAmIResponse, error)
 	CreateRepo(ctx context.Context, in *CreateRepoRequest, opts ...grpc.CallOption) (*CreateRepoResponse, error)
+	ImportRepo(ctx context.Context, in *ImportRepoRequest, opts ...grpc.CallOption) (*CreateRepoResponse, error)
+	RepoStatus(ctx context.Context, in *RepoStatusRequest, opts ...grpc.CallOption) (*RepoInfo, error)
+	ListRepos(ctx context.Context, in *ListReposRequest, opts ...grpc.CallOption) (*ListReposResponse, error)
 	CreateToken(ctx context.Context, in *CreateTokenRequest, opts ...grpc.CallOption) (*CreateTokenResponse, error)
 	RevokeToken(ctx context.Context, in *RevokeTokenRequest, opts ...grpc.CallOption) (*RevokeTokenResponse, error)
 	GrantACL(ctx context.Context, in *GrantACLRequest, opts ...grpc.CallOption) (*GrantACLResponse, error)
@@ -698,6 +704,36 @@ func (c *adminClient) CreateRepo(ctx context.Context, in *CreateRepoRequest, opt
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CreateRepoResponse)
 	err := c.cc.Invoke(ctx, Admin_CreateRepo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminClient) ImportRepo(ctx context.Context, in *ImportRepoRequest, opts ...grpc.CallOption) (*CreateRepoResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateRepoResponse)
+	err := c.cc.Invoke(ctx, Admin_ImportRepo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminClient) RepoStatus(ctx context.Context, in *RepoStatusRequest, opts ...grpc.CallOption) (*RepoInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RepoInfo)
+	err := c.cc.Invoke(ctx, Admin_RepoStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminClient) ListRepos(ctx context.Context, in *ListReposRequest, opts ...grpc.CallOption) (*ListReposResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListReposResponse)
+	err := c.cc.Invoke(ctx, Admin_ListRepos_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -752,6 +788,9 @@ func (c *adminClient) RevokeACL(ctx context.Context, in *RevokeACLRequest, opts 
 type AdminServer interface {
 	WhoAmI(context.Context, *WhoAmIRequest) (*WhoAmIResponse, error)
 	CreateRepo(context.Context, *CreateRepoRequest) (*CreateRepoResponse, error)
+	ImportRepo(context.Context, *ImportRepoRequest) (*CreateRepoResponse, error)
+	RepoStatus(context.Context, *RepoStatusRequest) (*RepoInfo, error)
+	ListRepos(context.Context, *ListReposRequest) (*ListReposResponse, error)
 	CreateToken(context.Context, *CreateTokenRequest) (*CreateTokenResponse, error)
 	RevokeToken(context.Context, *RevokeTokenRequest) (*RevokeTokenResponse, error)
 	GrantACL(context.Context, *GrantACLRequest) (*GrantACLResponse, error)
@@ -771,6 +810,15 @@ func (UnimplementedAdminServer) WhoAmI(context.Context, *WhoAmIRequest) (*WhoAmI
 }
 func (UnimplementedAdminServer) CreateRepo(context.Context, *CreateRepoRequest) (*CreateRepoResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateRepo not implemented")
+}
+func (UnimplementedAdminServer) ImportRepo(context.Context, *ImportRepoRequest) (*CreateRepoResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ImportRepo not implemented")
+}
+func (UnimplementedAdminServer) RepoStatus(context.Context, *RepoStatusRequest) (*RepoInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method RepoStatus not implemented")
+}
+func (UnimplementedAdminServer) ListRepos(context.Context, *ListReposRequest) (*ListReposResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListRepos not implemented")
 }
 func (UnimplementedAdminServer) CreateToken(context.Context, *CreateTokenRequest) (*CreateTokenResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateToken not implemented")
@@ -837,6 +885,60 @@ func _Admin_CreateRepo_Handler(srv interface{}, ctx context.Context, dec func(in
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(AdminServer).CreateRepo(ctx, req.(*CreateRepoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Admin_ImportRepo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ImportRepoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServer).ImportRepo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Admin_ImportRepo_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServer).ImportRepo(ctx, req.(*ImportRepoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Admin_RepoStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RepoStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServer).RepoStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Admin_RepoStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServer).RepoStatus(ctx, req.(*RepoStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Admin_ListRepos_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListReposRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServer).ListRepos(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Admin_ListRepos_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServer).ListRepos(ctx, req.(*ListReposRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -927,6 +1029,18 @@ var Admin_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CreateRepo",
 			Handler:    _Admin_CreateRepo_Handler,
+		},
+		{
+			MethodName: "ImportRepo",
+			Handler:    _Admin_ImportRepo_Handler,
+		},
+		{
+			MethodName: "RepoStatus",
+			Handler:    _Admin_RepoStatus_Handler,
+		},
+		{
+			MethodName: "ListRepos",
+			Handler:    _Admin_ListRepos_Handler,
 		},
 		{
 			MethodName: "CreateToken",

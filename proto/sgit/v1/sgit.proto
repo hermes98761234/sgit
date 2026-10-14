@@ -27,6 +27,9 @@ service Repo {
 service Admin {
   rpc WhoAmI(WhoAmIRequest) returns (WhoAmIResponse);
   rpc CreateRepo(CreateRepoRequest) returns (CreateRepoResponse);
+  rpc ImportRepo(ImportRepoRequest) returns (CreateRepoResponse);
+  rpc RepoStatus(RepoStatusRequest) returns (RepoInfo);
+  rpc ListRepos(ListReposRequest) returns (ListReposResponse);
   rpc CreateToken(CreateTokenRequest) returns (CreateTokenResponse);
   rpc RevokeToken(RevokeTokenRequest) returns (RevokeTokenResponse);
   rpc GrantACL(GrantACLRequest) returns (GrantACLResponse);
@@ -103,8 +106,26 @@ message MergeFileResponse { bytes content = 1; bool conflicted = 2; }
 
 message WhoAmIRequest {}
 message WhoAmIResponse { string user = 1; string email = 2; bool admin = 3; }
-message CreateRepoRequest { string name = 1; }
+message CreateRepoRequest { string name = 1; string mirror_url = 2; }
 message CreateRepoResponse { string main = 1; }
+// ImportRepo copies main and release/* (no tags) from from_url.
+message ImportRepoRequest { string name = 1; string from_url = 2; string mirror_url = 3; }
+message RepoStatusRequest { string name = 1; }
+message ListReposRequest {}
+message ListReposResponse { repeated RepoInfo repos = 1; }
+// RepoInfo describes a repo and its mirror; mirror_* fields other than
+// mirror_url are zero when mirror_url is empty.
+message RepoInfo {
+  string name = 1;
+  string main = 2;
+  int64 created_unix = 3;
+  string mirror_url = 4;
+  string mirror_last = 5;         // last commit pushed to the mirror; "" = never
+  bool mirror_pending = 6;        // main has commits the mirror lacks
+  string mirror_error = 7;        // last push error; "" after a success
+  int64 mirror_attempt_unix = 8;  // last push attempt; 0 = never
+  string error = 9;               // set when the repo itself could not be read
+}
 message CreateTokenRequest { string user = 1; string email = 2; bool admin = 3; }
 message CreateTokenResponse { string id = 1; string token = 2; string user = 3; }
 message RevokeTokenRequest { string id = 1; }
