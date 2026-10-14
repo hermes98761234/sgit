@@ -55,6 +55,7 @@ func commandTable() []command {
 		{"drafts", "drafts [--mine] [--status open|landed|abandoned|all] [--repo R] [--server S]", cmdDrafts},
 		{"show", "show <draft-id|rev> [--repo R] [--server S]", cmdShow},
 		{"abandon", "abandon [draft-id] [--repo R] [--server S]", cmdAbandon},
+		{"sync", "sync", cmdSync},
 	}
 }
 
