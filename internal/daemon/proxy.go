@@ -6,6 +6,8 @@ import (
 
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type proxy struct {
@@ -107,26 +109,47 @@ func (p *proxy) UploadBlobs(stream grpc.ClientStreamingServer[sgitv1.BlobChunk, 
 	}
 }
 
-// GetObjects relays the server stream. (Task 4 serves it from the cache.)
+// GetObjects serves verified cache hits and fetches the rest upstream, after
+// checking that the caller may read the repo.
 func (p *proxy) GetObjects(req *sgitv1.GetObjectsRequest, stream grpc.ServerStreamingServer[sgitv1.Object]) error {
-	out, _, err := forward(stream.Context())
+	if len(req.Shas) > maxBatch {
+		return status.Errorf(codes.InvalidArgument, "too many objects: %d > %d", len(req.Shas), maxBatch)
+	}
+	for _, s := range req.Shas {
+		if !shaRe.MatchString(s) {
+			return status.Errorf(codes.InvalidArgument, "invalid object id %q", s)
+		}
+	}
+	ctx, err := p.d.authorize(stream.Context(), req.Repo)
 	if err != nil {
 		return err
 	}
-	up, err := p.d.up.GetObjects(out, req)
+	seen := make(map[string]bool, len(req.Shas))
+	var misses []string
+	for _, s := range req.Shas {
+		if seen[s] {
+			continue
+		}
+		seen[s] = true
+		if o, ok := p.d.cached(s); ok {
+			if err := stream.Send(toPB(s, o)); err != nil {
+				return err
+			}
+			continue
+		}
+		misses = append(misses, s)
+	}
+	if len(misses) == 0 {
+		return nil
+	}
+	objs, err := p.d.fetch(ctx, req.Repo, misses)
 	if err != nil {
 		return err
 	}
-	for {
-		o, err := up.Recv()
-		if err == io.EOF {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if err := stream.Send(o); err != nil {
+	for _, s := range misses {
+		if err := stream.Send(toPB(s, objs[s])); err != nil {
 			return err
 		}
 	}
+	return nil
 }

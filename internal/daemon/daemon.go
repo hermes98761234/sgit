@@ -8,11 +8,14 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync"
 	"time"
 
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
 	"github.com/hermes98761234/sgit/internal/cache"
+	"github.com/hermes98761234/sgit/internal/fetch"
 	"github.com/hermes98761234/sgit/internal/rpc"
+	"github.com/klauspost/compress/zstd"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health"
@@ -35,8 +38,12 @@ type Config struct {
 
 // Daemon is the sgd service.
 type Daemon struct {
-	cfg Config
-	up  sgitv1.RepoClient
+	cfg      Config
+	up       sgitv1.RepoClient
+	dec      *zstd.Decoder
+	mu       sync.Mutex
+	acl      map[aclKey]time.Time // successful read probes, until expiry
+	inflight map[string]*call     // repo+"\x00"+sha -> shared upstream fetch
 }
 
 // New validates cfg and returns a Daemon.
@@ -50,8 +57,18 @@ func New(cfg Config) (*Daemon, error) {
 	if cfg.Log == nil {
 		cfg.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	return &Daemon{cfg: cfg, up: sgitv1.NewRepoClient(cfg.Conn)}, nil
+	dec, err := zstd.NewReader(nil, zstd.WithDecoderMaxMemory(fetch.MaxObjectSize))
+	if err != nil {
+		return nil, err
+	}
+	return &Daemon{
+		cfg: cfg, up: sgitv1.NewRepoClient(cfg.Conn), dec: dec,
+		acl: map[aclKey]time.Time{}, inflight: map[string]*call{},
+	}, nil
 }
+
+// Close releases resources.
+func (d *Daemon) Close() { d.dec.Close() }
 
 // NewGRPC returns a gRPC server with sgit's message limits.
 func NewGRPC() *grpc.Server { return grpc.NewServer(rpc.ServerOptions()...) }
@@ -62,9 +79,6 @@ func (d *Daemon) Register(g *grpc.Server) {
 	sgitv1.RegisterDaemonServer(g, &infoServer{d: d})
 	healthpb.RegisterHealthServer(g, health.NewServer())
 }
-
-// Close releases resources.
-func (d *Daemon) Close() {}
 
 // forward copies the caller's authorization header onto a context for the
 // upstream call. Calls without one are rejected here.
