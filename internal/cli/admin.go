@@ -14,7 +14,7 @@ const (
 	repoUsage  = "repo create <name> [--mirror URL] | repo import <name> --from URL [--mirror URL] | repo status <name> | repo list | repo delete <name> --yes  [--server S]"
 	userUsage  = "user list | user promote <user> | user demote <user> | user delete <user>  [--server S]"
 	tokenUsage = "token create <user> [--admin] [--email E] | token revoke <id> | token list [user]  [--server S]"
-	aclUsage   = "acl grant <user> <repo> read|write | acl revoke <user> <repo> | acl list [--user U] [--repo R]  [--server S]"
+	aclUsage   = "acl grant <user> <project> read|write | acl revoke <user> <project> | acl list [--user U] [--project P]  [--server S]"
 )
 
 const (
@@ -315,25 +315,25 @@ func cmdACL(ctx context.Context, a *app, args []string) error {
 	if len(pos) != want {
 		return usageErr(aclUsage)
 	}
-	user, repo := pos[0], pos[1]
+	user, project := pos[0], pos[1]
 	level := ""
 	err = a.admin(ctx, *srv, adminTimeout, func(ctx context.Context, ac sgitv1.AdminClient) error {
 		if verb == "grant" {
 			level = pos[2]
-			_, err := ac.GrantACL(ctx, &sgitv1.GrantACLRequest{User: user, Project: repo, Level: level})
+			_, err := ac.GrantACL(ctx, &sgitv1.GrantACLRequest{User: user, Project: project, Level: level})
 			return err
 		}
-		_, err := ac.RevokeACL(ctx, &sgitv1.RevokeACLRequest{User: user, Project: repo})
+		_, err := ac.RevokeACL(ctx, &sgitv1.RevokeACLRequest{User: user, Project: project})
 		return err
 	})
 	if err != nil {
 		return err
 	}
-	return a.emit(map[string]any{"user": user, "repo": repo, "level": level}, func(w io.Writer) {
+	return a.emit(map[string]any{"user": user, "project": project, "level": level}, func(w io.Writer) {
 		if verb == "grant" {
-			fmt.Fprintf(w, "granted %s %s access to %s\n", user, level, repo)
+			fmt.Fprintf(w, "granted %s %s access to %s\n", user, level, project)
 		} else {
-			fmt.Fprintf(w, "revoked %s's access to %s\n", user, repo)
+			fmt.Fprintf(w, "revoked %s's access to %s\n", user, project)
 		}
 	})
 }
@@ -350,7 +350,7 @@ func repoDelete(ctx context.Context, a *app, args []string) error {
 		return usageErr(repoUsage)
 	}
 	if !*yes {
-		return exitf(ExitError, "refusing to delete repo %q without --yes (this removes its ACLs and drafts; the git data is moved to <data>/deleted/ on the server)", pos[0])
+		return exitf(ExitError, "refusing to delete repo %q without --yes (this removes its drafts; the git data is moved to <data>/deleted/ on the server)", pos[0])
 	}
 	var resp *sgitv1.DeleteRepoResponse
 	err = a.admin(ctx, *srv, adminTimeout, func(ctx context.Context, ac sgitv1.AdminClient) (err error) {
@@ -509,7 +509,7 @@ func tokenList(ctx context.Context, a *app, args []string) error {
 func aclList(ctx context.Context, a *app, args []string) error {
 	fs := a.newFlags("acl list")
 	user := fs.String("user", "", "only this user's grants")
-	repo := fs.String("repo", "", "only grants on this repo")
+	project := fs.String("project", "", "only grants on this project")
 	srv := fs.String("server", "", "server (default: the working copy's, else the login default)")
 	pos, err := parse(fs, args)
 	if err != nil {
@@ -520,16 +520,16 @@ func aclList(ctx context.Context, a *app, args []string) error {
 	}
 	var resp *sgitv1.ListACLResponse
 	err = a.admin(ctx, *srv, adminTimeout, func(ctx context.Context, ac sgitv1.AdminClient) (err error) {
-		resp, err = ac.ListACL(ctx, &sgitv1.ListACLRequest{User: *user, Project: *repo})
+		resp, err = ac.ListACL(ctx, &sgitv1.ListACLRequest{User: *user, Project: *project})
 		return err
 	})
 	if err != nil {
 		return err
 	}
 	type aclJSON struct {
-		User  string `json:"user"`
-		Repo  string `json:"repo"`
-		Level string `json:"level"`
+		User    string `json:"user"`
+		Project string `json:"project"`
+		Level   string `json:"level"`
 	}
 	entries := make([]aclJSON, 0, len(resp.Entries))
 	for _, e := range resp.Entries {
@@ -537,9 +537,9 @@ func aclList(ctx context.Context, a *app, args []string) error {
 	}
 	return a.emit(map[string]any{"acl": entries}, func(w io.Writer) {
 		tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "USER\tREPO\tLEVEL")
+		fmt.Fprintln(tw, "USER\tPROJECT\tLEVEL")
 		for _, e := range entries {
-			fmt.Fprintf(tw, "%s\t%s\t%s\n", e.User, e.Repo, e.Level)
+			fmt.Fprintf(tw, "%s\t%s\t%s\n", e.User, e.Project, e.Level)
 		}
 		tw.Flush()
 	})

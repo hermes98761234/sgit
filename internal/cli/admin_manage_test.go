@@ -145,8 +145,8 @@ func TestACLList(t *testing.T) {
 	h.seed(nil)
 	dir := t.TempDir()
 	h.ok(dir, "repo", "create", "api")
-	h.env.CreateProject("api") // grants are per project (Task 9 adds sg project)
-	h.env.Mount("api", ".", "api", ".", false)
+	h.ok(dir, "project", "create", "api") // grants are per project
+	h.ok(dir, "project", "mount", "api", ".", "api:.")
 	h.ok(dir, "token", "create", "bob")
 	h.ok(dir, "token", "create", "carol")
 	h.ok(dir, "acl", "grant", "bob", "web", "write")
@@ -154,23 +154,23 @@ func TestACLList(t *testing.T) {
 	h.ok(dir, "acl", "grant", "carol", "web", "read")
 
 	r := rows(h.ok(dir, "acl", "list"))
-	if len(r) != 4 || strings.Join(r[0], " ") != "USER REPO LEVEL" || strings.Join(r[1], " ") != "bob api read" || strings.Join(r[2], " ") != "bob web write" {
+	if len(r) != 4 || strings.Join(r[0], " ") != "USER PROJECT LEVEL" || strings.Join(r[1], " ") != "bob api read" || strings.Join(r[2], " ") != "bob web write" {
 		t.Fatalf("acl list = %v", r)
 	}
-	if r := rows(h.ok(dir, "acl", "list", "--repo", "web")); len(r) != 3 {
+	if r := rows(h.ok(dir, "acl", "list", "--project", "web")); len(r) != 3 {
 		t.Fatalf("by repo = %v", r)
 	}
-	if r := rows(h.ok(dir, "acl", "list", "--user", "carol", "--repo", "web")); len(r) != 2 || strings.Join(r[1], " ") != "carol web read" {
+	if r := rows(h.ok(dir, "acl", "list", "--user", "carol", "--project", "web")); len(r) != 2 || strings.Join(r[1], " ") != "carol web read" {
 		t.Fatalf("by user+repo = %v", r)
 	}
 	var j struct {
-		ACL []struct{ User, Repo, Level string }
+		ACL []struct{ User, Project, Level string }
 	}
 	decode(t, h.ok(dir, "acl", "list", "--user", "bob", "--json"), &j)
 	if len(j.ACL) != 2 || j.ACL[0].Level != "read" {
 		t.Fatalf("acl list --json = %+v", j)
 	}
-	if code, _, _ := h.run(dir, "acl", "list", "--repo", "nope"); code != cli.ExitAuth {
+	if code, _, _ := h.run(dir, "acl", "list", "--project", "nope"); code != cli.ExitAuth {
 		t.Fatalf("unknown project exit %d", code)
 	}
 }
