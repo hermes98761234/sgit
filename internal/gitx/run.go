@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 )
 
 var (
@@ -60,6 +61,9 @@ func runGit(ctx context.Context, stdin io.Reader, extraEnv []string, args ...str
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Env = append(baseEnv(), extraEnv...)
 	cmd.Stdin = stdin
+	// A cancelled git may leave children (ssh, git-remote-https) holding the
+	// output pipes; WaitDelay stops that from blocking Run forever.
+	cmd.WaitDelay = 5 * time.Second
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
