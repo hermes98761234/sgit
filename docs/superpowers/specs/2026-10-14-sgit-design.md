@@ -45,7 +45,7 @@ These are out of scope for v1: per-directory ACLs, a review UI, virtualized (FUS
 
 - There is one Go module, `github.com/hermes98761234/sgit`, with three binaries: `sg`, `sgd` and `sg-server`.
 - The daemon and server implement the **same gRPC `Repo` service**. `sg` connects to `sgd` when its socket exists. Otherwise it connects **directly to the server** and prints a one-line warning, which suits CI and laptops.
-- The server requires **git ≥ 2.38**, for `merge-tree --write-tree`.
+- The server requires **git ≥ 2.40**, for `merge-tree --write-tree --merge-base`.
 
 ### Package layout (indicative)
 
@@ -70,7 +70,7 @@ internal/cli         command implementations, --json output, exit codes
 - **Object IDs.** Git SHA-1 object IDs are used as-is (content-addressed and immutable).
 - **Change list.** This is how a client describes a change: `base` (commit SHA) plus `[{path, op: add|modify|delete, blob_sha, mode}]`. It is relative to the parent, Scion-style. Blob contents are uploaded first with `UploadBlobs`.
 - **Draft.**
-  - The ref `refs/sg/drafts/<id>` points to the latest draft commit. Every revision is kept as `refs/sg/drafts/<id>/v<n>`.
+  - The ref `refs/sg/drafts/<id>/head` points to the latest draft commit. Every revision is kept as `refs/sg/drafts/<id>/v<n>`. Git refs are files, so `<id>` itself can't also be a ref.
   - The DB row holds: id, repo, owner, title, base, head, version, and status (`open|landed|abandoned`), plus `landed_as` (the commit on main).
   - `<id>` is a short random base32 string.
 - **Land.** The draft is rebased onto the current main as a **single linear commit**: no merge commits, with main as the only parent. Main then advances with a compare-and-swap.
@@ -144,7 +144,7 @@ All RPCs carry `authorization: Bearer <token>` metadata, and all are served by b
 |---|---|---|
 | `ResolveRev(repo, rev) → sha` | read | Always forwarded fresh to the server for refs. Full SHAs resolve locally. |
 | `GetObjects(repo, shas[]) → stream Object{sha, type, zstd_data}` | read | Streamed and resumable (client re-requests missing). Cached by sgd. |
-| `UploadBlobs(repo, stream Blob) → shas[]` | write | Skips blobs that already exist (`HasObjects` check first) |
+| `UploadBlobs(repo, stream BlobChunk) → shas[]` | write | Each blob is streamed in ≤1 MiB chunks, with `end_of_blob` marking its last one. Shas come back in upload order. Writing an existing blob is a no-op. |
 | `HasObjects(repo, shas[]) → bool[]` | read | |
 | `CreateDraft(repo, base, changes[], title, message) → Draft` | write | |
 | `UpdateDraft(repo, id, base, changes[], message) → Draft` | write | New version ref |
@@ -153,7 +153,7 @@ All RPCs carry `authorization: Bearer <token>` metadata, and all are served by b
 | `ListDrafts`, `GetDraft`, `AbandonDraft` | meta | |
 | `Log(repo, rev, path, n)`, `Blame(repo, rev, path)`, `Diff(repo, a, b, paths)` | read | Run on the server, uncached |
 | `MergeFile(base, ours, theirs blob shas) → {content, conflicted}` | compute | |
-| Admin: `CreateRepo`, `ImportRepo`, `RepoStatus`, `CreateToken`, `RevokeToken`, `GrantACL`, `RevokeACL` | admin | Admin role required |
+| Separate service `sgit.v1.Admin`: `WhoAmI` (any user), and `CreateRepo`, `ImportRepo`, `RepoStatus`, `CreateToken`, `RevokeToken`, `GrantACL`, `RevokeACL` | admin | Admin role required (except `WhoAmI`). `sg` always dials the server directly for Admin calls, never `sgd`. |
 
 **Fetch protocol (Scion-style).**
 1. The client starts from a commit's root tree.
@@ -169,7 +169,9 @@ There's no "have/want" negotiation and no packfile. An interrupted fetch simply 
    1. Use a temporary `GIT_INDEX_FILE` and run `git read-tree <base>`.
    2. Run `git update-index --index-info` with the change list, then `git write-tree`.
    3. Run `git commit-tree <tree> -p <base> -m <msg>` with author and committer set from the token's user.
-   4. Run `git update-ref refs/sg/drafts/<id> <commit>` and write the version ref.
+   4. Run `git update-ref refs/sg/drafts/<id>/head <commit>` and write `refs/sg/drafts/<id>/v<n>`.
+
+   Change semantics: `add`/`modify` upsert the path. `delete` of a path that isn't a file in `base` is `InvalidArgument`. A file can replace a directory, or the reverse. A change list is always the **full** delta of the working copy against `base`, never incremental against the previous draft version. An empty change list is `InvalidArgument`.
 3. **Land.** This is a retry loop, at most 5 attempts.
    1. `main_old := rev-parse main`.
    2. If `draft.base == main_old`, use `tree := draft tree`. Otherwise run `git merge-tree --write-tree --merge-base=<draft.base> <main_old> <draft.head>`.
@@ -244,7 +246,7 @@ There's no "have/want" negotiation and no packfile. An interrupted fetch simply 
   - auth: no token, wrong token, read-only token attempting land, non-admin admin call
   - daemon: second checkout served from cache with zero server `GetObjects`; daemon down → fallback works
 - **Benchmarks.** Concurrent lands/sec, and cold vs. warm checkout of a generated repo with 10k files.
-- **CI.** GitHub Actions runs `go vet`, `staticcheck` and `go test -race ./...` with git ≥ 2.38.
+- **CI.** GitHub Actions runs `go vet`, `staticcheck` and `go test -race ./...` with git ≥ 2.40.
 
 ## 12. Delivery phases
 
@@ -261,7 +263,7 @@ The supported way to run `sg-server` is a container. The CLI and daemon stay nat
 
 - **`Dockerfile`** (multi-stage):
   1. `golang:1.23-alpine` builds `sg-server` (plus `sg` for admin use inside the container) with `CGO_ENABLED=0`.
-  2. The runtime image is `alpine:3.20` with `git` (≥ 2.38), `openssh-client` and `ca-certificates`.
+  2. The runtime image is `alpine:3.20` with `git` (≥ 2.40), `openssh-client` and `ca-certificates`.
   3. It runs as non-root user `sg` (uid 10001).
 - **`VOLUME /data`** holds the bare repos, `sg.db` and the TLS material under `/data/tls/`.
 - **`EXPOSE 7419`**: the gRPC port.
