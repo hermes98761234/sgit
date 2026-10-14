@@ -113,3 +113,17 @@ message GrantACLRequest { string user = 1; string repo = 2; string level = 3; }
 message GrantACLResponse {}
 message RevokeACLRequest { string user = 1; string repo = 2; }
 message RevokeACLResponse {}
+
+// Daemon is served only by sgd, so clients can check which server it fronts
+// before sending it a token.
+service Daemon {
+  rpc Info(DaemonInfoRequest) returns (DaemonInfoResponse);
+}
+
+message DaemonInfoRequest {}
+message DaemonInfoResponse {
+  string upstream = 1;
+  string version = 2;
+  uint64 cache_bytes = 3;
+  uint64 cache_max_bytes = 4;
+}

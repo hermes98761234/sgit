@@ -2536,6 +2536,110 @@ func (*RevokeACLResponse) Descriptor() ([]byte, []int) {
 	return file_sgit_v1_sgit_proto_rawDescGZIP(), []int{42}
 }
 
+type DaemonInfoRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DaemonInfoRequest) Reset() {
+	*x = DaemonInfoRequest{}
+	mi := &file_sgit_v1_sgit_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DaemonInfoRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DaemonInfoRequest) ProtoMessage() {}
+
+func (x *DaemonInfoRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sgit_v1_sgit_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DaemonInfoRequest.ProtoReflect.Descriptor instead.
+func (*DaemonInfoRequest) Descriptor() ([]byte, []int) {
+	return file_sgit_v1_sgit_proto_rawDescGZIP(), []int{43}
+}
+
+type DaemonInfoResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Upstream      string                 `protobuf:"bytes,1,opt,name=upstream,proto3" json:"upstream,omitempty"`
+	Version       string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`
+	CacheBytes    uint64                 `protobuf:"varint,3,opt,name=cache_bytes,json=cacheBytes,proto3" json:"cache_bytes,omitempty"`
+	CacheMaxBytes uint64                 `protobuf:"varint,4,opt,name=cache_max_bytes,json=cacheMaxBytes,proto3" json:"cache_max_bytes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DaemonInfoResponse) Reset() {
+	*x = DaemonInfoResponse{}
+	mi := &file_sgit_v1_sgit_proto_msgTypes[44]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DaemonInfoResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DaemonInfoResponse) ProtoMessage() {}
+
+func (x *DaemonInfoResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sgit_v1_sgit_proto_msgTypes[44]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DaemonInfoResponse.ProtoReflect.Descriptor instead.
+func (*DaemonInfoResponse) Descriptor() ([]byte, []int) {
+	return file_sgit_v1_sgit_proto_rawDescGZIP(), []int{44}
+}
+
+func (x *DaemonInfoResponse) GetUpstream() string {
+	if x != nil {
+		return x.Upstream
+	}
+	return ""
+}
+
+func (x *DaemonInfoResponse) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
+func (x *DaemonInfoResponse) GetCacheBytes() uint64 {
+	if x != nil {
+		return x.CacheBytes
+	}
+	return 0
+}
+
+func (x *DaemonInfoResponse) GetCacheMaxBytes() uint64 {
+	if x != nil {
+		return x.CacheMaxBytes
+	}
+	return 0
+}
+
 var File_sgit_v1_sgit_proto protoreflect.FileDescriptor
 
 const file_sgit_v1_sgit_proto_rawDesc = "" +
@@ -2707,7 +2811,14 @@ const file_sgit_v1_sgit_proto_rawDesc = "" +
 	"\x10RevokeACLRequest\x12\x12\n" +
 	"\x04user\x18\x01 \x01(\tR\x04user\x12\x12\n" +
 	"\x04repo\x18\x02 \x01(\tR\x04repo\"\x13\n" +
-	"\x11RevokeACLResponse*d\n" +
+	"\x11RevokeACLResponse\"\x13\n" +
+	"\x11DaemonInfoRequest\"\x93\x01\n" +
+	"\x12DaemonInfoResponse\x12\x1a\n" +
+	"\bupstream\x18\x01 \x01(\tR\bupstream\x12\x18\n" +
+	"\aversion\x18\x02 \x01(\tR\aversion\x12\x1f\n" +
+	"\vcache_bytes\x18\x03 \x01(\x04R\n" +
+	"cacheBytes\x12&\n" +
+	"\x0fcache_max_bytes\x18\x04 \x01(\x04R\rcacheMaxBytes*d\n" +
 	"\bChangeOp\x12\x19\n" +
 	"\x15CHANGE_OP_UNSPECIFIED\x10\x00\x12\x11\n" +
 	"\rCHANGE_OP_ADD\x10\x01\x12\x14\n" +
@@ -2740,7 +2851,9 @@ const file_sgit_v1_sgit_proto_rawDesc = "" +
 	"\vCreateToken\x12\x1b.sgit.v1.CreateTokenRequest\x1a\x1c.sgit.v1.CreateTokenResponse\x12H\n" +
 	"\vRevokeToken\x12\x1b.sgit.v1.RevokeTokenRequest\x1a\x1c.sgit.v1.RevokeTokenResponse\x12?\n" +
 	"\bGrantACL\x12\x18.sgit.v1.GrantACLRequest\x1a\x19.sgit.v1.GrantACLResponse\x12B\n" +
-	"\tRevokeACL\x12\x19.sgit.v1.RevokeACLRequest\x1a\x1a.sgit.v1.RevokeACLResponseB3Z1github.com/hermes98761234/sgit/gen/sgit/v1;sgitv1b\x06proto3"
+	"\tRevokeACL\x12\x19.sgit.v1.RevokeACLRequest\x1a\x1a.sgit.v1.RevokeACLResponse2I\n" +
+	"\x06Daemon\x12?\n" +
+	"\x04Info\x12\x1a.sgit.v1.DaemonInfoRequest\x1a\x1b.sgit.v1.DaemonInfoResponseB3Z1github.com/hermes98761234/sgit/gen/sgit/v1;sgitv1b\x06proto3"
 
 var (
 	file_sgit_v1_sgit_proto_rawDescOnce sync.Once
@@ -2755,7 +2868,7 @@ func file_sgit_v1_sgit_proto_rawDescGZIP() []byte {
 }
 
 var file_sgit_v1_sgit_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_sgit_v1_sgit_proto_msgTypes = make([]protoimpl.MessageInfo, 43)
+var file_sgit_v1_sgit_proto_msgTypes = make([]protoimpl.MessageInfo, 45)
 var file_sgit_v1_sgit_proto_goTypes = []any{
 	(ChangeOp)(0),                // 0: sgit.v1.ChangeOp
 	(*ResolveRevRequest)(nil),    // 1: sgit.v1.ResolveRevRequest
@@ -2801,6 +2914,8 @@ var file_sgit_v1_sgit_proto_goTypes = []any{
 	(*GrantACLResponse)(nil),     // 41: sgit.v1.GrantACLResponse
 	(*RevokeACLRequest)(nil),     // 42: sgit.v1.RevokeACLRequest
 	(*RevokeACLResponse)(nil),    // 43: sgit.v1.RevokeACLResponse
+	(*DaemonInfoRequest)(nil),    // 44: sgit.v1.DaemonInfoRequest
+	(*DaemonInfoResponse)(nil),   // 45: sgit.v1.DaemonInfoResponse
 }
 var file_sgit_v1_sgit_proto_depIdxs = []int32{
 	0,  // 0: sgit.v1.Change.op:type_name -> sgit.v1.ChangeOp
@@ -2832,29 +2947,31 @@ var file_sgit_v1_sgit_proto_depIdxs = []int32{
 	38, // 26: sgit.v1.Admin.RevokeToken:input_type -> sgit.v1.RevokeTokenRequest
 	40, // 27: sgit.v1.Admin.GrantACL:input_type -> sgit.v1.GrantACLRequest
 	42, // 28: sgit.v1.Admin.RevokeACL:input_type -> sgit.v1.RevokeACLRequest
-	2,  // 29: sgit.v1.Repo.ResolveRev:output_type -> sgit.v1.ResolveRevResponse
-	4,  // 30: sgit.v1.Repo.GetObjects:output_type -> sgit.v1.Object
-	6,  // 31: sgit.v1.Repo.HasObjects:output_type -> sgit.v1.HasObjectsResponse
-	8,  // 32: sgit.v1.Repo.UploadBlobs:output_type -> sgit.v1.UploadBlobsResponse
-	16, // 33: sgit.v1.Repo.CreateDraft:output_type -> sgit.v1.Draft
-	16, // 34: sgit.v1.Repo.UpdateDraft:output_type -> sgit.v1.Draft
-	16, // 35: sgit.v1.Repo.GetDraft:output_type -> sgit.v1.Draft
-	14, // 36: sgit.v1.Repo.ListDrafts:output_type -> sgit.v1.ListDraftsResponse
-	16, // 37: sgit.v1.Repo.AbandonDraft:output_type -> sgit.v1.Draft
-	19, // 38: sgit.v1.Repo.Land:output_type -> sgit.v1.LandResponse
-	19, // 39: sgit.v1.Repo.CommitAndLand:output_type -> sgit.v1.LandResponse
-	24, // 40: sgit.v1.Repo.Log:output_type -> sgit.v1.LogResponse
-	27, // 41: sgit.v1.Repo.Blame:output_type -> sgit.v1.BlameResponse
-	29, // 42: sgit.v1.Repo.Diff:output_type -> sgit.v1.DiffResponse
-	31, // 43: sgit.v1.Repo.MergeFile:output_type -> sgit.v1.MergeFileResponse
-	33, // 44: sgit.v1.Admin.WhoAmI:output_type -> sgit.v1.WhoAmIResponse
-	35, // 45: sgit.v1.Admin.CreateRepo:output_type -> sgit.v1.CreateRepoResponse
-	37, // 46: sgit.v1.Admin.CreateToken:output_type -> sgit.v1.CreateTokenResponse
-	39, // 47: sgit.v1.Admin.RevokeToken:output_type -> sgit.v1.RevokeTokenResponse
-	41, // 48: sgit.v1.Admin.GrantACL:output_type -> sgit.v1.GrantACLResponse
-	43, // 49: sgit.v1.Admin.RevokeACL:output_type -> sgit.v1.RevokeACLResponse
-	29, // [29:50] is the sub-list for method output_type
-	8,  // [8:29] is the sub-list for method input_type
+	44, // 29: sgit.v1.Daemon.Info:input_type -> sgit.v1.DaemonInfoRequest
+	2,  // 30: sgit.v1.Repo.ResolveRev:output_type -> sgit.v1.ResolveRevResponse
+	4,  // 31: sgit.v1.Repo.GetObjects:output_type -> sgit.v1.Object
+	6,  // 32: sgit.v1.Repo.HasObjects:output_type -> sgit.v1.HasObjectsResponse
+	8,  // 33: sgit.v1.Repo.UploadBlobs:output_type -> sgit.v1.UploadBlobsResponse
+	16, // 34: sgit.v1.Repo.CreateDraft:output_type -> sgit.v1.Draft
+	16, // 35: sgit.v1.Repo.UpdateDraft:output_type -> sgit.v1.Draft
+	16, // 36: sgit.v1.Repo.GetDraft:output_type -> sgit.v1.Draft
+	14, // 37: sgit.v1.Repo.ListDrafts:output_type -> sgit.v1.ListDraftsResponse
+	16, // 38: sgit.v1.Repo.AbandonDraft:output_type -> sgit.v1.Draft
+	19, // 39: sgit.v1.Repo.Land:output_type -> sgit.v1.LandResponse
+	19, // 40: sgit.v1.Repo.CommitAndLand:output_type -> sgit.v1.LandResponse
+	24, // 41: sgit.v1.Repo.Log:output_type -> sgit.v1.LogResponse
+	27, // 42: sgit.v1.Repo.Blame:output_type -> sgit.v1.BlameResponse
+	29, // 43: sgit.v1.Repo.Diff:output_type -> sgit.v1.DiffResponse
+	31, // 44: sgit.v1.Repo.MergeFile:output_type -> sgit.v1.MergeFileResponse
+	33, // 45: sgit.v1.Admin.WhoAmI:output_type -> sgit.v1.WhoAmIResponse
+	35, // 46: sgit.v1.Admin.CreateRepo:output_type -> sgit.v1.CreateRepoResponse
+	37, // 47: sgit.v1.Admin.CreateToken:output_type -> sgit.v1.CreateTokenResponse
+	39, // 48: sgit.v1.Admin.RevokeToken:output_type -> sgit.v1.RevokeTokenResponse
+	41, // 49: sgit.v1.Admin.GrantACL:output_type -> sgit.v1.GrantACLResponse
+	43, // 50: sgit.v1.Admin.RevokeACL:output_type -> sgit.v1.RevokeACLResponse
+	45, // 51: sgit.v1.Daemon.Info:output_type -> sgit.v1.DaemonInfoResponse
+	30, // [30:52] is the sub-list for method output_type
+	8,  // [8:30] is the sub-list for method input_type
 	8,  // [8:8] is the sub-list for extension type_name
 	8,  // [8:8] is the sub-list for extension extendee
 	0,  // [0:8] is the sub-list for field type_name
@@ -2871,9 +2988,9 @@ func file_sgit_v1_sgit_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sgit_v1_sgit_proto_rawDesc), len(file_sgit_v1_sgit_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   43,
+			NumMessages:   45,
 			NumExtensions: 0,
-			NumServices:   2,
+			NumServices:   3,
 		},
 		GoTypes:           file_sgit_v1_sgit_proto_goTypes,
 		DependencyIndexes: file_sgit_v1_sgit_proto_depIdxs,

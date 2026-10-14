@@ -948,3 +948,111 @@ var Admin_ServiceDesc = grpc.ServiceDesc{
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "sgit/v1/sgit.proto",
 }
+
+const (
+	Daemon_Info_FullMethodName = "/sgit.v1.Daemon/Info"
+)
+
+// DaemonClient is the client API for Daemon service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// Daemon is served only by sgd, so clients can check which server it fronts
+// before sending it a token.
+type DaemonClient interface {
+	Info(ctx context.Context, in *DaemonInfoRequest, opts ...grpc.CallOption) (*DaemonInfoResponse, error)
+}
+
+type daemonClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewDaemonClient(cc grpc.ClientConnInterface) DaemonClient {
+	return &daemonClient{cc}
+}
+
+func (c *daemonClient) Info(ctx context.Context, in *DaemonInfoRequest, opts ...grpc.CallOption) (*DaemonInfoResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DaemonInfoResponse)
+	err := c.cc.Invoke(ctx, Daemon_Info_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// DaemonServer is the server API for Daemon service.
+// All implementations must embed UnimplementedDaemonServer
+// for forward compatibility.
+//
+// Daemon is served only by sgd, so clients can check which server it fronts
+// before sending it a token.
+type DaemonServer interface {
+	Info(context.Context, *DaemonInfoRequest) (*DaemonInfoResponse, error)
+	mustEmbedUnimplementedDaemonServer()
+}
+
+// UnimplementedDaemonServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedDaemonServer struct{}
+
+func (UnimplementedDaemonServer) Info(context.Context, *DaemonInfoRequest) (*DaemonInfoResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Info not implemented")
+}
+func (UnimplementedDaemonServer) mustEmbedUnimplementedDaemonServer() {}
+func (UnimplementedDaemonServer) testEmbeddedByValue()                {}
+
+// UnsafeDaemonServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to DaemonServer will
+// result in compilation errors.
+type UnsafeDaemonServer interface {
+	mustEmbedUnimplementedDaemonServer()
+}
+
+func RegisterDaemonServer(s grpc.ServiceRegistrar, srv DaemonServer) {
+	// If the following call panics, it indicates UnimplementedDaemonServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&Daemon_ServiceDesc, srv)
+}
+
+func _Daemon_Info_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DaemonInfoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DaemonServer).Info(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Daemon_Info_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DaemonServer).Info(ctx, req.(*DaemonInfoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// Daemon_ServiceDesc is the grpc.ServiceDesc for Daemon service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var Daemon_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "sgit.v1.Daemon",
+	HandlerType: (*DaemonServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Info",
+			Handler:    _Daemon_Info_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "sgit/v1/sgit.proto",
+}
