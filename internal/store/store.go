@@ -129,6 +129,60 @@ CREATE TABLE IF NOT EXISTS mirror_state (
   last_attempt INTEGER NOT NULL DEFAULT 0,
   pending INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS projects (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT UNIQUE NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS project_aliases (
+  alias TEXT PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id)
+);
+CREATE TABLE IF NOT EXISTS project_mounts (
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  mount_path TEXT NOT NULL,
+  repo TEXT NOT NULL REFERENCES repos(name),
+  folder TEXT NOT NULL,
+  read_only INTEGER NOT NULL DEFAULT 0,
+  added_at INTEGER NOT NULL,
+  PRIMARY KEY (project_id, mount_path)
+);
+CREATE INDEX IF NOT EXISTS project_mounts_repo ON project_mounts(repo);
+CREATE TABLE IF NOT EXISTS project_commits (
+  project_id INTEGER NOT NULL,
+  project_sha TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  repo TEXT NOT NULL DEFAULT '',
+  source_sha TEXT NOT NULL DEFAULT '',
+  layout TEXT NOT NULL DEFAULT '[]',
+  actor_name TEXT NOT NULL DEFAULT '',
+  actor_email TEXT NOT NULL DEFAULT '',
+  actor_when INTEGER NOT NULL DEFAULT 0,
+  message TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (project_id, project_sha),
+  UNIQUE (project_id, seq)
+);
+CREATE TABLE IF NOT EXISTS project_commit_sources (
+  project_id INTEGER NOT NULL,
+  project_sha TEXT NOT NULL,
+  repo TEXT NOT NULL,
+  source_sha TEXT NOT NULL,
+  PRIMARY KEY (project_id, project_sha, repo)
+);
+CREATE TABLE IF NOT EXISTS project_cursors (
+  project_id INTEGER NOT NULL,
+  repo TEXT NOT NULL,
+  source_sha TEXT NOT NULL,
+  PRIMARY KEY (project_id, repo)
+);
+CREATE TABLE IF NOT EXISTS land_seq (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo TEXT NOT NULL,
+  sha TEXT NOT NULL,
+  at INTEGER NOT NULL,
+  UNIQUE (repo, sha)
+);
 `
 
 // Open opens (creating if needed) the database at path and applies the schema.
@@ -677,7 +731,15 @@ func (s *Store) DeleteRepo(ctx context.Context, name string) error {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	var mounted int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_mounts WHERE repo=?`, name).Scan(&mounted); err != nil {
+		return err
+	}
+	if mounted > 0 {
+		return fmt.Errorf("%w: %q", ErrMounted, name)
+	}
 	for _, q := range []string{
+		`DELETE FROM land_seq WHERE repo=?`,
 		`DELETE FROM acl WHERE repo=?`,
 		`DELETE FROM drafts WHERE repo=?`,
 		`DELETE FROM mirror_state WHERE repo=?`,
