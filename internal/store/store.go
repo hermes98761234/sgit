@@ -45,6 +45,15 @@ type RepoRow struct {
 	CreatedAt time.Time
 }
 
+// MirrorState is the background mirror's bookkeeping for one repo (spec §8).
+type MirrorState struct {
+	Repo         string
+	LastMirrored string    // last commit pushed to the mirror; "" = never
+	LastError    string    // last push error; "" after a success
+	LastAttempt  time.Time // zero = never attempted
+	Pending      bool      // the worker saw main ahead of LastMirrored
+}
+
 type Draft struct {
 	ID        string
 	Repo      string
@@ -102,6 +111,13 @@ CREATE TABLE IF NOT EXISTS drafts (
   updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS drafts_repo_status ON drafts(repo, status);
+CREATE TABLE IF NOT EXISTS mirror_state (
+  repo TEXT PRIMARY KEY REFERENCES repos(name),
+  last_mirrored TEXT NOT NULL DEFAULT '',
+  last_error TEXT NOT NULL DEFAULT '',
+  last_attempt INTEGER NOT NULL DEFAULT 0,
+  pending INTEGER NOT NULL DEFAULT 0
+);
 `
 
 // Open opens (creating if needed) the database at path and applies the schema.
@@ -234,10 +250,75 @@ func (s *Store) ACL(ctx context.Context, userID int64, repo string) (Level, erro
 }
 
 func (s *Store) CreateRepo(ctx context.Context, name, mirrorURL string) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO repos(name,mirror_url,created_at) VALUES(?,?,?)`, name, mirrorURL, time.Now().Unix())
+	return s.CreateRepoWithMirror(ctx, name, mirrorURL, "")
+}
+
+// CreateRepoWithMirror inserts a repo. A non-empty lastMirrored records that
+// the mirror already holds that commit (a repo imported from its own mirror).
+func (s *Store) CreateRepoWithMirror(ctx context.Context, name, mirrorURL, lastMirrored string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	_, err = tx.ExecContext(ctx, `INSERT INTO repos(name,mirror_url,created_at) VALUES(?,?,?)`, name, mirrorURL, time.Now().Unix())
 	if isUnique(err) {
 		return fmt.Errorf("%w: repo %q", ErrExists, name)
 	}
+	if err != nil {
+		return err
+	}
+	if lastMirrored != "" {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO mirror_state(repo,last_mirrored) VALUES(?,?)`, name, lastMirrored); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// MirrorState returns repo's mirror bookkeeping; a repo never mirrored has
+// the zero state.
+func (s *Store) MirrorState(ctx context.Context, repo string) (MirrorState, error) {
+	m := MirrorState{Repo: repo}
+	var attempt, pending int64
+	err := s.db.QueryRowContext(ctx, `SELECT last_mirrored,last_error,last_attempt,pending FROM mirror_state WHERE repo=?`, repo).
+		Scan(&m.LastMirrored, &m.LastError, &attempt, &pending)
+	if errors.Is(err, sql.ErrNoRows) {
+		return m, nil
+	}
+	if err != nil {
+		return m, err
+	}
+	if attempt != 0 {
+		m.LastAttempt = time.Unix(attempt, 0).UTC()
+	}
+	m.Pending = pending != 0
+	return m, nil
+}
+
+func (s *Store) SetMirrorPending(ctx context.Context, repo string, pending bool) error {
+	p := 0
+	if pending {
+		p = 1
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO mirror_state(repo,pending) VALUES(?,?)
+ON CONFLICT(repo) DO UPDATE SET pending=excluded.pending`, repo, p)
+	return err
+}
+
+// RecordMirrorSuccess notes that the mirror's main is now sha.
+func (s *Store) RecordMirrorSuccess(ctx context.Context, repo, sha string, at time.Time) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO mirror_state(repo,last_mirrored,last_error,last_attempt,pending) VALUES(?,?,'',?,0)
+ON CONFLICT(repo) DO UPDATE SET last_mirrored=excluded.last_mirrored,last_error='',last_attempt=excluded.last_attempt,pending=0`,
+		repo, sha, at.Unix())
+	return err
+}
+
+// RecordMirrorFailure notes a failed push; last_mirrored is kept.
+func (s *Store) RecordMirrorFailure(ctx context.Context, repo, msg string, at time.Time) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO mirror_state(repo,last_error,last_attempt,pending) VALUES(?,?,?,1)
+ON CONFLICT(repo) DO UPDATE SET last_error=excluded.last_error,last_attempt=excluded.last_attempt,pending=1`,
+		repo, msg, at.Unix())
 	return err
 }
 
