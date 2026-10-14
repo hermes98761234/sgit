@@ -33,7 +33,7 @@ func Open(dir string) *Repo {
 
 // Init creates a bare repo at dir whose main points at an initial empty commit.
 func Init(ctx context.Context, dir string, sig Signature) (*Repo, error) {
-	if _, err := runGit(ctx, nil, nil, "init", "--bare", "--quiet", "--initial-branch=main", dir); err != nil {
+	if err := InitBare(ctx, dir); err != nil {
 		return nil, err
 	}
 	r := Open(dir)
