@@ -121,3 +121,21 @@ func TestDrafts(t *testing.T) {
 		t.Fatalf("list: all=%v mine=%v open=%v", all, mine, openDrafts)
 	}
 }
+
+func TestCreateUserWithToken(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	u, err := s.CreateUserWithToken(ctx, "admin", "admin@x", true, "aaaaaaaa", []byte("h1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.UserByTokenHash(ctx, []byte("h1")); err != nil || got != u {
+		t.Fatalf("UserByTokenHash = %+v, %v", got, err)
+	}
+	if _, err := s.CreateUserWithToken(ctx, "admin", "b@x", false, "bbbbbbbb", []byte("h2")); !errors.Is(err, ErrExists) {
+		t.Fatalf("duplicate user err = %v, want ErrExists", err)
+	}
+	if _, err := s.UserByTokenHash(ctx, []byte("h2")); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second token lookup err = %v, want ErrNotFound", err)
+	}
+}

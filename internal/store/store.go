@@ -144,6 +144,38 @@ func (s *Store) CreateUser(ctx context.Context, name, email string, admin bool) 
 	return User{ID: id, Name: name, Email: email, Admin: admin}, err
 }
 
+// CreateUserWithToken inserts a user and its first token atomically.
+func (s *Store) CreateUserWithToken(ctx context.Context, name, email string, admin bool, tokenID string, tokenHash []byte) (User, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return User{}, err
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	now := time.Now().Unix()
+	res, err := tx.ExecContext(ctx, `INSERT INTO users(name,email,admin,created_at) VALUES(?,?,?,?)`, name, email, admin, now)
+	if isUnique(err) {
+		return User{}, fmt.Errorf("%w: user %q", ErrExists, name)
+	}
+	if err != nil {
+		return User{}, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return User{}, err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO tokens(id,user_id,hash,created_at) VALUES(?,?,?,?)`, tokenID, id, tokenHash, now)
+	if isUnique(err) {
+		return User{}, fmt.Errorf("%w: token %q", ErrExists, tokenID)
+	}
+	if err != nil {
+		return User{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return User{}, err
+	}
+	return User{ID: id, Name: name, Email: email, Admin: admin}, nil
+}
+
 func (s *Store) UserByName(ctx context.Context, name string) (User, error) {
 	var u User
 	err := s.db.QueryRowContext(ctx, `SELECT id,name,email,admin FROM users WHERE name=?`, name).Scan(&u.ID, &u.Name, &u.Email, &u.Admin)
