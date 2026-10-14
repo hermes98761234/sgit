@@ -22,12 +22,13 @@ func cmdCommit(ctx context.Context, a *app, args []string) error {
 	fs := a.newFlags("commit")
 	msg := fs.String("m", "", "commit message (required)")
 	title := fs.String("title", "", "draft title (default: first line of the message)")
+	land := fs.Bool("land", false, "land on main right away (rebase on the server)")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) != 0 {
-		return usageErr("commit -m MSG [--title T]")
+		return usageErr("commit -m MSG [--title T] [--land]")
 	}
 	if strings.TrimSpace(*msg) == "" {
 		return exitf(ExitError, "a commit message is required (-m)")
@@ -51,6 +52,9 @@ func cmdCommit(ctx context.Context, a *app, args []string) error {
 	pb, err := uploadChanges(ctx, s, changes)
 	if err != nil {
 		return err
+	}
+	if *land {
+		return a.commitAndLand(ctx, s, pb, *title, *msg)
 	}
 	d, err := saveDraft(ctx, s, pb, *title, *msg)
 	if err != nil {
