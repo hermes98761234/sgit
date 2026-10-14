@@ -55,22 +55,27 @@ func defaultCacheDir() string {
 	return filepath.Join(os.TempDir(), fmt.Sprintf("sg-cache-%d", os.Getuid()))
 }
 
-// listen prepares the socket directory (0700, ours), refuses to start when a
-// daemon already answers on path, removes a stale file and listens (0600).
+// listen prepares the socket directory (created 0700 if missing, never
+// chmod-ed, must be ours and not group/world-writable), refuses to start when
+// a daemon already answers on path, removes a stale socket and listens (0600).
 func listen(path string) (net.Listener, error) {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, err
+		}
+	} else if err != nil {
 		return nil, err
 	}
 	if err := client.CheckOwned(dir, os.Getuid()); err != nil {
 		return nil, fmt.Errorf("unsafe socket directory: %w", err)
 	}
-	if err := os.Chmod(dir, 0o700); err != nil {
-		return nil, err
-	}
 	if fi, err := os.Lstat(path); err == nil {
 		if fi.Mode()&os.ModeSocket == 0 {
 			return nil, fmt.Errorf("%s exists and is not a socket; remove it or choose another --socket", path)
+		}
+		if err := client.CheckOwned(path, os.Getuid()); err != nil {
+			return nil, fmt.Errorf("existing socket %s is not yours", path)
 		}
 		c, err := net.DialTimeout("unix", path, 300*time.Millisecond)
 		if err == nil {
@@ -84,7 +89,9 @@ func listen(path string) (net.Listener, error) {
 			return nil, err
 		}
 	}
+	old := syscall.Umask(0o177) // create the socket 0600 atomically
 	lis, err := net.Listen("unix", path)
+	syscall.Umask(old)
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +166,6 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}()
 	log.Info("sgd listening", "socket", *socket, "upstream", *upstream, "cache", *cacheDir, "cache_max", max)
 	serveErr := g.Serve(lis)
-	_ = os.Remove(*socket)
 	if serveErr != nil {
 		log.Error("serve", "err", serveErr)
 		return 1

@@ -77,7 +77,7 @@ sgd --upstream sg.example.com:7419 --ca cert.pem    # or run it as a systemd use
 - To bypass the daemon, set `SG_NO_DAEMON=1`.
 - **Socket:** `$XDG_RUNTIME_DIR/sg/sgd.sock`, mode 0600, one daemon per user. The path can be changed with `--socket` (sgd only) or `$SG_SOCKET` (sg and sgd). `sg` refuses to use a socket, or socket directory, that you do not own or that others can write to.
 - sgd refuses to start if something other than a socket already exists at the socket path.
-- sgd creates the socket directory with mode 0700, sets an existing one of yours to 0700, and refuses to start if it is group- or world-writable.
+- sgd creates the socket directory with mode 0700 if it does not exist, never changes an existing one, and refuses to start if it is group- or world-writable or not yours.
 - **Cache:** stored in the user cache directory (`$XDG_CACHE_HOME/sg/objects`, usually `~/.cache/sg/objects`; override with `--cache-dir`), with a default size limit of 10 GiB (`--cache-max 10G`) and least-recently-used eviction. Every object is checked against its hash when stored and again each time it is served.
 - **Security:**
   - Every request still runs with your own token.

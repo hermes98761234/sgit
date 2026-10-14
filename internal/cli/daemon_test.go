@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,6 +27,24 @@ func TestCheckoutUsesDaemonCache(t *testing.T) {
 	code, _, errs := h.run(root, "checkout", "web")
 	if code != 0 || strings.Contains(errs, "warning") {
 		t.Fatalf("checkout via sgd: exit %d %q", code, errs)
+	}
+	sawInfo, sawRepo := false, false
+	for _, c := range d.SeenCalls() {
+		switch {
+		case c.Method == "/sgit.v1.Daemon/Info":
+			sawInfo = true
+			if c.Auth != "" {
+				t.Fatalf("Info carried a token: %+v", c)
+			}
+		case strings.HasPrefix(c.Method, "/sgit.v1.Repo/"):
+			sawRepo = true
+			if !strings.HasPrefix(c.Auth, "Bearer ") {
+				t.Fatalf("Repo call without token: %+v", c)
+			}
+		}
+	}
+	if !sawInfo || !sawRepo {
+		t.Fatalf("expected Info and Repo calls, saw %+v", d.SeenCalls())
 	}
 	cold := d.Counter.Total()
 	if cold == 0 {
@@ -57,6 +76,28 @@ func TestUnusableDaemonWarnsAndFallsBack(t *testing.T) {
 	}
 }
 
+func TestDeadDaemonSocketWarnsAndFallsBack(t *testing.T) {
+	h := newHarness(t)
+	h.seed(seedFiles)
+	dir := testenv.Must(os.MkdirTemp("", "sgdd"))
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dead := filepath.Join(dir, "s.sock")
+	l := testenv.Must(net.Listen("unix", dead))
+	l.(*net.UnixListener).SetUnlinkOnClose(false)
+	l.Close()
+	if fi := testenv.Must(os.Lstat(dead)); fi.Mode()&os.ModeSocket == 0 {
+		t.Fatal("dead socket file missing")
+	}
+	t.Setenv("SG_SOCKET", dead)
+	code, _, errs := h.run(t.TempDir(), "checkout", "web")
+	if code != 0 || !strings.Contains(errs, "warning") || !strings.Contains(errs, "connecting directly") {
+		t.Fatalf("exit %d, stderr %q", code, errs)
+	}
+}
+
 func TestDaemonForOtherServerIsIgnored(t *testing.T) {
 	h := newHarness(t)
 	h.seed(seedFiles)
@@ -67,6 +108,11 @@ func TestDaemonForOtherServerIsIgnored(t *testing.T) {
 	}
 	if d.Counter.Total() != 0 {
 		t.Fatal("sgd fronting another server must not be used")
+	}
+	for _, c := range d.SeenCalls() {
+		if c.Auth != "" {
+			t.Fatalf("token leaked to sgd fronting another server: %+v", c)
+		}
 	}
 }
 

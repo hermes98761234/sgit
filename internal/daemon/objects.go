@@ -144,6 +144,17 @@ func (d *Daemon) fetchUpstream(ctx context.Context, repo string, shas []string) 
 		want[s] = true
 	}
 	got := make(map[string]cache.Object, len(shas))
+	// A previous owner may have cached these between our cache miss and our
+	// in-flight registration; do not fetch them again.
+	all := shas
+	shas = nil
+	for _, s := range all {
+		if o, ok := d.cached(s); ok {
+			got[s] = o
+		} else {
+			shas = append(shas, s)
+		}
+	}
 	var ferr error
 	for start := 0; start < len(shas) && ferr == nil; start += fetch.Batch {
 		end := min(start+fetch.Batch, len(shas))
@@ -178,7 +189,7 @@ func (d *Daemon) fetchUpstream(ctx context.Context, repo string, shas []string) 
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	for _, s := range shas {
+	for _, s := range all {
 		key := repo + "\x00" + s
 		c := d.inflight[key]
 		delete(d.inflight, key)

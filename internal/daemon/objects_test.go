@@ -104,6 +104,25 @@ func TestCachedObjectsStillRequireReadAccess(t *testing.T) {
 	}
 }
 
+func TestCachedGetObjectsRequiresToken(t *testing.T) {
+	e, commit := seeded(t)
+	d := daemontest.Start(t, e.Addr)
+	tree := readAll(t, d.Repo(e.AdminToken), commit) // cache is warm now
+	sha := tree["a.txt"].SHA
+	for _, tok := range []string{"", "sgt_nope"} {
+		stream, err := d.Repo(tok).GetObjects(context.Background(), &sgitv1.GetObjectsRequest{Repo: "web", Shas: []string{sha}})
+		if err == nil {
+			var o *sgitv1.Object
+			if o, err = stream.Recv(); err == nil {
+				t.Fatalf("token %q received object %s", tok, o.Sha)
+			}
+		}
+		if status.Code(err) != codes.Unauthenticated {
+			t.Fatalf("token %q: want Unauthenticated, got %v", tok, err)
+		}
+	}
+}
+
 func TestCorruptCacheEntryIsRefetched(t *testing.T) {
 	e, commit := seeded(t)
 	d := daemontest.Start(t, e.Addr)

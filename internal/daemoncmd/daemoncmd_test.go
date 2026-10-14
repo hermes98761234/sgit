@@ -121,15 +121,18 @@ func TestRefusesNonSocketAtPath(t *testing.T) {
 	}
 }
 
-func TestTightensLooseSocketDir(t *testing.T) {
+func TestLeavesExistingSocketDirMode(t *testing.T) {
 	e := testenv.Start(t)
 	sock := shortSocket(t)
 	_ = os.MkdirAll(filepath.Dir(sock), 0o700)
 	_ = os.Chmod(filepath.Dir(sock), 0o755)
 	start(t, baseArgs(e, sock, t)...)
 	waitInfo(t, sock)
-	if m := testenv.Must(os.Stat(filepath.Dir(sock))).Mode().Perm(); m != 0o700 {
-		t.Fatalf("dir mode %v", m)
+	if m := testenv.Must(os.Stat(filepath.Dir(sock))).Mode().Perm(); m != 0o755 {
+		t.Fatalf("dir mode %v, want 0755 untouched", m)
+	}
+	if m := testenv.Must(os.Stat(sock)).Mode().Perm(); m != 0o600 {
+		t.Fatalf("socket mode %v", m)
 	}
 }
 

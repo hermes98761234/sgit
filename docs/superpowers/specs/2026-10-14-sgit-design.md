@@ -199,7 +199,7 @@ There's no "have/want" negotiation and no packfile. An interrupted fetch simply 
 
 ### Phase 3 implementation notes
 
-- **Socket.** sgd runs as one daemon per user. The socket is mode 0600, inside a 0700 directory owned by the user, and sg checks that ownership before connecting. This replaces the 0660 system socket described above.
+- **Socket.** sgd runs as one daemon per user. The socket is mode 0600, inside a directory that must be owned by the user and not group- or world-writable (sgd creates it 0700 if missing), and sg checks that ownership before connecting. This replaces the 0660 system socket described above.
 - **`Daemon/Info`.** This RPC reports the upstream sgd fronts. sg calls it without a token and uses the daemon only when the upstream matches its own server.
 - **Which RPCs use the cache.** `HasObjects` and `ResolveRev` always go to the server. Only `GetObjects` is served from the cache: every object is checked on the way in and on every read, and in-flight fetches are deduplicated per (repo, sha).
 
