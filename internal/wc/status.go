@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/hermes98761234/sgit/internal/objfmt"
@@ -47,22 +48,84 @@ type Change struct {
 // edit within the same mtime tick would be invisible to the stat check.
 const racyWindow = 2 * time.Second
 
-func loadIgnore(root string) (*ignore.GitIgnore, error) {
-	p := filepath.Join(root, ".gitignore")
-	if _, err := os.Stat(p); errors.Is(err, os.ErrNotExist) {
-		return ignore.CompileIgnoreLines(), nil
+// ignoreRule is one .gitignore line; the last matching rule in a file wins.
+type ignoreRule struct {
+	m      *ignore.GitIgnore
+	negate bool
+}
+
+// ignorer applies every .gitignore in the tree, like git: a file's nearest
+// .gitignore with a matching rule decides, and the patterns are relative to
+// the directory that holds that .gitignore.
+type ignorer struct {
+	root  string
+	rules map[string][]ignoreRule // keyed by slash dir, "" for the root
+}
+
+func newIgnorer(root string) *ignorer {
+	return &ignorer{root: root, rules: map[string][]ignoreRule{}}
+}
+
+// load reads dir/.gitignore (dir is slash-separated, "" for the root).
+func (ig *ignorer) load(dir string) error {
+	data, err := os.ReadFile(filepath.Join(ig.root, filepath.FromSlash(dir), ".gitignore"))
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+		return nil
 	}
-	return ignore.CompileIgnoreFile(p)
+	if err != nil {
+		return err
+	}
+	var rules []ignoreRule
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimRight(line, "\r")
+		negate := strings.HasPrefix(line, "!")
+		if negate {
+			line = line[1:]
+		}
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		rules = append(rules, ignoreRule{m: ignore.CompileIgnoreLines(line), negate: negate})
+	}
+	if len(rules) > 0 {
+		ig.rules[dir] = rules
+	}
+	return nil
+}
+
+// ignored reports whether the slash path p is ignored. Only directories
+// already passed to load are consulted.
+func (ig *ignorer) ignored(p string, isDir bool) bool {
+	dir := p
+	for {
+		if i := strings.LastIndexByte(dir, '/'); i >= 0 {
+			dir = dir[:i]
+		} else if dir != "" {
+			dir = ""
+		} else {
+			return false
+		}
+		rel := p
+		if dir != "" {
+			rel = p[len(dir)+1:]
+		}
+		if isDir {
+			rel += "/"
+		}
+		rules := ig.rules[dir]
+		for i := len(rules) - 1; i >= 0; i-- {
+			if rules[i].m.MatchesPath(rel) {
+				return !rules[i].negate
+			}
+		}
+	}
 }
 
 // Status compares the working tree inside the sparse set with the index. It
 // refreshes the stat cache of unchanged files outside the racy window in
 // w.Index; callers may Save to persist the refresh.
 func (w *WC) Status() ([]Change, error) {
-	ign, err := loadIgnore(w.Root)
-	if err != nil {
-		return nil, err
-	}
+	ign := newIgnorer(w.Root)
 	now := time.Now()
 	var out []Change
 	for _, p := range w.SortedPaths() {
@@ -109,7 +172,10 @@ func (w *WC) Status() ([]Change, error) {
 		}
 		out = append(out, Change{Path: p, Kind: Modified, Mode: mode, SHA: sha})
 	}
-	err = filepath.WalkDir(w.Root, func(f string, d fs.DirEntry, err error) error {
+	if err := ign.load(""); err != nil {
+		return nil, err
+	}
+	err := filepath.WalkDir(w.Root, func(f string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -119,12 +185,12 @@ func (w *WC) Status() ([]Change, error) {
 		}
 		p := filepath.ToSlash(rel)
 		if d.IsDir() {
-			if p == metaDir || !TreeNeeded(w.Config.Sparse, p) || ign.MatchesPath(p+"/") || ValidPath(p) != nil {
+			if p == metaDir || !TreeNeeded(w.Config.Sparse, p) || ign.ignored(p, true) || ValidPath(p) != nil {
 				return filepath.SkipDir
 			}
-			return nil
+			return ign.load(p)
 		}
-		if _, tracked := w.Index[p]; tracked || !InSparse(w.Config.Sparse, p) || ign.MatchesPath(p) || isTempFile(d.Name()) {
+		if _, tracked := w.Index[p]; tracked || !InSparse(w.Config.Sparse, p) || ign.ignored(p, false) || isTempFile(d.Name()) {
 			return nil
 		}
 		fi, err := d.Info()

@@ -285,3 +285,30 @@ func TestStatusSkipsSgTempFiles(t *testing.T) {
 		t.Fatalf("status = %v", got)
 	}
 }
+
+func TestStatusNestedGitignore(t *testing.T) {
+	w := newWC(t)
+	_ = WriteLocal(w.Root, ".gitignore", []byte("*.log\n"), "100644")
+	_ = WriteLocal(w.Root, "sub/.gitignore", []byte("*.tmp\nout/\n!keep.log\n"), "100644")
+	_ = WriteLocal(w.Root, "sub/a.tmp", []byte("t"), "100644")
+	_ = WriteLocal(w.Root, "sub/s.txt", []byte("s"), "100644")
+	_ = WriteLocal(w.Root, "sub/out/x", []byte("x"), "100644")
+	_ = WriteLocal(w.Root, "sub/deep/b.tmp", []byte("t"), "100644")
+	_ = WriteLocal(w.Root, "sub/debug.log", []byte("l"), "100644")
+	_ = WriteLocal(w.Root, "sub/keep.log", []byte("k"), "100644")
+	_ = WriteLocal(w.Root, "top.tmp", []byte("t"), "100644")
+	changes, err := w.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := kinds(changes)
+	want := map[string]Kind{".gitignore": Added, "sub/.gitignore": Added, "sub/s.txt": Added, "sub/keep.log": Added, "top.tmp": Added}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for p, k := range want {
+		if got[p] != k {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,13 +31,36 @@ func (a *app) repoPath(s *session, arg string) (string, error) {
 	return p, nil
 }
 
+// splitCountFlag accepts git's attached forms -n5 and -5 as -n 5.
+func splitCountFlag(args []string) []string {
+	out := make([]string, 0, len(args)+1)
+	for i, a := range args {
+		if a == "--" {
+			return append(out, args[i:]...)
+		}
+		num := ""
+		switch {
+		case strings.HasPrefix(a, "-n") && len(a) > 2 && a[2] != '=':
+			num = a[2:]
+		case len(a) > 1 && a[0] == '-' && a[1] >= '0' && a[1] <= '9':
+			num = a[1:]
+		}
+		if _, err := strconv.Atoi(num); num != "" && err == nil {
+			out = append(out, "-n", num)
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
 func cmdLog(ctx context.Context, a *app, args []string) error {
 	fs := a.newFlags("log")
 	n := fs.Int("n", 20, "number of commits")
 	rev := fs.String("rev", "main", "revision to start from")
 	repo := fs.String("repo", "", "repository (default: the working copy's)")
 	server := fs.String("server", "", "server")
-	pos, err := parse(fs, args)
+	pos, err := parse(fs, splitCountFlag(args))
 	if err != nil {
 		return err
 	}

@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/hermes98761234/sgit/internal/gitx"
 	"github.com/hermes98761234/sgit/internal/store"
@@ -113,9 +114,27 @@ func (m *repoManager) reserve(ctx context.Context, name string) (func(), error) 
 	}, nil
 }
 
+// mirrorPreflight refuses a mirror that already has a main branch, so a repo
+// is never created with a mirror it can never push to. An unreachable mirror
+// is allowed: the mirror worker retries it and reports the error.
+func (m *repoManager) mirrorPreflight(ctx context.Context, mirrorURL string) error {
+	ctx, cancel := context.WithTimeout(ctx, mirrorPreflightTimeout)
+	defer cancel()
+	sha, err := gitx.RemoteRef(ctx, mirrorURL, gitx.MainRef, m.allowLocal)
+	if err != nil || sha == "" {
+		return nil
+	}
+	return status.Errorf(codes.FailedPrecondition, "mirror %s already has a main branch (%s); a mirror must start empty", mirrorURL, sha[:7])
+}
+
+const mirrorPreflightTimeout = 30 * time.Second
+
 func (m *repoManager) create(ctx context.Context, name, mirrorURL string, sig gitx.Signature) (string, error) {
 	if mirrorURL != "" {
 		if err := gitx.ValidateRemote(mirrorURL, m.allowLocal); err != nil {
+			return "", err
+		}
+		if err := m.mirrorPreflight(ctx, mirrorURL); err != nil {
 			return "", err
 		}
 	}
@@ -163,6 +182,11 @@ func (m *repoManager) importRepo(ctx context.Context, name, from, mirrorURL stri
 	if mirrorURL != "" {
 		if err := gitx.ValidateRemote(mirrorURL, m.allowLocal); err != nil {
 			return "", err
+		}
+		if mirrorURL != from {
+			if err := m.mirrorPreflight(ctx, mirrorURL); err != nil {
+				return "", err
+			}
 		}
 	}
 	release, err := m.reserve(ctx, name)

@@ -71,7 +71,7 @@ func (a *adminService) RepoStatus(ctx context.Context, req *sgitv1.RepoStatusReq
 	}
 	row, err := a.s.store.GetRepo(ctx, req.Name)
 	if err != nil {
-		return nil, a.s.toStatus(ctx, err)
+		return nil, a.s.toStatus(ctx, notFound(err, "repo %q not found", req.Name))
 	}
 	info, err := a.repoInfo(ctx, row)
 	if err != nil {
@@ -165,7 +165,7 @@ func (a *adminService) RevokeToken(ctx context.Context, req *sgitv1.RevokeTokenR
 		return nil, err
 	}
 	if err := a.s.store.RevokeToken(ctx, req.Id); err != nil {
-		return nil, a.s.toStatus(ctx, err)
+		return nil, a.s.toStatus(ctx, notFound(err, "token %q not found (or already revoked)", req.Id))
 	}
 	return &sgitv1.RevokeTokenResponse{}, nil
 }
@@ -176,10 +176,10 @@ func (a *adminService) setACL(ctx context.Context, user, repo string, lvl store.
 	}
 	u, err := a.s.store.UserByName(ctx, user)
 	if err != nil {
-		return a.s.toStatus(ctx, err)
+		return a.s.toStatus(ctx, notFound(err, "user %q not found", user))
 	}
 	if _, err := a.s.store.GetRepo(ctx, repo); err != nil {
-		return a.s.toStatus(ctx, err)
+		return a.s.toStatus(ctx, notFound(err, "repo %q not found", repo))
 	}
 	return a.s.toStatus(ctx, a.s.store.SetACL(ctx, u.ID, repo, lvl))
 }
@@ -208,4 +208,13 @@ func (a *adminService) RevokeACL(ctx context.Context, req *sgitv1.RevokeACLReque
 		return nil, err
 	}
 	return &sgitv1.RevokeACLResponse{}, nil
+}
+
+// notFound replaces a store.ErrNotFound with a NotFound status that names
+// what is missing; other errors pass through.
+func notFound(err error, format string, args ...any) error {
+	if errors.Is(err, store.ErrNotFound) {
+		return status.Errorf(codes.NotFound, format, args...)
+	}
+	return err
 }

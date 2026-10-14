@@ -220,3 +220,18 @@ func TestSparseRmNarrowsBeforeDeleting(t *testing.T) {
 		t.Fatalf("status after a partial sparse rm = %v", m)
 	}
 }
+
+func TestLogAttachedCount(t *testing.T) {
+	h := newHarness(t)
+	h.seed(seedFiles)
+	w := h.checkout(t.TempDir())
+	writeFile(t, filepath.Join(w, "a.txt"), "a\n")
+	h.ok(w, "commit", "-m", "second", "--land")
+	for _, args := range [][]string{{"-n1"}, {"-1"}, {"-n", "1"}} {
+		var log []struct{ Subject string }
+		out := h.ok(w, append([]string{"log", "--json"}, args...)...)
+		if err := json.Unmarshal([]byte(out), &log); err != nil || len(log) != 1 || log[0].Subject != "second" {
+			t.Fatalf("log %v = %+v (%v)", args, log, err)
+		}
+	}
+}

@@ -372,3 +372,25 @@ func TestListReposSurvivesBrokenRepo(t *testing.T) {
 		t.Errorf("b = %+v", b)
 	}
 }
+
+func TestNonEmptyMirrorIsRefusedUpFront(t *testing.T) {
+	e := mirrorEnv(t)
+	ctx := context.Background()
+	ac := e.Admin(e.AdminToken)
+	src, _ := sourceRepo(t)
+	taken := "file://" + src
+	_, err := ac.CreateRepo(ctx, &sgitv1.CreateRepoRequest{Name: "web", MirrorUrl: taken})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("create with a non-empty mirror = %v, want FailedPrecondition", err)
+	}
+	other, _ := sourceRepo(t)
+	_, err = ac.ImportRepo(ctx, &sgitv1.ImportRepoRequest{Name: "app", FromUrl: "file://" + other, MirrorUrl: taken})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("import with a non-empty mirror = %v, want FailedPrecondition", err)
+	}
+	assertNoIncoming(t, e, "refused mirror")
+	// Nothing was created, so both names are still free.
+	_, url := bareRemote(t)
+	testenv.Must(ac.CreateRepo(ctx, &sgitv1.CreateRepoRequest{Name: "web", MirrorUrl: url}))
+	testenv.Must(ac.ImportRepo(ctx, &sgitv1.ImportRepoRequest{Name: "app", FromUrl: "file://" + other}))
+}

@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
@@ -102,5 +103,23 @@ func TestUnauthenticatedRejectedBeforeBody(t *testing.T) {
 	}
 	if _, err := rpc.UploadBlobs(ctx, e.Repo(""), "web", [][]byte{[]byte("x")}); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("stream: want Unauthenticated, got %v", err)
+	}
+}
+
+func TestNotFoundNamesWhatIsMissing(t *testing.T) {
+	e := testenv.Start(t)
+	ctx := context.Background()
+	e.CreateRepo("web")
+	ac := e.Admin(e.AdminToken)
+	cases := map[string]error{}
+	_, cases[`repo "nope" not found`] = ac.RepoStatus(ctx, &sgitv1.RepoStatusRequest{Name: "nope"})
+	_, cases[`user "ghost" not found`] = ac.GrantACL(ctx, &sgitv1.GrantACLRequest{User: "ghost", Repo: "web", Level: "read"})
+	_, cases[`repo "nope" not found`+" (acl)"] = ac.GrantACL(ctx, &sgitv1.GrantACLRequest{User: "admin", Repo: "nope", Level: "read"})
+	_, cases[`token "nosuch" not found (or already revoked)`] = ac.RevokeToken(ctx, &sgitv1.RevokeTokenRequest{Id: "nosuch"})
+	for want, err := range cases {
+		want = strings.TrimSuffix(want, " (acl)")
+		if status.Code(err) != codes.NotFound || status.Convert(err).Message() != want {
+			t.Errorf("got %v, want NotFound %q", err, want)
+		}
 	}
 }

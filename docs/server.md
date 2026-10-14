@@ -65,7 +65,7 @@ docker compose exec sg-server sg repo list
 `--mirror URL` on `repo create` or `repo import` makes the server push `main` to that URL after every land, in the background. Each push uses `--force-with-lease=main:<last mirrored commit>`:
 
 - **The mirror is never overwritten.** If someone changes the mirror's `main` outside sgit, the push is refused and `sg repo status` shows the error. To resume, reset the mirror's `main` to the `last:` commit that `sg repo status` prints. Mirroring resumes at the next retry (within 5 minutes), the next land, or a server restart.
-- **A new mirror must be empty** (no `main` branch). The exception is the exact URL you imported from: `sg repo import web --from URL --mirror URL` mirrors back to the source.
+- **A new mirror must be empty** (no `main` branch); `repo create` and `repo import` refuse one that is not. The exception is the exact URL you imported from: `sg repo import web --from URL --mirror URL` mirrors back to the source.
 - **Failed pushes retry automatically,** with exponential backoff up to 5 minutes. A server restart catches up any missed pushes.
 - **Allowed URLs** are `https://`, `ssh://` and `user@host:path`. A URL containing credentials, a query string or a fragment is rejected, because it would be stored in the server database.
 
