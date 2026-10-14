@@ -9,7 +9,7 @@ Scion-style source control on top of git:
 
 Inspired by Anthropic's [Redesigning source control](https://www.anthropic.com/engineering/redesigning-source-control).
 
-> **Status:** phase 1 (server core and Docker) is implemented. The CLI (`sg`), daemon (`sgd`) and GitHub mirroring are next. See the [design spec](docs/superpowers/specs/2026-10-14-sgit-design.md).
+> **Status:** phase 1 (server and Docker) and phase 2 (`sg` CLI) are implemented. The daemon (`sgd`) and GitHub mirroring are next. See the [design spec](docs/superpowers/specs/2026-10-14-sgit-design.md).
 
 ## Run the server with Docker
 
@@ -34,6 +34,34 @@ docker compose exec sg-server sg-server health        # SERVING
 | `SG_MAX_BLOB_MB` | `100` | max size of one file |
 
 All users on a machine share the object cache, which is fine for a trusted team (see spec §7).
+
+## Use the CLI
+
+```bash
+make build                                    # builds dist/sg and dist/sg-server
+sg login sg.example.com:7419 --token "$TOKEN" --ca cert.pem
+sg checkout web                               # or: --path src --path docs  (sparse)
+cd web
+# edit files…
+sg status
+sg diff
+sg commit -m "fix the thing" --land           # one round trip: draft + rebase + land
+```
+
+- **There is no `sg add`.** Every new file that isn't ignored by the root `.gitignore` goes into the next commit.
+- **`sg commit` without `--land`** saves a draft, which is kept in `.sg/draft`. `sg land` lands it later, and `sg drafts`, `sg show <id>` and `sg abandon` manage drafts.
+- **`sg sync`** rebases your working copy onto the latest `main`. The 3-way merges run on the server.
+- **Conflicts.** When a land or a sync conflicts, sg writes conflict markers, lists the files in `sg status`, and exits with code 3. Fix the files and run `sg commit -m … --land` again.
+- **Reading history.** `sg log`, `sg blame` and `sg cat <rev>:<path>` work with no checkout at all if you pass `--repo`.
+- **Machine-readable output.** Every command accepts `--json`.
+
+| Exit code | Meaning |
+|---|---|
+| 0 | ok |
+| 1 | error |
+| 2 | not logged in, bad token, or no permission |
+| 3 | conflict |
+| 4 | `main` kept moving; retry |
 
 ## Run without Docker
 

@@ -57,6 +57,10 @@ func commandTable() []command {
 		{"show", "show <draft-id|rev> [--repo R] [--server S]", cmdShow},
 		{"abandon", "abandon [draft-id] [--repo R] [--server S]", cmdAbandon},
 		{"sync", "sync", cmdSync},
+		{"log", "log [path] [-n N] [--rev REV] [--repo R] [--server S]", cmdLog},
+		{"blame", "blame <path> [--rev REV] [--repo R] [--server S]", cmdBlame},
+		{"cat", "cat <rev>:<path> [--repo R] [--server S]", cmdCat},
+		{"sparse", "sparse list | add <path>... | rm <path>...", cmdSparse},
 	}
 }
 

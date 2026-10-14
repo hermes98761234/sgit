@@ -1,5 +1,3 @@
-//lint:file-ignore U1000 helpers are consumed by commands added in later tasks
-
 package cli
 
 import (
