@@ -48,6 +48,9 @@ type command struct {
 func commandTable() []command {
 	return []command{
 		{"login", "login <host:port> [--token T] [--ca FILE] [--dev-insecure]", cmdLogin},
+		{"checkout", "checkout <repo> [dir] [--path P]... [--at REV] [--server S]", cmdCheckout},
+		{"status", "status", cmdStatus},
+		{"diff", "diff [path...]", cmdDiff},
 	}
 }
 
