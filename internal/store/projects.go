@@ -534,6 +534,24 @@ func (s *Store) ProjectSource(ctx context.Context, id int64, projectSHA, repo st
 	return src, err
 }
 
+// ProjectLayout returns the mount layout in effect at project commit
+// projectSHA (ErrNotFound when it is not a recorded commit).
+func (s *Store) ProjectLayout(ctx context.Context, id int64, projectSHA string) ([]LayoutMount, error) {
+	var layout string
+	err := s.db.QueryRowContext(ctx, `SELECT layout FROM project_commits WHERE project_id=? AND project_sha=?`, id, projectSHA).Scan(&layout)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("%w: project commit", ErrNotFound)
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []LayoutMount
+	if err := json.Unmarshal([]byte(layout), &out); err != nil {
+		return nil, fmt.Errorf("store: project commit %s layout: %w", projectSHA, err)
+	}
+	return out, nil
+}
+
 // IsProjectCommit reports whether sha is a recorded commit of the project.
 func (s *Store) IsProjectCommit(ctx context.Context, id int64, sha string) (bool, error) {
 	var one int

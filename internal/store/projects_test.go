@@ -125,6 +125,15 @@ func TestProjectCommitsCursorsAndMounts(t *testing.T) {
 	if _, err := s.ProjectSource(ctx, p.ID, sha('2'), "core"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("ProjectSource after unmount: %v", err)
 	}
+	if l, err := s.ProjectLayout(ctx, p.ID, sha('1')); err != nil || !reflect.DeepEqual(l, c1.Layout) {
+		t.Fatalf("ProjectLayout(c1) = %+v, %v", l, err)
+	}
+	if l, err := s.ProjectLayout(ctx, p.ID, sha('2')); err != nil || len(l) != 0 {
+		t.Fatalf("ProjectLayout(c2) = %+v, %v", l, err)
+	}
+	if _, err := s.ProjectLayout(ctx, p.ID, sha('9')); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("ProjectLayout(unknown) = %v", err)
+	}
 	if ok, _ := s.IsProjectCommit(ctx, p.ID, sha('1')); !ok {
 		t.Fatal("IsProjectCommit(c1) = false")
 	}

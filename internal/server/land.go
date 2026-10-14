@@ -164,7 +164,7 @@ func splitByRepo(mounts []store.Mount, changes []gitx.Change) ([]*repoChanges, e
 	return out, nil
 }
 
-// landDraft implements §6.3 (and, from Task 8, §6.4) for an owned open draft.
+// landDraft implements §6.3 and §6.4 for an owned open draft.
 func (r *projectService) landDraft(ctx context.Context, pr *proj, u store.User, id string) (*sgitv1.LandResponse, error) {
 	if r.s.cfg.BeforeLand != nil {
 		r.s.cfg.BeforeLand(pr.p.ID)
@@ -208,26 +208,45 @@ func (r *projectService) landDraft(ctx context.Context, pr *proj, u store.User, 
 	if err != nil {
 		return nil, err
 	}
-	if len(groups) > 1 {
-		return nil, status.Error(codes.FailedPrecondition, "this draft spans several mounts from different sources; land them separately") // removed in Task 8
+	if err := r.checkLayout(ctx, pr, d, groups); err != nil {
+		return nil, err
 	}
+	// 4. Land repo by repo in repo-name order (§6.4).
+	var landed []string // mount paths that landed
 	landedAny := false
-	for _, g := range groups {
+	for i, g := range groups {
 		conflicts, err := r.landGroup(ctx, pr, d, dc, g)
 		if errors.Is(err, errAlreadyOnMain) {
 			continue
 		}
-		if err != nil {
+		if err == nil && len(conflicts) == 0 {
+			landed = append(landed, g.mounts...)
+			landedAny = true
+			continue
+		}
+		// Stop at the first conflict or error (§6.4).
+		if !landedAny && err != nil {
 			return nil, err
 		}
-		if len(conflicts) > 0 {
-			head, cerr := r.s.projects.CatchUp(ctx, pr.h)
-			if cerr != nil {
-				return nil, r.s.hide(ctx, cerr)
-			}
+		head, cerr := r.s.projects.CatchUp(ctx, pr.h)
+		if cerr != nil {
+			return nil, r.s.hide(ctx, cerr)
+		}
+		if !landedAny {
 			return nil, conflictStatus(d.ID, head, conflicts, false, nil)
 		}
-		landedAny = true
+		if _, rerr := r.rebuildDraft(ctx, pr, d, dc, groups[i:], head); rerr != nil {
+			return nil, r.s.hide(ctx, rerr)
+		}
+		if err != nil {
+			st := status.New(codes.Aborted, fmt.Sprintf("landed %s; the rest did not land: %s", strings.Join(landed, ", "), r.s.safeMessage(ctx, err)))
+			withDet, derr := st.WithDetails(&sgitv1.ConflictDetail{DraftId: d.ID, Main: head, Partial: true, Landed: landed})
+			if derr != nil {
+				return nil, st.Err()
+			}
+			return nil, withDet.Err()
+		}
+		return nil, conflictStatus(d.ID, head, conflicts, true, landed)
 	}
 	if !landedAny {
 		return nil, status.Errorf(codes.FailedPrecondition, "draft %s changes are already on main", id)
@@ -302,6 +321,81 @@ func (r *projectService) landGroup(ctx context.Context, pr *proj, d store.Draft,
 		conflicts[i].Path = p
 	}
 	return conflicts, nil
+}
+
+// checkLayout refuses a draft whose project base was made under a different
+// layout for a touched mount (a path unmounted and mounted again from another
+// folder or repo, or mounted after the base): its changes would land in
+// whatever the path maps to now. Mounts are forward only (§5.5), so the user
+// syncs and commits again. The message names only the project path.
+func (r *projectService) checkLayout(ctx context.Context, pr *proj, d store.Draft, groups []*repoChanges) error {
+	layout, err := r.s.store.ProjectLayout(ctx, pr.p.ID, d.Base)
+	if err != nil {
+		return r.s.hide(ctx, err)
+	}
+	for _, g := range groups {
+		for _, path := range g.mounts {
+			i := slices.IndexFunc(pr.mounts, func(m store.Mount) bool { return m.Path == path })
+			cur := store.LayoutMount{Path: path, Repo: pr.mounts[i].Repo, Folder: pr.mounts[i].Folder}
+			j := slices.IndexFunc(layout, func(l store.LayoutMount) bool { return l.Path == path })
+			switch {
+			case j < 0:
+				return status.Errorf(codes.FailedPrecondition, "draft %s was made before mount %s/ was added; sync and commit again", d.ID, path)
+			case layout[j] != cur:
+				return status.Errorf(codes.FailedPrecondition, "draft %s was made before mount %s/ changed; sync and commit again", d.ID, path)
+			}
+		}
+	}
+	return nil
+}
+
+// rebuildDraft re-creates the draft on head with only the changes of the
+// groups that did not land, keeping its id (§6.4).
+func (r *projectService) rebuildDraft(ctx context.Context, pr *proj, d store.Draft, dc gitx.Commit, rest []*repoChanges, head string) (store.Draft, error) {
+	files, err := pr.h.Git.ListFiles(ctx, head)
+	if err != nil {
+		return d, err
+	}
+	var changes []gitx.Change
+	for _, g := range rest {
+		for _, c := range g.project {
+			if c.Op == gitx.OpDelete {
+				if _, ok := files[c.Path]; !ok {
+					continue // already gone upstream
+				}
+			}
+			changes = append(changes, c)
+		}
+	}
+	tree, err := pr.h.Git.BuildTree(ctx, head, changes)
+	if err != nil {
+		return d, err
+	}
+	committer := dc.Committer
+	committer.When = r.s.cfg.Now()
+	c, err := pr.h.Git.CommitTree(ctx, tree, []string{head}, dc.Message, dc.Author, committer)
+	if err != nil {
+		return d, err
+	}
+	bg := context.WithoutCancel(ctx)
+	if err := pr.h.Git.UpdateRef(bg, headRef(d.ID), c, d.Head); err != nil {
+		return d, err
+	}
+	d.Version++
+	if err := pr.h.Git.UpdateRef(bg, versionRef(d.ID, d.Version), c, ""); err != nil {
+		return d, err
+	}
+	d.Base, d.Head, d.UpdatedAt = head, c, r.s.cfg.Now()
+	return d, r.s.store.UpdateDraft(bg, d)
+}
+
+// safeMessage returns err's message when it is one of our own status errors
+// (safe for clients), otherwise logs it and returns a request-id reference.
+func (s *Server) safeMessage(ctx context.Context, err error) string {
+	if st, ok := status.FromError(err); ok && st.Code() != codes.Unknown && st.Code() != codes.Internal {
+		return st.Message()
+	}
+	return status.Convert(s.hide(ctx, err)).Message()
 }
 
 func conflictStatus(draftID, main string, files []gitx.ConflictFile, partial bool, landed []string) error {
