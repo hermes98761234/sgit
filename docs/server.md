@@ -115,6 +115,8 @@ Then use `--mirror https://github.com/acme/web.git`.
 
 Pushing a tag `vX.Y.Z` runs the tests, then publishes `ghcr.io/hermes98761234/sgit-server:X.Y.Z`, `:X.Y` and `:latest` for linux/amd64 and linux/arm64. Only release tags move `latest`. Prerelease tags such as `v1.0.0-rc1`, and tags that are not semver, do not.
 
+The same tag creates a GitHub release with `sg`, `sgd` and `sg-server` archives for linux and macOS (amd64 and arm64), plus `SHA256SUMS`.
+
 ## Development
 
 ```bash

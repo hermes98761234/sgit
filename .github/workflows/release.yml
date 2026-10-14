@@ -44,3 +44,37 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+  binaries:
+    runs-on: ubuntu-24.04
+    needs: test
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build sg, sgd and sg-server archives
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p out
+          for p in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            name="sgit-${TAG}-${p%/*}-${p#*/}"
+            mkdir -p "out/${name}"
+            CGO_ENABLED=0 GOOS="${p%/*}" GOARCH="${p#*/}" \
+              go build -trimpath -ldflags="-s -w" -o "out/${name}/" ./cmd/sg ./cmd/sgd ./cmd/sg-server
+            cp LICENSE README.md "out/${name}/"
+            tar -C out -czf "out/${name}.tar.gz" "${name}"
+          done
+          (cd out && sha256sum ./*.tar.gz > SHA256SUMS)
+      - name: Attach to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            pre=""; case "$TAG" in *-*) pre="--prerelease" ;; esac
+            gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes $pre
+          fi
+          gh release upload "$TAG" out/*.tar.gz out/SHA256SUMS --clobber

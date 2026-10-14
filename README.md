@@ -88,7 +88,7 @@ More in the **[server guide](docs/server.md)**: configuration, running without D
 
 ## 2. Client setup (`sg`)
 
-1. **Install** (needs Go):
+1. **Install** a binary from the [latest release](https://github.com/hermes98761234/sgit/releases/latest), or build it with Go:
    ```bash
    go install github.com/hermes98761234/sgit/cmd/sg@latest
    ```
