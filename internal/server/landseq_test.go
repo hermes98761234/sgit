@@ -1,7 +1,12 @@
 package server_test
 
 import (
+	"strings"
+	"time"
+
 	"context"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"testing"
 
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
@@ -49,5 +54,40 @@ func TestImportRecordsMain(t *testing.T) {
 	}
 	if seqs := testenv.Must(e.Store.LandSeqs(ctx, "imp", []string{main})); len(seqs) != 1 {
 		t.Fatalf("import did not record main: %v", seqs)
+	}
+}
+
+func TestCreateRollsBackWhenRecordLandFails(t *testing.T) {
+	ctx := context.Background()
+	e := testenv.Start(t)
+	db := e.Store.DB()
+	if _, err := db.ExecContext(ctx, `CREATE TRIGGER boom BEFORE INSERT ON land_seq BEGIN SELECT RAISE(ABORT, 'boom'); END`); err != nil {
+		t.Fatal(err)
+	}
+	adm := e.Admin(e.AdminToken)
+	_, err := adm.CreateRepo(ctx, &sgitv1.CreateRepoRequest{Name: "web"})
+	if status.Code(err) != codes.Internal || strings.Contains(err.Error(), "boom") {
+		t.Fatalf("want generic Internal error, got %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `DROP TRIGGER boom`); err != nil {
+		t.Fatal(err)
+	}
+	// The failed create left nothing behind, so a retry succeeds.
+	if _, err := adm.CreateRepo(ctx, &sgitv1.CreateRepoRequest{Name: "web"}); err != nil {
+		t.Fatalf("retry after rollback: %v", err)
+	}
+}
+
+func TestRecordLandIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	e := testenv.Start(t)
+	main := e.CreateRepo("web")
+	before := testenv.Must(e.Store.LandSeqs(ctx, "web", []string{main}))
+	if err := e.Store.RecordLand(ctx, "web", main, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	after := testenv.Must(e.Store.LandSeqs(ctx, "web", []string{main}))
+	if before[main] == 0 || before[main] != after[main] {
+		t.Fatalf("seq changed: %v -> %v", before, after)
 	}
 }

@@ -168,8 +168,9 @@ func (m *repoManager) create(ctx context.Context, name, mirrorURL string, sig gi
 		os.RemoveAll(p)
 		return "", err
 	}
-	if err := m.st.RecordLand(ctx, name, main, time.Now()); err != nil {
-		return "", err
+	if err := m.st.RecordLand(context.WithoutCancel(ctx), name, main, time.Now()); err != nil {
+		m.rollbackNew(name, p)
+		return "", status.Error(codes.Internal, "recording the land sequence failed")
 	}
 	return main, nil
 }
@@ -229,9 +230,17 @@ func (m *repoManager) importRepo(ctx context.Context, name, from, mirrorURL stri
 		return "", err
 	}
 	if err := m.st.RecordLand(context.WithoutCancel(ctx), name, main, time.Now()); err != nil {
-		return "", err
+		m.rollbackNew(name, p)
+		return "", status.Error(codes.Internal, "recording the land sequence failed")
 	}
 	return main, nil
+}
+
+// rollbackNew undoes a create or import whose land sequence could not be
+// recorded, so a retry starts clean instead of finding AlreadyExists.
+func (m *repoManager) rollbackNew(name, dir string) {
+	_ = m.st.DeleteRepo(context.Background(), name)
+	os.RemoveAll(dir)
 }
 
 func (m *repoManager) closeAll() {

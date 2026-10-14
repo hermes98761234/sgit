@@ -102,13 +102,15 @@ func (r *repoService) land(ctx context.Context, h *repoHandle, id string) (strin
 		if err != nil {
 			return "", "", err
 		}
-		// Once main moves, the draft bookkeeping must not be cancelled by the client.
+		// Once main moves, the draft bookkeeping must not be cancelled by the
+		// client; the sequence row is recorded under the same context.
 		bg := context.WithoutCancel(ctx)
 		// Recorded before main moves, so a catch-up never sees this commit
 		// on main without its sequence number. A row for a commit that loses
 		// the CAS is never looked up.
 		if err := r.s.store.RecordLand(bg, h.name, newC, r.s.cfg.Now()); err != nil {
-			return "", "", err
+			r.s.log.ErrorContext(bg, "recording land sequence", "repo", h.name, "commit", newC, "err", err)
+			return "", "", status.Error(codes.Internal, "recording the land sequence failed")
 		}
 		if r.s.cfg.BeforeCAS != nil {
 			r.s.cfg.BeforeCAS(h.name)
