@@ -78,7 +78,7 @@ func cmdLog(ctx context.Context, a *app, args []string) error {
 			return err
 		}
 	}
-	resp, err := s.repo.Log(ctx, &sgitv1.LogRequest{Repo: s.name, Rev: *rev, Path: p, N: int32(*n)})
+	resp, err := s.repo.Log(ctx, &sgitv1.LogRequest{Project: s.name, Rev: *rev, Path: p, N: int32(*n)})
 	if err != nil {
 		return err
 	}
@@ -121,7 +121,7 @@ func cmdBlame(ctx context.Context, a *app, args []string) error {
 	if err != nil {
 		return err
 	}
-	resp, err := s.repo.Blame(ctx, &sgitv1.BlameRequest{Repo: s.name, Rev: *rev, Path: p})
+	resp, err := s.repo.Blame(ctx, &sgitv1.BlameRequest{Project: s.name, Rev: *rev, Path: p})
 	if err != nil {
 		return err
 	}
@@ -165,7 +165,7 @@ func cmdCat(ctx context.Context, a *app, args []string) error {
 		return err
 	}
 	defer s.Close()
-	rr, err := s.repo.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Repo: s.name, Rev: rev})
+	rr, err := s.repo.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: s.name, Rev: rev})
 	if err != nil {
 		return err
 	}

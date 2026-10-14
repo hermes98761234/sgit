@@ -23,7 +23,7 @@ func TestTreeAndBlobs(t *testing.T) {
 	commit := e.CommitDirect("web", map[string]string{
 		"a.txt": "A\n", "src/x.go": "X\n", "src/sub/y.go": "Y\n", "docs/z.md": "Z\n",
 	}, "seed")
-	c := e.Repo(e.AdminToken)
+	c := e.Project(e.AdminToken)
 	ctx := context.Background()
 
 	full := testenv.Must(Tree(ctx, c, "web", commit, nil))
@@ -62,7 +62,7 @@ func TestBatching(t *testing.T) {
 		files[fmt.Sprintf("d%02d/f%04d.txt", i%7, i)] = fmt.Sprintf("content %d\n", i)
 	}
 	commit := e.CommitDirect("web", files, "many")
-	c := e.Repo(e.AdminToken)
+	c := e.Project(e.AdminToken)
 	ctx := context.Background()
 	tree := testenv.Must(Tree(ctx, c, "web", commit, nil))
 	if len(tree) != len(files) {
@@ -80,7 +80,7 @@ func TestBatching(t *testing.T) {
 
 // fakeRepo serves GetObjects from reply; every other RPC panics via the nil embed.
 type fakeRepo struct {
-	sgitv1.RepoClient
+	sgitv1.ProjectClient
 	reply func(shas []string) []*sgitv1.Object
 }
 
@@ -168,7 +168,7 @@ func TestUnrequestedObject(t *testing.T) {
 // recordingRepo records every SHA requested through GetObjects and delegates
 // to the real client.
 type recordingRepo struct {
-	sgitv1.RepoClient
+	sgitv1.ProjectClient
 	mu        sync.Mutex
 	requested map[string]bool
 }
@@ -179,7 +179,7 @@ func (r *recordingRepo) GetObjects(ctx context.Context, req *sgitv1.GetObjectsRe
 		r.requested[s] = true
 	}
 	r.mu.Unlock()
-	return r.RepoClient.GetObjects(ctx, req, opts...)
+	return r.ProjectClient.GetObjects(ctx, req, opts...)
 }
 
 func TestSparseTreeSkipsOtherSubtrees(t *testing.T) {
@@ -205,7 +205,7 @@ func TestSparseTreeSkipsOtherSubtrees(t *testing.T) {
 	docsTree, srcTree := subtree(root, "docs"), subtree(root, "src")
 	deepTree := subtree(docsTree, "deep")
 
-	r := &recordingRepo{RepoClient: e.Repo(e.AdminToken), requested: map[string]bool{}}
+	r := &recordingRepo{ProjectClient: e.Project(e.AdminToken), requested: map[string]bool{}}
 	files := testenv.Must(Tree(ctx, r, "web", commit, []string{"src"}))
 	if len(files) != 1 || files["src/x.go"].SHA == "" {
 		t.Fatalf("sparse tree = %v", files)

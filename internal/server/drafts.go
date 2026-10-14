@@ -37,7 +37,7 @@ func firstLine(s string) string {
 
 func draftPB(d store.Draft) *sgitv1.Draft {
 	return &sgitv1.Draft{
-		Id: d.ID, Repo: d.Repo, Owner: d.OwnerName, Title: d.Title, Base: d.Base, Head: d.Head,
+		Id: d.ID, Project: d.Repo, Owner: d.OwnerName, Title: d.Title, Base: d.Base, Head: d.Head,
 		Version: int32(d.Version), Status: d.Status, LandedAs: d.LandedAs,
 		CreatedAt: d.CreatedAt.Unix(), UpdatedAt: d.UpdatedAt.Unix(),
 	}
@@ -144,7 +144,7 @@ func (r *repoService) updateDraft(ctx context.Context, h *repoHandle, u store.Us
 }
 
 func (r *repoService) CreateDraft(ctx context.Context, req *sgitv1.CreateDraftRequest) (*sgitv1.Draft, error) {
-	h, u, err := r.s.open(ctx, req.Repo, auth.ActionWrite)
+	h, u, err := r.s.open(ctx, req.Project, auth.ActionWrite)
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +156,7 @@ func (r *repoService) CreateDraft(ctx context.Context, req *sgitv1.CreateDraftRe
 }
 
 func (r *repoService) UpdateDraft(ctx context.Context, req *sgitv1.UpdateDraftRequest) (*sgitv1.Draft, error) {
-	h, u, err := r.s.open(ctx, req.Repo, auth.ActionWrite)
+	h, u, err := r.s.open(ctx, req.Project, auth.ActionWrite)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +168,7 @@ func (r *repoService) UpdateDraft(ctx context.Context, req *sgitv1.UpdateDraftRe
 }
 
 func (r *repoService) GetDraft(ctx context.Context, req *sgitv1.GetDraftRequest) (*sgitv1.Draft, error) {
-	h, _, err := r.s.open(ctx, req.Repo, auth.ActionRead)
+	h, _, err := r.s.open(ctx, req.Project, auth.ActionRead)
 	if err != nil {
 		return nil, err
 	}
@@ -183,7 +183,7 @@ func (r *repoService) GetDraft(ctx context.Context, req *sgitv1.GetDraftRequest)
 }
 
 func (r *repoService) ListDrafts(ctx context.Context, req *sgitv1.ListDraftsRequest) (*sgitv1.ListDraftsResponse, error) {
-	h, u, err := r.s.open(ctx, req.Repo, auth.ActionRead)
+	h, u, err := r.s.open(ctx, req.Project, auth.ActionRead)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +208,7 @@ func (r *repoService) ListDrafts(ctx context.Context, req *sgitv1.ListDraftsRequ
 }
 
 func (r *repoService) AbandonDraft(ctx context.Context, req *sgitv1.AbandonDraftRequest) (*sgitv1.Draft, error) {
-	h, u, err := r.s.open(ctx, req.Repo, auth.ActionWrite)
+	h, u, err := r.s.open(ctx, req.Project, auth.ActionWrite)
 	if err != nil {
 		return nil, err
 	}

@@ -320,10 +320,10 @@ func cmdACL(ctx context.Context, a *app, args []string) error {
 	err = a.admin(ctx, *srv, adminTimeout, func(ctx context.Context, ac sgitv1.AdminClient) error {
 		if verb == "grant" {
 			level = pos[2]
-			_, err := ac.GrantACL(ctx, &sgitv1.GrantACLRequest{User: user, Repo: repo, Level: level})
+			_, err := ac.GrantACL(ctx, &sgitv1.GrantACLRequest{User: user, Project: repo, Level: level})
 			return err
 		}
-		_, err := ac.RevokeACL(ctx, &sgitv1.RevokeACLRequest{User: user, Repo: repo})
+		_, err := ac.RevokeACL(ctx, &sgitv1.RevokeACLRequest{User: user, Project: repo})
 		return err
 	})
 	if err != nil {
@@ -520,7 +520,7 @@ func aclList(ctx context.Context, a *app, args []string) error {
 	}
 	var resp *sgitv1.ListACLResponse
 	err = a.admin(ctx, *srv, adminTimeout, func(ctx context.Context, ac sgitv1.AdminClient) (err error) {
-		resp, err = ac.ListACL(ctx, &sgitv1.ListACLRequest{User: *user, Repo: *repo})
+		resp, err = ac.ListACL(ctx, &sgitv1.ListACLRequest{User: *user, Project: *repo})
 		return err
 	})
 	if err != nil {
@@ -533,7 +533,7 @@ func aclList(ctx context.Context, a *app, args []string) error {
 	}
 	entries := make([]aclJSON, 0, len(resp.Entries))
 	for _, e := range resp.Entries {
-		entries = append(entries, aclJSON{e.User, e.Repo, e.Level})
+		entries = append(entries, aclJSON{e.User, e.Project, e.Level})
 	}
 	return a.emit(map[string]any{"acl": entries}, func(w io.Writer) {
 		tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)

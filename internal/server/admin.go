@@ -198,14 +198,14 @@ func (a *adminService) GrantACL(ctx context.Context, req *sgitv1.GrantACLRequest
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "level must be read or write, got %q", req.Level)
 	}
-	if err := a.setACL(ctx, req.User, req.Repo, lvl); err != nil {
+	if err := a.setACL(ctx, req.User, req.Project, lvl); err != nil {
 		return nil, err
 	}
 	return &sgitv1.GrantACLResponse{}, nil
 }
 
 func (a *adminService) RevokeACL(ctx context.Context, req *sgitv1.RevokeACLRequest) (*sgitv1.RevokeACLResponse, error) {
-	if err := a.setACL(ctx, req.User, req.Repo, store.LevelNone); err != nil {
+	if err := a.setACL(ctx, req.User, req.Project, store.LevelNone); err != nil {
 		return nil, err
 	}
 	return &sgitv1.RevokeACLResponse{}, nil
@@ -295,12 +295,12 @@ func (a *adminService) ListACL(ctx context.Context, req *sgitv1.ListACLRequest) 
 			return nil, a.s.toStatus(ctx, notFound(err, "user %q not found", req.User))
 		}
 	}
-	if req.Repo != "" {
-		if _, err := a.s.store.GetRepo(ctx, req.Repo); err != nil {
-			return nil, a.s.toStatus(ctx, notFound(err, "repo %q not found", req.Repo))
+	if req.Project != "" {
+		if _, err := a.s.store.GetRepo(ctx, req.Project); err != nil {
+			return nil, a.s.toStatus(ctx, notFound(err, "repo %q not found", req.Project))
 		}
 	}
-	rows, err := a.s.store.ListACL(ctx, req.User, req.Repo)
+	rows, err := a.s.store.ListACL(ctx, req.User, req.Project)
 	if err != nil {
 		return nil, a.s.toStatus(ctx, err)
 	}
@@ -310,7 +310,7 @@ func (a *adminService) ListACL(ctx context.Context, req *sgitv1.ListACLRequest) 
 		if r.Level == store.LevelWrite {
 			lvl = "write"
 		}
-		out.Entries = append(out.Entries, &sgitv1.ACLEntry{User: r.User, Repo: r.Repo, Level: lvl})
+		out.Entries = append(out.Entries, &sgitv1.ACLEntry{User: r.User, Project: r.Repo, Level: lvl})
 	}
 	return out, nil
 }

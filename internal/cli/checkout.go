@@ -52,7 +52,7 @@ func cmdCheckout(ctx context.Context, a *app, args []string) error {
 		return err
 	}
 	defer s.Close()
-	rr, err := s.repo.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Repo: repo, Rev: *at})
+	rr, err := s.repo.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: repo, Rev: *at})
 	if err != nil {
 		return err
 	}
@@ -107,7 +107,7 @@ func checkoutTarget(dir string) error {
 
 // materialize writes files under root and returns their index entries. Files
 // that already hold the right content (a resumed checkout) are not rewritten.
-func materialize(ctx context.Context, c sgitv1.RepoClient, repo, root string, files map[string]fetch.File) (map[string]wc.Entry, error) {
+func materialize(ctx context.Context, c sgitv1.ProjectClient, repo, root string, files map[string]fetch.File) (map[string]wc.Entry, error) {
 	paths := make([]string, 0, len(files))
 	for p := range files {
 		paths = append(paths, p)

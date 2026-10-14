@@ -23,7 +23,7 @@ func (h *harness) draftOf(w string) string {
 
 func (h *harness) getDraft(id string) *sgitv1.Draft {
 	h.t.Helper()
-	return testenv.Must(h.env.Repo(h.env.AdminToken).GetDraft(context.Background(), &sgitv1.GetDraftRequest{Repo: "web", Id: id}))
+	return testenv.Must(h.env.Project(h.env.AdminToken).GetDraft(context.Background(), &sgitv1.GetDraftRequest{Project: "web", Id: id}))
 }
 
 func (h *harness) checkout(root string, extra ...string) string {
@@ -117,7 +117,7 @@ func TestCommitAfterDraftAbandonedElsewhere(t *testing.T) {
 	writeFile(t, filepath.Join(w, "a.txt"), "one\n")
 	h.ok(w, "commit", "-m", "one")
 	old := h.draftOf(w)
-	testenv.Must(h.env.Repo(h.env.AdminToken).AbandonDraft(context.Background(), &sgitv1.AbandonDraftRequest{Repo: "web", Id: old}))
+	testenv.Must(h.env.Project(h.env.AdminToken).AbandonDraft(context.Background(), &sgitv1.AbandonDraftRequest{Project: "web", Id: old}))
 	writeFile(t, filepath.Join(w, "a.txt"), "two\n")
 	h.ok(w, "commit", "-m", "two")
 	if nd := h.draftOf(w); nd == "" || nd == old {

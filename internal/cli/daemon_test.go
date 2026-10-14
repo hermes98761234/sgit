@@ -36,7 +36,7 @@ func TestCheckoutUsesDaemonCache(t *testing.T) {
 			if c.Auth != "" {
 				t.Fatalf("Info carried a token: %+v", c)
 			}
-		case strings.HasPrefix(c.Method, "/sgit.v1.Repo/"):
+		case strings.HasPrefix(c.Method, "/sgit.v1.Project/"):
 			sawRepo = true
 			if !strings.HasPrefix(c.Auth, "Bearer ") {
 				t.Fatalf("Repo call without token: %+v", c)

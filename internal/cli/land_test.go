@@ -163,7 +163,7 @@ func TestLandExhaustedExit4(t *testing.T) {
 	if h.draftOf(w) != draft {
 		t.Fatalf("draft changed: %q -> %q", draft, h.draftOf(w))
 	}
-	l := testenv.Must(h.env.Repo(h.env.AdminToken).ListDrafts(context.Background(), &sgitv1.ListDraftsRequest{Repo: "web", Status: "open"}))
+	l := testenv.Must(h.env.Project(h.env.AdminToken).ListDrafts(context.Background(), &sgitv1.ListDraftsRequest{Project: "web", Status: "open"}))
 	if len(l.Drafts) != 1 {
 		t.Fatalf("open drafts = %d, want 1", len(l.Drafts))
 	}
@@ -228,7 +228,7 @@ func TestCommitAfterDraftLandedElsewhere(t *testing.T) {
 	w := h.checkout(t.TempDir())
 	landElsewhere := func() string {
 		id := h.draftOf(w)
-		testenv.Must(h.env.Repo(h.env.AdminToken).Land(context.Background(), &sgitv1.LandRequest{Repo: "web", Id: id}))
+		testenv.Must(h.env.Project(h.env.AdminToken).Land(context.Background(), &sgitv1.LandRequest{Project: "web", Id: id}))
 		return id
 	}
 	writeFile(t, filepath.Join(w, "a.txt"), "one\n")

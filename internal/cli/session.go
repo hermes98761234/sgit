@@ -17,7 +17,7 @@ import (
 type session struct {
 	conn   *grpc.ClientConn
 	cached *grpc.ClientConn // sgd connection; nil when not used
-	repo   sgitv1.RepoClient
+	repo   sgitv1.ProjectClient
 	admin  sgitv1.AdminClient
 	server string
 	name   string // repository name
@@ -132,7 +132,7 @@ func (a *app) connect(t target) (*session, error) {
 		}
 	}
 	return &session{
-		conn: conn, cached: cached, repo: sgitv1.NewRepoClient(repoConn), admin: sgitv1.NewAdminClient(conn),
+		conn: conn, cached: cached, repo: sgitv1.NewProjectClient(repoConn), admin: sgitv1.NewAdminClient(conn),
 		server: name, name: repo, wc: w,
 	}, nil
 }

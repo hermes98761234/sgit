@@ -70,19 +70,19 @@ func TestTokensAndACL(t *testing.T) {
 	if who.User != "carol" || who.Admin || who.Email != "carol@sgit.local" {
 		t.Fatalf("WhoAmI = %+v", who)
 	}
-	if _, err := adm.GrantACL(ctx, &sgitv1.GrantACLRequest{User: "carol", Repo: "web", Level: "admin"}); status.Code(err) != codes.InvalidArgument {
+	if _, err := adm.GrantACL(ctx, &sgitv1.GrantACLRequest{User: "carol", Project: "web", Level: "admin"}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("bad level: want InvalidArgument, got %v", err)
 	}
-	if _, err := adm.GrantACL(ctx, &sgitv1.GrantACLRequest{User: "carol", Repo: "nope", Level: "read"}); status.Code(err) != codes.NotFound {
+	if _, err := adm.GrantACL(ctx, &sgitv1.GrantACLRequest{User: "carol", Project: "nope", Level: "read"}); status.Code(err) != codes.NotFound {
 		t.Fatalf("unknown repo: want NotFound, got %v", err)
 	}
-	if _, err := adm.GrantACL(ctx, &sgitv1.GrantACLRequest{User: "nobody", Repo: "web", Level: "read"}); status.Code(err) != codes.NotFound {
+	if _, err := adm.GrantACL(ctx, &sgitv1.GrantACLRequest{User: "nobody", Project: "web", Level: "read"}); status.Code(err) != codes.NotFound {
 		t.Fatalf("unknown user: want NotFound, got %v", err)
 	}
-	testenv.Must(adm.GrantACL(ctx, &sgitv1.GrantACLRequest{User: "carol", Repo: "web", Level: "read"}))
-	testenv.Must(e.Repo(tok.Token).ResolveRev(ctx, &sgitv1.ResolveRevRequest{Repo: "web", Rev: "main"}))
-	testenv.Must(adm.RevokeACL(ctx, &sgitv1.RevokeACLRequest{User: "carol", Repo: "web"}))
-	if _, err := e.Repo(tok.Token).ResolveRev(ctx, &sgitv1.ResolveRevRequest{Repo: "web", Rev: "main"}); status.Code(err) != codes.PermissionDenied {
+	testenv.Must(adm.GrantACL(ctx, &sgitv1.GrantACLRequest{User: "carol", Project: "web", Level: "read"}))
+	testenv.Must(e.Project(tok.Token).ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web", Rev: "main"}))
+	testenv.Must(adm.RevokeACL(ctx, &sgitv1.RevokeACLRequest{User: "carol", Project: "web"}))
+	if _, err := e.Project(tok.Token).ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web", Rev: "main"}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("after revoke ACL: want PermissionDenied, got %v", err)
 	}
 	testenv.Must(adm.RevokeToken(ctx, &sgitv1.RevokeTokenRequest{Id: tok.Id}))
@@ -98,10 +98,10 @@ func TestUnauthenticatedRejectedBeforeBody(t *testing.T) {
 	e := testenv.Start(t)
 	e.CreateRepo("web")
 	ctx := context.Background()
-	if _, err := e.Repo("").ResolveRev(ctx, &sgitv1.ResolveRevRequest{Repo: "web"}); status.Code(err) != codes.Unauthenticated {
+	if _, err := e.Project("").ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web"}); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("unary: want Unauthenticated, got %v", err)
 	}
-	if _, err := rpc.UploadBlobs(ctx, e.Repo(""), "web", [][]byte{[]byte("x")}); status.Code(err) != codes.Unauthenticated {
+	if _, err := rpc.UploadBlobs(ctx, e.Project(""), "web", [][]byte{[]byte("x")}); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("stream: want Unauthenticated, got %v", err)
 	}
 }
@@ -113,8 +113,8 @@ func TestNotFoundNamesWhatIsMissing(t *testing.T) {
 	ac := e.Admin(e.AdminToken)
 	cases := map[string]error{}
 	_, cases[`repo "nope" not found`] = ac.RepoStatus(ctx, &sgitv1.RepoStatusRequest{Name: "nope"})
-	_, cases[`user "ghost" not found`] = ac.GrantACL(ctx, &sgitv1.GrantACLRequest{User: "ghost", Repo: "web", Level: "read"})
-	_, cases[`repo "nope" not found`+" (acl)"] = ac.GrantACL(ctx, &sgitv1.GrantACLRequest{User: "admin", Repo: "nope", Level: "read"})
+	_, cases[`user "ghost" not found`] = ac.GrantACL(ctx, &sgitv1.GrantACLRequest{User: "ghost", Project: "web", Level: "read"})
+	_, cases[`repo "nope" not found`+" (acl)"] = ac.GrantACL(ctx, &sgitv1.GrantACLRequest{User: "admin", Project: "nope", Level: "read"})
 	_, cases[`token "nosuch" not found (or already revoked)`] = ac.RevokeToken(ctx, &sgitv1.RevokeTokenRequest{Id: "nosuch"})
 	for want, err := range cases {
 		want = strings.TrimSuffix(want, " (acl)")

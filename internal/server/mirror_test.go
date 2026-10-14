@@ -97,8 +97,8 @@ func waitStatus(t *testing.T, ac sgitv1.AdminClient, repo string, cond func(*sgi
 func landFile(t *testing.T, e *testenv.Env, repo, base, path, content string) string {
 	t.Helper()
 	shas := e.Upload(e.AdminToken, repo, []byte(content))
-	resp := testenv.Must(e.Repo(e.AdminToken).CommitAndLand(context.Background(), &sgitv1.CommitAndLandRequest{
-		Repo: repo, Base: base, Changes: []*sgitv1.Change{testenv.Add(path, shas[0])}, Message: "add " + path,
+	resp := testenv.Must(e.Project(e.AdminToken).CommitAndLand(context.Background(), &sgitv1.CommitAndLandRequest{
+		Project: repo, Base: base, Changes: []*sgitv1.Change{testenv.Add(path, shas[0])}, Message: "add " + path,
 	}))
 	return resp.Commit
 }

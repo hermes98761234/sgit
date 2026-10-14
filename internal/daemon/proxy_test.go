@@ -19,10 +19,10 @@ func TestPassThrough(t *testing.T) {
 	e := testenv.Start(t)
 	main := e.CreateRepo("web")
 	d := daemontest.Start(t, e.Addr)
-	c := d.Repo(e.AdminToken)
+	c := d.Project(e.AdminToken)
 	ctx := context.Background()
 
-	rr := testenv.Must(c.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Repo: "web", Rev: "main"}))
+	rr := testenv.Must(c.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web", Rev: "main"}))
 	if rr.Sha != main {
 		t.Fatalf("ResolveRev via sgd = %s, want %s", rr.Sha, main)
 	}
@@ -31,17 +31,17 @@ func TestPassThrough(t *testing.T) {
 	if shas[0] != objfmt.BlobSHA(big) || shas[1] != objfmt.BlobSHA([]byte("x\n")) {
 		t.Fatalf("upload via sgd = %v", shas)
 	}
-	has := testenv.Must(c.HasObjects(ctx, &sgitv1.HasObjectsRequest{Repo: "web", Shas: shas}))
+	has := testenv.Must(c.HasObjects(ctx, &sgitv1.HasObjectsRequest{Project: "web", Shas: shas}))
 	if len(has.Present) != 2 || !has.Present[0] || !has.Present[1] {
 		t.Fatalf("HasObjects via sgd = %v", has.Present)
 	}
 	land := testenv.Must(c.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{
-		Repo: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("big.bin", shas[0])}, Message: "via sgd",
+		Project: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("big.bin", shas[0])}, Message: "via sgd",
 	}))
 	if e.Files("web", "main")["big.bin"] != string(big) {
 		t.Fatal("land via sgd did not reach main")
 	}
-	lg := testenv.Must(c.Log(ctx, &sgitv1.LogRequest{Repo: "web", N: 1}))
+	lg := testenv.Must(c.Log(ctx, &sgitv1.LogRequest{Project: "web", N: 1}))
 	if len(lg.Entries) != 1 || lg.Entries[0].Sha != land.Commit {
 		t.Fatalf("log via sgd = %+v", lg.Entries)
 	}
@@ -56,11 +56,11 @@ func TestConflictDetailSurvivesProxy(t *testing.T) {
 	e.CreateRepo("web")
 	base := e.CommitDirect("web", map[string]string{"f.txt": "1\n2\n3\n"}, "base")
 	d := daemontest.Start(t, e.Addr)
-	c := d.Repo(e.AdminToken)
+	c := d.Project(e.AdminToken)
 	ctx := context.Background()
 	shas := e.Upload(e.AdminToken, "web", []byte("1\nA\n3\n"), []byte("1\nB\n3\n"))
-	testenv.Must(c.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{Repo: "web", Base: base, Changes: []*sgitv1.Change{testenv.Modify("f.txt", shas[0])}, Message: "a"}))
-	_, err := c.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{Repo: "web", Base: base, Changes: []*sgitv1.Change{testenv.Modify("f.txt", shas[1])}, Message: "b"})
+	testenv.Must(c.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{Project: "web", Base: base, Changes: []*sgitv1.Change{testenv.Modify("f.txt", shas[0])}, Message: "a"}))
+	_, err := c.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{Project: "web", Base: base, Changes: []*sgitv1.Change{testenv.Modify("f.txt", shas[1])}, Message: "b"})
 	st := status.Convert(err)
 	if st.Code() != codes.Aborted {
 		t.Fatalf("want Aborted, got %v", err)
@@ -81,10 +81,10 @@ func TestDaemonRequiresToken(t *testing.T) {
 	e.CreateRepo("web")
 	d := daemontest.Start(t, e.Addr)
 	ctx := context.Background()
-	if _, err := d.Repo("").ResolveRev(ctx, &sgitv1.ResolveRevRequest{Repo: "web"}); status.Code(err) != codes.Unauthenticated {
+	if _, err := d.Project("").ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web"}); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("no token: want Unauthenticated, got %v", err)
 	}
-	if _, err := d.Repo("sgt_nope").ResolveRev(ctx, &sgitv1.ResolveRevRequest{Repo: "web"}); status.Code(err) != codes.Unauthenticated {
+	if _, err := d.Project("sgt_nope").ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web"}); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("bad token: want Unauthenticated, got %v", err)
 	}
 }

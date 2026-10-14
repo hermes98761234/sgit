@@ -34,7 +34,7 @@ func TestLandSequenceIsRecordedBeforeMainMoves(t *testing.T) {
 		t.Fatalf("create did not record main: %v", seqs)
 	}
 	sha := e.Upload(e.AdminToken, "web", []byte("a\n"))[0]
-	resp := testenv.Must(commitAndLand(e.Repo(e.AdminToken), main, "a.txt", sha, "add a"))
+	resp := testenv.Must(commitAndLand(e.Project(e.AdminToken), main, "a.txt", sha, "add a"))
 	if seenAtCAS != 2 {
 		t.Fatalf("land_seq rows at CAS time = %d, want 2", seenAtCAS)
 	}

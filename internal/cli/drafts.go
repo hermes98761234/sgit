@@ -36,7 +36,7 @@ func cmdDrafts(ctx context.Context, a *app, args []string) error {
 		return err
 	}
 	defer s.Close()
-	resp, err := s.repo.ListDrafts(ctx, &sgitv1.ListDraftsRequest{Repo: s.name, Mine: *mine, Status: want})
+	resp, err := s.repo.ListDrafts(ctx, &sgitv1.ListDraftsRequest{Project: s.name, Mine: *mine, Status: want})
 	if err != nil {
 		return err
 	}
@@ -81,9 +81,9 @@ func cmdShow(ctx context.Context, a *app, args []string) error {
 	defer s.Close()
 	arg := pos[0]
 	if draftIDRe.MatchString(arg) {
-		d, err := s.repo.GetDraft(ctx, &sgitv1.GetDraftRequest{Repo: s.name, Id: arg})
+		d, err := s.repo.GetDraft(ctx, &sgitv1.GetDraftRequest{Project: s.name, Id: arg})
 		if err == nil {
-			df, err := s.repo.Diff(ctx, &sgitv1.DiffRequest{Repo: s.name, A: d.Base, B: d.Head})
+			df, err := s.repo.Diff(ctx, &sgitv1.DiffRequest{Project: s.name, A: d.Base, B: d.Head})
 			if err != nil {
 				return err
 			}
@@ -97,7 +97,7 @@ func cmdShow(ctx context.Context, a *app, args []string) error {
 			return err
 		}
 	}
-	lg, err := s.repo.Log(ctx, &sgitv1.LogRequest{Repo: s.name, Rev: arg, N: 1})
+	lg, err := s.repo.Log(ctx, &sgitv1.LogRequest{Project: s.name, Rev: arg, N: 1})
 	if err != nil {
 		return err
 	}
@@ -106,7 +106,7 @@ func cmdShow(ctx context.Context, a *app, args []string) error {
 	}
 	e := lg.Entries[0]
 	patch := ""
-	if df, err := s.repo.Diff(ctx, &sgitv1.DiffRequest{Repo: s.name, A: e.Sha + "^", B: e.Sha}); err == nil {
+	if df, err := s.repo.Diff(ctx, &sgitv1.DiffRequest{Project: s.name, A: e.Sha + "^", B: e.Sha}); err == nil {
 		patch = string(df.Patch)
 	}
 	when := time.Unix(e.Time, 0).UTC().Format(time.RFC3339)
@@ -150,7 +150,7 @@ func cmdAbandon(ctx context.Context, a *app, args []string) error {
 		defer unlock()
 		touch = s.ownsDraft(id)
 	}
-	d, err := s.repo.AbandonDraft(ctx, &sgitv1.AbandonDraftRequest{Repo: s.name, Id: id})
+	d, err := s.repo.AbandonDraft(ctx, &sgitv1.AbandonDraftRequest{Project: s.name, Id: id})
 	if err != nil {
 		return err
 	}

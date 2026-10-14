@@ -47,7 +47,7 @@ func (d *Daemon) authorize(ctx context.Context, repo string) (context.Context, e
 	if ok && now.Before(exp) {
 		return out, nil
 	}
-	if _, err := d.up.HasObjects(out, &sgitv1.HasObjectsRequest{Repo: repo}); err != nil {
+	if _, err := d.up.HasObjects(out, &sgitv1.HasObjectsRequest{Project: repo}); err != nil {
 		return nil, err
 	}
 	d.mu.Lock()
@@ -158,7 +158,7 @@ func (d *Daemon) fetchUpstream(ctx context.Context, repo string, shas []string) 
 	var ferr error
 	for start := 0; start < len(shas) && ferr == nil; start += fetch.Batch {
 		end := min(start+fetch.Batch, len(shas))
-		stream, err := d.up.GetObjects(ctx, &sgitv1.GetObjectsRequest{Repo: repo, Shas: shas[start:end]})
+		stream, err := d.up.GetObjects(ctx, &sgitv1.GetObjectsRequest{Project: repo, Shas: shas[start:end]})
 		if err != nil {
 			ferr = err
 			break

@@ -43,7 +43,7 @@ func cmdLand(ctx context.Context, a *app, args []string) error {
 		defer unlock()
 		touch = s.ownsDraft(id)
 	}
-	resp, err := s.repo.Land(ctx, &sgitv1.LandRequest{Repo: s.name, Id: id})
+	resp, err := s.repo.Land(ctx, &sgitv1.LandRequest{Project: s.name, Id: id})
 	return a.finishLand(ctx, s, resp, err, touch, nil)
 }
 
@@ -52,7 +52,7 @@ func cmdLand(ctx context.Context, a *app, args []string) error {
 func (a *app) commitAndLand(ctx context.Context, s *session, changes []*sgitv1.Change, title, msg string) error {
 	w := s.wc
 	if w.Draft != "" {
-		req := &sgitv1.CommitAndLandRequest{Repo: s.name, DraftId: w.Draft, Base: w.Base, Changes: changes, Title: title, Message: msg}
+		req := &sgitv1.CommitAndLandRequest{Project: s.name, DraftId: w.Draft, Base: w.Base, Changes: changes, Title: title, Message: msg}
 		resp, err := s.repo.CommitAndLand(ctx, req)
 		if err == nil || !isStaleDraft(err) {
 			return a.finishLand(ctx, s, resp, err, true, changes)
@@ -69,7 +69,7 @@ func (a *app) commitAndLand(ctx context.Context, s *session, changes []*sgitv1.C
 	if err := w.Save(); err != nil {
 		return err
 	}
-	resp, err := s.repo.Land(ctx, &sgitv1.LandRequest{Repo: s.name, Id: d.Id})
+	resp, err := s.repo.Land(ctx, &sgitv1.LandRequest{Project: s.name, Id: d.Id})
 	return a.finishLand(ctx, s, resp, err, true, changes)
 }
 

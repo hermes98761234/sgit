@@ -39,7 +39,7 @@ type Config struct {
 // Daemon is the sgd service.
 type Daemon struct {
 	cfg      Config
-	up       sgitv1.RepoClient
+	up       sgitv1.ProjectClient
 	dec      *zstd.Decoder
 	mu       sync.Mutex
 	acl      map[aclKey]time.Time // successful read probes, until expiry
@@ -62,7 +62,7 @@ func New(cfg Config) (*Daemon, error) {
 		return nil, err
 	}
 	return &Daemon{
-		cfg: cfg, up: sgitv1.NewRepoClient(cfg.Conn), dec: dec,
+		cfg: cfg, up: sgitv1.NewProjectClient(cfg.Conn), dec: dec,
 		acl: map[aclKey]time.Time{}, inflight: map[string]*call{},
 	}, nil
 }
@@ -75,7 +75,7 @@ func NewGRPC() *grpc.Server { return grpc.NewServer(rpc.ServerOptions()...) }
 
 // Register adds the Repo, Daemon and health services to g.
 func (d *Daemon) Register(g *grpc.Server) {
-	sgitv1.RegisterRepoServer(g, &proxy{d: d})
+	sgitv1.RegisterProjectServer(g, &proxy{d: d})
 	sgitv1.RegisterDaemonServer(g, &infoServer{d: d})
 	healthpb.RegisterHealthServer(g, health.NewServer())
 }

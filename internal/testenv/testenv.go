@@ -73,7 +73,9 @@ func (e *Env) Conn(token string) *grpc.ClientConn {
 	return conn
 }
 
-func (e *Env) Repo(token string) sgitv1.RepoClient   { return sgitv1.NewRepoClient(e.Conn(token)) }
+func (e *Env) Project(token string) sgitv1.ProjectClient {
+	return sgitv1.NewProjectClient(e.Conn(token))
+}
 func (e *Env) Admin(token string) sgitv1.AdminClient { return sgitv1.NewAdminClient(e.Conn(token)) }
 
 func (e *Env) CreateRepo(name string) string {
@@ -89,14 +91,14 @@ func (e *Env) NewUser(name, repo, level string) string {
 	adm := e.Admin(e.AdminToken)
 	tok := Must(adm.CreateToken(ctx, &sgitv1.CreateTokenRequest{User: name}))
 	if level != "" {
-		Must(adm.GrantACL(ctx, &sgitv1.GrantACLRequest{User: name, Repo: repo, Level: level}))
+		Must(adm.GrantACL(ctx, &sgitv1.GrantACLRequest{User: name, Project: repo, Level: level}))
 	}
 	return tok.Token
 }
 
 func (e *Env) Upload(token, repo string, blobs ...[]byte) []string {
 	e.t.Helper()
-	return Must(rpc.UploadBlobs(context.Background(), e.Repo(token), repo, blobs))
+	return Must(rpc.UploadBlobs(context.Background(), e.Project(token), repo, blobs))
 }
 
 // Git opens the repo's bare git dir directly (caller closes).

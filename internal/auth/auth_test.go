@@ -85,7 +85,7 @@ func TestUnaryInterceptor(t *testing.T) {
 		_, err := icpt(ctx, nil, &grpc.UnaryServerInfo{FullMethod: method}, handler)
 		return err
 	}
-	if err := call(metadata.Pairs("authorization", "Bearer "+tok), "/sgit.v1.Repo/ResolveRev"); err != nil || seen.Name != "alice" || len(reqID) != 12 {
+	if err := call(metadata.Pairs("authorization", "Bearer "+tok), "/sgit.v1.Project/ResolveRev"); err != nil || seen.Name != "alice" || len(reqID) != 12 {
 		t.Fatalf("valid token: err=%v user=%+v reqID=%q", err, seen, reqID)
 	}
 	for name, md := range map[string]metadata.MD{
@@ -93,7 +93,7 @@ func TestUnaryInterceptor(t *testing.T) {
 		"malformed": metadata.Pairs("authorization", "Basic xyz"),
 		"unknown":   metadata.Pairs("authorization", "Bearer sgt_doesnotexist"),
 	} {
-		if err := call(md, "/sgit.v1.Repo/ResolveRev"); status.Code(err) != codes.Unauthenticated {
+		if err := call(md, "/sgit.v1.Project/ResolveRev"); status.Code(err) != codes.Unauthenticated {
 			t.Errorf("%s: want Unauthenticated, got %v", name, err)
 		}
 	}
@@ -127,10 +127,10 @@ func TestStreamInterceptor(t *testing.T) {
 		ss := fakeStream{ctx: metadata.NewIncomingContext(context.Background(), md)}
 		return icpt(nil, ss, &grpc.StreamServerInfo{FullMethod: method}, handler)
 	}
-	if err := run(metadata.MD{}, "/sgit.v1.Repo/GetObjects"); status.Code(err) != codes.Unauthenticated || called {
+	if err := run(metadata.MD{}, "/sgit.v1.Project/GetObjects"); status.Code(err) != codes.Unauthenticated || called {
 		t.Fatalf("missing token: want Unauthenticated and no handler call, got err=%v called=%v", err, called)
 	}
-	if err := run(metadata.Pairs("authorization", "Bearer "+tok), "/sgit.v1.Repo/GetObjects"); err != nil || !called || seen.Name != "alice" || len(reqID) != 12 {
+	if err := run(metadata.Pairs("authorization", "Bearer "+tok), "/sgit.v1.Project/GetObjects"); err != nil || !called || seen.Name != "alice" || len(reqID) != 12 {
 		t.Fatalf("valid token: err=%v called=%v user=%+v reqID=%q", err, called, seen, reqID)
 	}
 	if err := run(metadata.MD{}, "/grpc.health.v1.Health/Watch"); err != nil || !called {
@@ -146,10 +146,10 @@ func TestTapHandle(t *testing.T) {
 		md     metadata.MD
 		ok     bool
 	}{
-		{"missing", "/sgit.v1.Repo/ResolveRev", metadata.MD{}, false},
-		{"basic", "/sgit.v1.Repo/ResolveRev", metadata.Pairs("authorization", "Basic xyz"), false},
-		{"bearer without prefix", "/sgit.v1.Repo/ResolveRev", metadata.Pairs("authorization", "Bearer abc"), false},
-		{"bearer sgt", "/sgit.v1.Repo/ResolveRev", metadata.Pairs("authorization", "Bearer sgt_abc"), true},
+		{"missing", "/sgit.v1.Project/ResolveRev", metadata.MD{}, false},
+		{"basic", "/sgit.v1.Project/ResolveRev", metadata.Pairs("authorization", "Basic xyz"), false},
+		{"bearer without prefix", "/sgit.v1.Project/ResolveRev", metadata.Pairs("authorization", "Bearer abc"), false},
+		{"bearer sgt", "/sgit.v1.Project/ResolveRev", metadata.Pairs("authorization", "Bearer sgt_abc"), true},
 		{"health", "/grpc.health.v1.Health/Check", metadata.MD{}, true},
 	}
 	for _, c := range cases {

@@ -11,7 +11,7 @@ import (
 )
 
 // shortHasObjects answers HasObjects with one flag fewer than asked.
-type shortHasObjects struct{ sgitv1.RepoClient }
+type shortHasObjects struct{ sgitv1.ProjectClient }
 
 func (shortHasObjects) HasObjects(_ context.Context, req *sgitv1.HasObjectsRequest, _ ...grpc.CallOption) (*sgitv1.HasObjectsResponse, error) {
 	return &sgitv1.HasObjectsResponse{Present: make([]bool, len(req.Shas)-1)}, nil

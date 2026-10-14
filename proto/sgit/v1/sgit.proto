@@ -4,8 +4,9 @@ package sgit.v1;
 
 option go_package = "github.com/hermes98761234/sgit/gen/sgit/v1;sgitv1";
 
-// Repo is served by both sg-server and sgd (phase 3).
-service Repo {
+// Project is the client API, served by both sg-server and sgd. Every request
+// names a project by name, alias or `#<id>`.
+service Project {
   rpc ResolveRev(ResolveRevRequest) returns (ResolveRevResponse);
   rpc GetObjects(GetObjectsRequest) returns (stream Object);
   rpc HasObjects(HasObjectsRequest) returns (HasObjectsResponse);
@@ -21,6 +22,8 @@ service Repo {
   rpc Blame(BlameRequest) returns (BlameResponse);
   rpc Diff(DiffRequest) returns (DiffResponse);
   rpc MergeFile(MergeFileRequest) returns (MergeFileResponse);
+  // ListProjects lists the projects the caller can access (admins: all).
+  rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
 }
 
 // Admin is only served by sg-server; clients dial it directly.
@@ -40,23 +43,33 @@ service Admin {
   rpc ListTokens(ListTokensRequest) returns (ListTokensResponse);
   rpc ListACL(ListACLRequest) returns (ListACLResponse);
   rpc DeleteRepo(DeleteRepoRequest) returns (DeleteRepoResponse);
+  rpc CreateProject(CreateProjectRequest) returns (ProjectInfo);
+  rpc MountProject(MountProjectRequest) returns (ProjectInfo);
+  rpc UnmountProject(UnmountProjectRequest) returns (ProjectInfo);
+  rpc AddProjectAlias(AddProjectAliasRequest) returns (ProjectInfo);
+  rpc RemoveProjectAlias(RemoveProjectAliasRequest) returns (ProjectInfo);
+  rpc RenameProject(RenameProjectRequest) returns (ProjectInfo);
+  rpc ListProjects(AdminListProjectsRequest) returns (AdminListProjectsResponse);
+  rpc GetProject(GetProjectRequest) returns (ProjectInfo);
+  rpc DeleteProject(DeleteProjectRequest) returns (DeleteProjectResponse);
 }
 
-message ResolveRevRequest { string repo = 1; string rev = 2; }
-message ResolveRevResponse { string sha = 1; }
+message ResolveRevRequest { string project = 1; string rev = 2; }
+// project_id and project_name identify the resolved project (canonical name).
+message ResolveRevResponse { string sha = 1; int64 project_id = 2; string project_name = 3; }
 
-message GetObjectsRequest { string repo = 1; repeated string shas = 2; }
+message GetObjectsRequest { string project = 1; repeated string shas = 2; }
 message Object {
   string sha = 1;
   string type = 2;      // blob | tree | commit
   uint64 size = 3;      // uncompressed size
   bytes zstd_data = 4;  // zstd-compressed raw object content
 }
-message HasObjectsRequest { string repo = 1; repeated string shas = 2; }
+message HasObjectsRequest { string project = 1; repeated string shas = 2; }
 message HasObjectsResponse { repeated bool present = 1; }
 
-// BlobChunk streams blobs in <= 1 MiB chunks; repo is required on the first chunk.
-message BlobChunk { string repo = 1; bytes data = 2; bool end_of_blob = 3; }
+// BlobChunk streams blobs in <= 1 MiB chunks; project is required on the first chunk.
+message BlobChunk { string project = 1; bytes data = 2; bool end_of_blob = 3; }
 message UploadBlobsResponse { repeated string shas = 1; }
 
 enum ChangeOp {
@@ -65,17 +78,18 @@ enum ChangeOp {
   CHANGE_OP_MODIFY = 2;
   CHANGE_OP_DELETE = 3;
 }
+// path is relative to the project root.
 message Change { string path = 1; ChangeOp op = 2; string blob_sha = 3; string mode = 4; }
 
-message CreateDraftRequest { string repo = 1; string base = 2; repeated Change changes = 3; string title = 4; string message = 5; }
-message UpdateDraftRequest { string repo = 1; string id = 2; string base = 3; repeated Change changes = 4; string message = 5; }
-message GetDraftRequest { string repo = 1; string id = 2; }
-message ListDraftsRequest { string repo = 1; bool mine = 2; string status = 3; }
+message CreateDraftRequest { string project = 1; string base = 2; repeated Change changes = 3; string title = 4; string message = 5; }
+message UpdateDraftRequest { string project = 1; string id = 2; string base = 3; repeated Change changes = 4; string message = 5; }
+message GetDraftRequest { string project = 1; string id = 2; }
+message ListDraftsRequest { string project = 1; bool mine = 2; string status = 3; }
 message ListDraftsResponse { repeated Draft drafts = 1; }
-message AbandonDraftRequest { string repo = 1; string id = 2; }
+message AbandonDraftRequest { string project = 1; string id = 2; }
 message Draft {
   string id = 1;
-  string repo = 2;
+  string project = 2;  // canonical project name
   string owner = 3;
   string title = 4;
   string base = 5;
@@ -87,30 +101,37 @@ message Draft {
   int64 updated_at = 11;
 }
 
-message LandRequest { string repo = 1; string id = 2; }
-message CommitAndLandRequest { string repo = 1; string draft_id = 2; string base = 3; repeated Change changes = 4; string title = 5; string message = 6; }
-// parent is the main the commit was placed on. When it equals the draft's
-// base, the landed tree is exactly the draft's tree (no rebase happened).
+message LandRequest { string project = 1; string id = 2; }
+message CommitAndLandRequest { string project = 1; string draft_id = 2; string base = 3; repeated Change changes = 4; string title = 5; string message = 6; }
+// commit is the new project head. parent is set only when that head's tree
+// equals the draft's tree; it is then the commit the draft landed on.
 message LandResponse { string commit = 1; string draft_id = 2; string parent = 3; }
 
 // Attached as a status detail to ABORTED errors from Land/CommitAndLand.
-// "ours" is main, "theirs" is the draft.
+// "ours" is main, "theirs" is the draft. main is the project head to rebase
+// onto. partial is set when some mounts landed before the stop; landed lists
+// their mount paths, and the draft now holds only what did not land.
 message ConflictFile { string path = 1; string base_sha = 2; string ours_sha = 3; string theirs_sha = 4; }
-message ConflictDetail { string draft_id = 1; string main = 2; repeated ConflictFile files = 3; }
+message ConflictDetail { string draft_id = 1; string main = 2; repeated ConflictFile files = 3; bool partial = 4; repeated string landed = 5; }
 
-message LogRequest { string repo = 1; string rev = 2; string path = 3; int32 n = 4; }
+message LogRequest { string project = 1; string rev = 2; string path = 3; int32 n = 4; }
 message LogEntry { string sha = 1; string author_name = 2; string author_email = 3; int64 time = 4; string subject = 5; }
 message LogResponse { repeated LogEntry entries = 1; }
 
-message BlameRequest { string repo = 1; string rev = 2; string path = 3; }
+message BlameRequest { string project = 1; string rev = 2; string path = 3; }
 message BlameLine { string sha = 1; string author = 2; int32 line = 3; bytes text = 4; }
 message BlameResponse { repeated BlameLine lines = 1; }
 
-message DiffRequest { string repo = 1; string a = 2; string b = 3; repeated string paths = 4; }
+message DiffRequest { string project = 1; string a = 2; string b = 3; repeated string paths = 4; }
 message DiffResponse { bytes patch = 1; }
 
-message MergeFileRequest { string repo = 1; string base_sha = 2; string ours_sha = 3; string theirs_sha = 4; string ours_label = 5; string theirs_label = 6; }
+message MergeFileRequest { string project = 1; string base_sha = 2; string ours_sha = 3; string theirs_sha = 4; string ours_label = 5; string theirs_label = 6; }
 message MergeFileResponse { bytes content = 1; bool conflicted = 2; }
+
+message ListProjectsRequest {}
+// level is read, write, or admin (for admins, who see every project).
+message ProjectSummary { int64 id = 1; string name = 2; repeated string aliases = 3; string level = 4; }
+message ListProjectsResponse { repeated ProjectSummary projects = 1; }
 
 message WhoAmIRequest {}
 message WhoAmIResponse { string user = 1; string email = 2; bool admin = 3; }
@@ -138,9 +159,9 @@ message CreateTokenRequest { string user = 1; string email = 2; bool admin = 3; 
 message CreateTokenResponse { string id = 1; string token = 2; string user = 3; }
 message RevokeTokenRequest { string id = 1; }
 message RevokeTokenResponse {}
-message GrantACLRequest { string user = 1; string repo = 2; string level = 3; }
+message GrantACLRequest { string user = 1; string project = 2; string level = 3; }
 message GrantACLResponse {}
-message RevokeACLRequest { string user = 1; string repo = 2; }
+message RevokeACLRequest { string user = 1; string project = 2; }
 message RevokeACLResponse {}
 
 message UserInfo {
@@ -161,13 +182,38 @@ message TokenInfo { string id = 1; string user = 2; int64 created_unix = 3; int6
 // ListTokensRequest.user filters to one user; empty lists everyone's.
 message ListTokensRequest { string user = 1; }
 message ListTokensResponse { repeated TokenInfo tokens = 1; }
-message ACLEntry { string user = 1; string repo = 2; string level = 3; }
-// ListACLRequest.user and .repo are optional filters.
-message ListACLRequest { string user = 1; string repo = 2; }
+message ACLEntry { string user = 1; string project = 2; string level = 3; }
+// ListACLRequest.user and .project are optional filters.
+message ListACLRequest { string user = 1; string project = 2; }
 message ListACLResponse { repeated ACLEntry entries = 1; }
 // DeleteRepo moves the bare repo to <data>/deleted; moved_to is its new path.
+// It is refused while any project mounts the repo.
 message DeleteRepoRequest { string name = 1; }
 message DeleteRepoResponse { string moved_to = 1; }
+
+// Project administration (admin only). project accepts a name, alias or `#<id>`.
+message MountInfo { string path = 1; string repo = 2; string folder = 3; bool read_only = 4; int64 added_unix = 5; }
+message GrantInfo { string user = 1; string level = 2; }
+message ProjectInfo {
+  int64 id = 1;
+  string name = 2;
+  repeated string aliases = 3;
+  repeated MountInfo mounts = 4;
+  repeated GrantInfo grants = 5;
+  string head = 6;  // "" while the project has no commits
+  int64 created_unix = 7;
+}
+message CreateProjectRequest { string name = 1; }
+message MountProjectRequest { string project = 1; string path = 2; string repo = 3; string folder = 4; bool read_only = 5; }
+message UnmountProjectRequest { string project = 1; string path = 2; }
+message AddProjectAliasRequest { string project = 1; string alias = 2; }
+message RemoveProjectAliasRequest { string alias = 1; }
+message RenameProjectRequest { string project = 1; string new_name = 2; }
+message AdminListProjectsRequest {}
+message AdminListProjectsResponse { repeated ProjectInfo projects = 1; }
+message GetProjectRequest { string project = 1; }
+message DeleteProjectRequest { string project = 1; }
+message DeleteProjectResponse { int32 drafts_removed = 1; int32 acls_removed = 2; }
 
 // Daemon is served only by sgd, so clients can check which server it fronts
 // before sending it a token.

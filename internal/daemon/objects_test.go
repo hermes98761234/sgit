@@ -26,7 +26,7 @@ func seeded(t *testing.T) (*testenv.Env, string) {
 	return e, e.CommitDirect("web", map[string]string{"a.txt": "A\n", "src/x.go": "X\n", "docs/d.md": "D\n"}, "seed")
 }
 
-func readAll(t *testing.T, c sgitv1.RepoClient, commit string) map[string]fetch.File {
+func readAll(t *testing.T, c sgitv1.ProjectClient, commit string) map[string]fetch.File {
 	t.Helper()
 	ctx := context.Background()
 	tree := testenv.Must(fetch.Tree(ctx, c, "web", commit, nil))
@@ -41,19 +41,19 @@ func readAll(t *testing.T, c sgitv1.RepoClient, commit string) map[string]fetch.
 func TestSecondFetchServedFromCache(t *testing.T) {
 	e, commit := seeded(t)
 	d := daemontest.Start(t, e.Addr)
-	readAll(t, d.Repo(e.AdminToken), commit)
+	readAll(t, d.Project(e.AdminToken), commit)
 	first := d.Counter.Total()
 	if first == 0 {
 		t.Fatal("cold fetch must go upstream")
 	}
-	readAll(t, d.Repo(e.AdminToken), commit)
+	readAll(t, d.Project(e.AdminToken), commit)
 	if d.Counter.Total() != first {
 		t.Fatalf("warm fetch went upstream: %d -> %d", first, d.Counter.Total())
 	}
 	// A restarted daemon on the same cache directory serves from disk.
 	reopened := testenv.Must(cache.Open(d.CacheDir, 1<<30))
 	d2 := daemontest.Start(t, e.Addr, func(c *daemon.Config) { c.Cache = reopened })
-	readAll(t, d2.Repo(e.AdminToken), commit)
+	readAll(t, d2.Project(e.AdminToken), commit)
 	if d2.Counter.Total() != 0 {
 		t.Fatalf("restarted daemon went upstream for %d objects", d2.Counter.Total())
 	}
@@ -63,9 +63,9 @@ func TestConcurrentRequestsShareOneUpstreamFetch(t *testing.T) {
 	e, commit := seeded(t)
 	d := daemontest.Start(t, e.Addr)
 	ctx := context.Background()
-	tree := testenv.Must(fetch.Tree(ctx, e.Repo(e.AdminToken), "web", commit, nil)) // directly, not via sgd
+	tree := testenv.Must(fetch.Tree(ctx, e.Project(e.AdminToken), "web", commit, nil)) // directly, not via sgd
 	sha := tree["a.txt"].SHA
-	c := d.Repo(e.AdminToken)
+	c := d.Project(e.AdminToken)
 	errs := make(chan error, 20)
 	for i := 0; i < 20; i++ {
 		go func() {
@@ -90,16 +90,16 @@ func TestCachedObjectsStillRequireReadAccess(t *testing.T) {
 	e, commit := seeded(t)
 	d := daemontest.Start(t, e.Addr, func(c *daemon.Config) { c.ACLTTL = 50 * time.Millisecond })
 	ctx := context.Background()
-	readAll(t, d.Repo(e.AdminToken), commit) // cache is warm now
+	readAll(t, d.Project(e.AdminToken), commit) // cache is warm now
 	nobody := e.NewUser("bob", "", "")
-	if _, err := fetch.Tree(ctx, d.Repo(nobody), "web", commit, nil); status.Code(err) != codes.PermissionDenied {
+	if _, err := fetch.Tree(ctx, d.Project(nobody), "web", commit, nil); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("user without access got cached objects: %v", err)
 	}
 	reader := e.NewUser("bob-reader", "web", "read")
-	testenv.Must(fetch.Tree(ctx, d.Repo(reader), "web", commit, nil))
-	testenv.Must(e.Admin(e.AdminToken).RevokeACL(ctx, &sgitv1.RevokeACLRequest{User: "bob-reader", Repo: "web"}))
+	testenv.Must(fetch.Tree(ctx, d.Project(reader), "web", commit, nil))
+	testenv.Must(e.Admin(e.AdminToken).RevokeACL(ctx, &sgitv1.RevokeACLRequest{User: "bob-reader", Project: "web"}))
 	time.Sleep(150 * time.Millisecond)
-	if _, err := fetch.Tree(ctx, d.Repo(reader), "web", commit, nil); status.Code(err) != codes.PermissionDenied {
+	if _, err := fetch.Tree(ctx, d.Project(reader), "web", commit, nil); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("revoked access still served after ACLTTL: %v", err)
 	}
 }
@@ -107,10 +107,10 @@ func TestCachedObjectsStillRequireReadAccess(t *testing.T) {
 func TestCachedGetObjectsRequiresToken(t *testing.T) {
 	e, commit := seeded(t)
 	d := daemontest.Start(t, e.Addr)
-	tree := readAll(t, d.Repo(e.AdminToken), commit) // cache is warm now
+	tree := readAll(t, d.Project(e.AdminToken), commit) // cache is warm now
 	sha := tree["a.txt"].SHA
 	for _, tok := range []string{"", "sgt_nope"} {
-		stream, err := d.Repo(tok).GetObjects(context.Background(), &sgitv1.GetObjectsRequest{Repo: "web", Shas: []string{sha}})
+		stream, err := d.Project(tok).GetObjects(context.Background(), &sgitv1.GetObjectsRequest{Project: "web", Shas: []string{sha}})
 		if err == nil {
 			var o *sgitv1.Object
 			if o, err = stream.Recv(); err == nil {
@@ -126,7 +126,7 @@ func TestCachedGetObjectsRequiresToken(t *testing.T) {
 func TestCorruptCacheEntryIsRefetched(t *testing.T) {
 	e, commit := seeded(t)
 	d := daemontest.Start(t, e.Addr)
-	c := d.Repo(e.AdminToken)
+	c := d.Project(e.AdminToken)
 	tree := readAll(t, c, commit)
 	sha := tree["a.txt"].SHA
 	before := d.Counter.Requested(sha)
@@ -147,7 +147,7 @@ func TestCorruptCacheEntryIsRefetched(t *testing.T) {
 func TestGetObjectsRejectsBadSHA(t *testing.T) {
 	e, _ := seeded(t)
 	d := daemontest.Start(t, e.Addr)
-	stream, err := d.Repo(e.AdminToken).GetObjects(context.Background(), &sgitv1.GetObjectsRequest{Repo: "web", Shas: []string{"../../etc/passwd"}})
+	stream, err := d.Project(e.AdminToken).GetObjects(context.Background(), &sgitv1.GetObjectsRequest{Project: "web", Shas: []string{"../../etc/passwd"}})
 	if err == nil {
 		_, err = stream.Recv()
 	}

@@ -1,4 +1,4 @@
-// Package server implements the sgit.v1 Repo and Admin gRPC services over
+// Package server implements the sgit.v1 Project and Admin gRPC services over
 // bare git repositories.
 package server
 
@@ -112,7 +112,7 @@ func NewGRPC(st *store.Store, extra ...grpc.ServerOption) *grpc.Server {
 }
 
 func (s *Server) Register(g *grpc.Server) {
-	sgitv1.RegisterRepoServer(g, &repoService{s: s})
+	sgitv1.RegisterProjectServer(g, &repoService{s: s})
 	sgitv1.RegisterAdminServer(g, &adminService{s: s})
 	healthpb.RegisterHealthServer(g, health.NewServer())
 }

@@ -16,12 +16,12 @@ import (
 )
 
 type repoService struct {
-	sgitv1.UnimplementedRepoServer
+	sgitv1.UnimplementedProjectServer
 	s *Server
 }
 
 func (r *repoService) ResolveRev(ctx context.Context, req *sgitv1.ResolveRevRequest) (*sgitv1.ResolveRevResponse, error) {
-	h, _, err := r.s.open(ctx, req.Repo, auth.ActionRead)
+	h, _, err := r.s.open(ctx, req.Project, auth.ActionRead)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +52,7 @@ func checkBatch(shas []string) error {
 
 func (r *repoService) GetObjects(req *sgitv1.GetObjectsRequest, stream grpc.ServerStreamingServer[sgitv1.Object]) error {
 	ctx := stream.Context()
-	h, _, err := r.s.open(ctx, req.Repo, auth.ActionRead)
+	h, _, err := r.s.open(ctx, req.Project, auth.ActionRead)
 	if err != nil {
 		return err
 	}
@@ -73,7 +73,7 @@ func (r *repoService) GetObjects(req *sgitv1.GetObjectsRequest, stream grpc.Serv
 }
 
 func (r *repoService) HasObjects(ctx context.Context, req *sgitv1.HasObjectsRequest) (*sgitv1.HasObjectsResponse, error) {
-	h, _, err := r.s.open(ctx, req.Repo, auth.ActionRead)
+	h, _, err := r.s.open(ctx, req.Project, auth.ActionRead)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +112,7 @@ func (r *repoService) UploadBlobs(stream grpc.ClientStreamingServer[sgitv1.BlobC
 			return err
 		}
 		if h == nil {
-			if h, _, err = r.s.open(ctx, c.Repo, auth.ActionWrite); err != nil {
+			if h, _, err = r.s.open(ctx, c.Project, auth.ActionWrite); err != nil {
 				return err
 			}
 		}
@@ -136,7 +136,7 @@ func (r *repoService) UploadBlobs(stream grpc.ClientStreamingServer[sgitv1.BlobC
 func clean(s string) string { return strings.ToValidUTF8(s, "�") }
 
 func (r *repoService) Log(ctx context.Context, req *sgitv1.LogRequest) (*sgitv1.LogResponse, error) {
-	h, _, err := r.s.open(ctx, req.Repo, auth.ActionRead)
+	h, _, err := r.s.open(ctx, req.Project, auth.ActionRead)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +164,7 @@ func (r *repoService) Log(ctx context.Context, req *sgitv1.LogRequest) (*sgitv1.
 }
 
 func (r *repoService) Blame(ctx context.Context, req *sgitv1.BlameRequest) (*sgitv1.BlameResponse, error) {
-	h, _, err := r.s.open(ctx, req.Repo, auth.ActionRead)
+	h, _, err := r.s.open(ctx, req.Project, auth.ActionRead)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +187,7 @@ func (r *repoService) Blame(ctx context.Context, req *sgitv1.BlameRequest) (*sgi
 }
 
 func (r *repoService) Diff(ctx context.Context, req *sgitv1.DiffRequest) (*sgitv1.DiffResponse, error) {
-	h, _, err := r.s.open(ctx, req.Repo, auth.ActionRead)
+	h, _, err := r.s.open(ctx, req.Project, auth.ActionRead)
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +218,7 @@ func (r *repoService) readBlobOrEmpty(ctx context.Context, h *repoHandle, sha st
 }
 
 func (r *repoService) MergeFile(ctx context.Context, req *sgitv1.MergeFileRequest) (*sgitv1.MergeFileResponse, error) {
-	h, _, err := r.s.open(ctx, req.Repo, auth.ActionRead)
+	h, _, err := r.s.open(ctx, req.Project, auth.ActionRead)
 	if err != nil {
 		return nil, err
 	}

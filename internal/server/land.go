@@ -15,7 +15,7 @@ import (
 )
 
 func (r *repoService) Land(ctx context.Context, req *sgitv1.LandRequest) (*sgitv1.LandResponse, error) {
-	h, u, err := r.s.open(ctx, req.Repo, auth.ActionWrite)
+	h, u, err := r.s.open(ctx, req.Project, auth.ActionWrite)
 	if err != nil {
 		return nil, err
 	}
@@ -31,7 +31,7 @@ func (r *repoService) Land(ctx context.Context, req *sgitv1.LandRequest) (*sgitv
 }
 
 func (r *repoService) CommitAndLand(ctx context.Context, req *sgitv1.CommitAndLandRequest) (*sgitv1.LandResponse, error) {
-	h, u, err := r.s.open(ctx, req.Repo, auth.ActionWrite)
+	h, u, err := r.s.open(ctx, req.Project, auth.ActionWrite)
 	if err != nil {
 		return nil, err
 	}

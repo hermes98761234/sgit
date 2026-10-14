@@ -11,7 +11,7 @@ import (
 )
 
 type proxy struct {
-	sgitv1.UnimplementedRepoServer
+	sgitv1.UnimplementedProjectServer
 	d *Daemon
 }
 
@@ -120,7 +120,7 @@ func (p *proxy) GetObjects(req *sgitv1.GetObjectsRequest, stream grpc.ServerStre
 			return status.Errorf(codes.InvalidArgument, "invalid object id %q", s)
 		}
 	}
-	ctx, err := p.d.authorize(stream.Context(), req.Repo)
+	ctx, err := p.d.authorize(stream.Context(), req.Project)
 	if err != nil {
 		return err
 	}
@@ -142,7 +142,7 @@ func (p *proxy) GetObjects(req *sgitv1.GetObjectsRequest, stream grpc.ServerStre
 	if len(misses) == 0 {
 		return nil
 	}
-	objs, err := p.d.fetch(ctx, req.Repo, misses)
+	objs, err := p.d.fetch(ctx, req.Project, misses)
 	if err != nil {
 		return err
 	}

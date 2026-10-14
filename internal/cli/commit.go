@@ -144,7 +144,7 @@ func uploadMissing(ctx context.Context, s *session, paths map[string]string) err
 	var missing []string
 	for start := 0; start < len(shas); start += 1000 {
 		chunk := shas[start:min(start+1000, len(shas))]
-		resp, err := s.repo.HasObjects(ctx, &sgitv1.HasObjectsRequest{Repo: s.name, Shas: chunk})
+		resp, err := s.repo.HasObjects(ctx, &sgitv1.HasObjectsRequest{Project: s.name, Shas: chunk})
 		if err != nil {
 			return err
 		}
@@ -212,7 +212,7 @@ func isStaleDraft(err error) bool {
 func saveDraft(ctx context.Context, s *session, changes []*sgitv1.Change, title, msg string) (*sgitv1.Draft, error) {
 	w := s.wc
 	if w.Draft != "" {
-		d, err := s.repo.UpdateDraft(ctx, &sgitv1.UpdateDraftRequest{Repo: s.name, Id: w.Draft, Base: w.Base, Changes: changes, Message: msg})
+		d, err := s.repo.UpdateDraft(ctx, &sgitv1.UpdateDraftRequest{Project: s.name, Id: w.Draft, Base: w.Base, Changes: changes, Message: msg})
 		if err == nil {
 			return d, nil
 		}
@@ -221,5 +221,5 @@ func saveDraft(ctx context.Context, s *session, changes []*sgitv1.Change, title,
 		}
 		w.Draft = ""
 	}
-	return s.repo.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Repo: s.name, Base: w.Base, Changes: changes, Title: title, Message: msg})
+	return s.repo.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Project: s.name, Base: w.Base, Changes: changes, Title: title, Message: msg})
 }

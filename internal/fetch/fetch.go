@@ -60,7 +60,7 @@ func uniq(shas []string) []string {
 }
 
 // objects fetches and decompresses objects, Batch SHAs per request.
-func objects(ctx context.Context, c sgitv1.RepoClient, repo string, shas []string) (map[string]object, error) {
+func objects(ctx context.Context, c sgitv1.ProjectClient, project string, shas []string) (map[string]object, error) {
 	d, err := decoder()
 	if err != nil {
 		return nil, err
@@ -73,7 +73,7 @@ func objects(ctx context.Context, c sgitv1.RepoClient, repo string, shas []strin
 	out := make(map[string]object, len(shas))
 	for start := 0; start < len(shas); start += Batch {
 		end := min(start+Batch, len(shas))
-		stream, err := c.GetObjects(ctx, &sgitv1.GetObjectsRequest{Repo: repo, Shas: shas[start:end]})
+		stream, err := c.GetObjects(ctx, &sgitv1.GetObjectsRequest{Project: project, Shas: shas[start:end]})
 		if err != nil {
 			return nil, err
 		}
@@ -119,8 +119,8 @@ func normalizeMode(m string) string {
 
 // Tree lists the files of commit's tree inside the sparse set (nil = all).
 // Submodule entries are skipped.
-func Tree(ctx context.Context, c sgitv1.RepoClient, repo, commit string, sparse []string) (map[string]File, error) {
-	objs, err := objects(ctx, c, repo, []string{commit})
+func Tree(ctx context.Context, c sgitv1.ProjectClient, project, commit string, sparse []string) (map[string]File, error) {
+	objs, err := objects(ctx, c, project, []string{commit})
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +141,7 @@ func Tree(ctx context.Context, c sgitv1.RepoClient, repo, commit string, sparse 
 		for _, d := range level {
 			shas = append(shas, d.sha)
 		}
-		trees, err := objects(ctx, c, repo, shas)
+		trees, err := objects(ctx, c, project, shas)
 		if err != nil {
 			return nil, err
 		}
@@ -189,8 +189,8 @@ func Tree(ctx context.Context, c sgitv1.RepoClient, repo, commit string, sparse 
 }
 
 // Blobs fetches blob contents by SHA, verifying each against its SHA.
-func Blobs(ctx context.Context, c sgitv1.RepoClient, repo string, shas []string) (map[string][]byte, error) {
-	objs, err := objects(ctx, c, repo, shas)
+func Blobs(ctx context.Context, c sgitv1.ProjectClient, project string, shas []string) (map[string][]byte, error) {
+	objs, err := objects(ctx, c, project, shas)
 	if err != nil {
 		return nil, err
 	}

@@ -14,11 +14,11 @@ func TestCreateAndUpdateDraft(t *testing.T) {
 	e := testenv.Start(t)
 	main := e.CreateRepo("web")
 	alice := e.NewUser("alice", "web", "write")
-	c := e.Repo(alice)
+	c := e.Project(alice)
 	ctx := context.Background()
 	shas := e.Upload(alice, "web", []byte("v1\n"), []byte("v2\n"))
 
-	d := testenv.Must(c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Repo: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("a.txt", shas[0])}, Message: "add a\n\nbody"}))
+	d := testenv.Must(c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Project: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("a.txt", shas[0])}, Message: "add a\n\nbody"}))
 	if len(d.Id) != 8 || d.Owner != "alice" || d.Title != "add a" || d.Version != 1 || d.Status != "open" || d.Base != main {
 		t.Fatalf("draft = %+v", d)
 	}
@@ -40,7 +40,7 @@ func TestCreateAndUpdateDraft(t *testing.T) {
 		t.Fatalf("draft commit = %+v", commit)
 	}
 
-	d2 := testenv.Must(c.UpdateDraft(ctx, &sgitv1.UpdateDraftRequest{Repo: "web", Id: d.Id, Base: main, Changes: []*sgitv1.Change{testenv.Add("a.txt", shas[1])}, Message: "add a v2"}))
+	d2 := testenv.Must(c.UpdateDraft(ctx, &sgitv1.UpdateDraftRequest{Project: "web", Id: d.Id, Base: main, Changes: []*sgitv1.Change{testenv.Add("a.txt", shas[1])}, Message: "add a v2"}))
 	if d2.Version != 2 || d2.Head == d.Head {
 		t.Fatalf("updated = %+v", d2)
 	}
@@ -50,22 +50,22 @@ func TestCreateAndUpdateDraft(t *testing.T) {
 	if e.Files("web", d2.Head)["a.txt"] != "v2\n" {
 		t.Fatal("update must be a full delta vs base")
 	}
-	got := testenv.Must(c.GetDraft(ctx, &sgitv1.GetDraftRequest{Repo: "web", Id: d.Id}))
+	got := testenv.Must(c.GetDraft(ctx, &sgitv1.GetDraftRequest{Project: "web", Id: d.Id}))
 	if got.Head != d2.Head {
 		t.Fatalf("GetDraft = %+v", got)
 	}
-	list := testenv.Must(c.ListDrafts(ctx, &sgitv1.ListDraftsRequest{Repo: "web", Mine: true, Status: "open"}))
+	list := testenv.Must(c.ListDrafts(ctx, &sgitv1.ListDraftsRequest{Project: "web", Mine: true, Status: "open"}))
 	if len(list.Drafts) != 1 {
 		t.Fatalf("ListDrafts = %+v", list.Drafts)
 	}
-	if _, err := c.ListDrafts(ctx, &sgitv1.ListDraftsRequest{Repo: "web", Status: "weird"}); status.Code(err) != codes.InvalidArgument {
+	if _, err := c.ListDrafts(ctx, &sgitv1.ListDraftsRequest{Project: "web", Status: "weird"}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("bad status filter: want InvalidArgument, got %v", err)
 	}
-	ab := testenv.Must(c.AbandonDraft(ctx, &sgitv1.AbandonDraftRequest{Repo: "web", Id: d.Id}))
+	ab := testenv.Must(c.AbandonDraft(ctx, &sgitv1.AbandonDraftRequest{Project: "web", Id: d.Id}))
 	if ab.Status != "abandoned" {
 		t.Fatalf("abandon = %+v", ab)
 	}
-	if _, err := c.UpdateDraft(ctx, &sgitv1.UpdateDraftRequest{Repo: "web", Id: d.Id, Base: main, Changes: []*sgitv1.Change{testenv.Add("a.txt", shas[0])}, Message: "m"}); status.Code(err) != codes.FailedPrecondition {
+	if _, err := c.UpdateDraft(ctx, &sgitv1.UpdateDraftRequest{Project: "web", Id: d.Id, Base: main, Changes: []*sgitv1.Change{testenv.Add("a.txt", shas[0])}, Message: "m"}); status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("update abandoned: want FailedPrecondition, got %v", err)
 	}
 }
@@ -73,23 +73,23 @@ func TestCreateAndUpdateDraft(t *testing.T) {
 func TestCreateDraftValidation(t *testing.T) {
 	e := testenv.Start(t)
 	main := e.CreateRepo("web")
-	c := e.Repo(e.AdminToken)
+	c := e.Project(e.AdminToken)
 	ctx := context.Background()
 	sha := e.Upload(e.AdminToken, "web", []byte("x"))[0]
 	missing := "1111111111111111111111111111111111111111"
 	cases := map[string]*sgitv1.CreateDraftRequest{
-		"empty changes": {Repo: "web", Base: main, Message: "m"},
-		"no message":    {Repo: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("a", sha)}},
-		"bad base":      {Repo: "web", Base: "xyz", Changes: []*sgitv1.Change{testenv.Add("a", sha)}, Message: "m"},
-		"unknown base":  {Repo: "web", Base: missing, Changes: []*sgitv1.Change{testenv.Add("a", sha)}, Message: "m"},
-		"missing blob":  {Repo: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("a", missing)}, Message: "m"},
-		"bad path":      {Repo: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("../a", sha)}, Message: "m"},
-		"git dir":       {Repo: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add(".git/hooks/x", sha)}, Message: "m"},
-		"bad mode":      {Repo: "web", Base: main, Changes: []*sgitv1.Change{{Path: "a", Op: sgitv1.ChangeOp_CHANGE_OP_ADD, BlobSha: sha, Mode: "040000"}}, Message: "m"},
-		"no op":         {Repo: "web", Base: main, Changes: []*sgitv1.Change{{Path: "a", BlobSha: sha}}, Message: "m"},
-		"duplicate":     {Repo: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("a", sha), testenv.Add("a", sha)}, Message: "m"},
-		"file and dir":  {Repo: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("a", sha), testenv.Add("a/b", sha)}, Message: "m"},
-		"delete absent": {Repo: "web", Base: main, Changes: []*sgitv1.Change{testenv.Delete("nope")}, Message: "m"},
+		"empty changes": {Project: "web", Base: main, Message: "m"},
+		"no message":    {Project: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("a", sha)}},
+		"bad base":      {Project: "web", Base: "xyz", Changes: []*sgitv1.Change{testenv.Add("a", sha)}, Message: "m"},
+		"unknown base":  {Project: "web", Base: missing, Changes: []*sgitv1.Change{testenv.Add("a", sha)}, Message: "m"},
+		"missing blob":  {Project: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("a", missing)}, Message: "m"},
+		"bad path":      {Project: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("../a", sha)}, Message: "m"},
+		"git dir":       {Project: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add(".git/hooks/x", sha)}, Message: "m"},
+		"bad mode":      {Project: "web", Base: main, Changes: []*sgitv1.Change{{Path: "a", Op: sgitv1.ChangeOp_CHANGE_OP_ADD, BlobSha: sha, Mode: "040000"}}, Message: "m"},
+		"no op":         {Project: "web", Base: main, Changes: []*sgitv1.Change{{Path: "a", BlobSha: sha}}, Message: "m"},
+		"duplicate":     {Project: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("a", sha), testenv.Add("a", sha)}, Message: "m"},
+		"file and dir":  {Project: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("a", sha), testenv.Add("a/b", sha)}, Message: "m"},
+		"delete absent": {Project: "web", Base: main, Changes: []*sgitv1.Change{testenv.Delete("nope")}, Message: "m"},
 	}
 	for name, req := range cases {
 		if _, err := c.CreateDraft(ctx, req); status.Code(err) != codes.InvalidArgument {
@@ -101,10 +101,10 @@ func TestCreateDraftValidation(t *testing.T) {
 func TestCreateDraftUnicodePath(t *testing.T) {
 	e := testenv.Start(t)
 	main := e.CreateRepo("web")
-	c := e.Repo(e.AdminToken)
+	c := e.Project(e.AdminToken)
 	sha := e.Upload(e.AdminToken, "web", []byte("x\n"))[0]
 	d := testenv.Must(c.CreateDraft(context.Background(), &sgitv1.CreateDraftRequest{
-		Repo: "web", Base: main, Message: "unicode",
+		Project: "web", Base: main, Message: "unicode",
 		Changes: []*sgitv1.Change{testenv.Add("docs/my notes/файл ü.md", sha)},
 	}))
 	if e.Files("web", d.Head)["docs/my notes/файл ü.md"] != "x\n" {
@@ -119,20 +119,20 @@ func TestDraftOwnership(t *testing.T) {
 	bob := e.NewUser("bob", "web", "write")
 	ctx := context.Background()
 	sha := e.Upload(alice, "web", []byte("x"))[0]
-	d := testenv.Must(e.Repo(alice).CreateDraft(ctx, &sgitv1.CreateDraftRequest{Repo: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("a", sha)}, Message: "m"}))
-	b := e.Repo(bob)
-	if _, err := b.UpdateDraft(ctx, &sgitv1.UpdateDraftRequest{Repo: "web", Id: d.Id, Base: main, Changes: []*sgitv1.Change{testenv.Add("a", sha)}, Message: "m"}); status.Code(err) != codes.PermissionDenied {
+	d := testenv.Must(e.Project(alice).CreateDraft(ctx, &sgitv1.CreateDraftRequest{Project: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("a", sha)}, Message: "m"}))
+	b := e.Project(bob)
+	if _, err := b.UpdateDraft(ctx, &sgitv1.UpdateDraftRequest{Project: "web", Id: d.Id, Base: main, Changes: []*sgitv1.Change{testenv.Add("a", sha)}, Message: "m"}); status.Code(err) != codes.PermissionDenied {
 		t.Errorf("bob update: want PermissionDenied, got %v", err)
 	}
-	if _, err := b.AbandonDraft(ctx, &sgitv1.AbandonDraftRequest{Repo: "web", Id: d.Id}); status.Code(err) != codes.PermissionDenied {
+	if _, err := b.AbandonDraft(ctx, &sgitv1.AbandonDraftRequest{Project: "web", Id: d.Id}); status.Code(err) != codes.PermissionDenied {
 		t.Errorf("bob abandon: want PermissionDenied, got %v", err)
 	}
-	testenv.Must(b.GetDraft(ctx, &sgitv1.GetDraftRequest{Repo: "web", Id: d.Id})) // reading is fine
-	testenv.Must(e.Repo(e.AdminToken).AbandonDraft(ctx, &sgitv1.AbandonDraftRequest{Repo: "web", Id: d.Id}))
-	if _, err := b.GetDraft(ctx, &sgitv1.GetDraftRequest{Repo: "web", Id: "zzzzzzzz"}); status.Code(err) != codes.NotFound {
+	testenv.Must(b.GetDraft(ctx, &sgitv1.GetDraftRequest{Project: "web", Id: d.Id})) // reading is fine
+	testenv.Must(e.Project(e.AdminToken).AbandonDraft(ctx, &sgitv1.AbandonDraftRequest{Project: "web", Id: d.Id}))
+	if _, err := b.GetDraft(ctx, &sgitv1.GetDraftRequest{Project: "web", Id: "zzzzzzzz"}); status.Code(err) != codes.NotFound {
 		t.Errorf("unknown draft: want NotFound, got %v", err)
 	}
-	if _, err := b.GetDraft(ctx, &sgitv1.GetDraftRequest{Repo: "web", Id: "../x"}); status.Code(err) != codes.InvalidArgument {
+	if _, err := b.GetDraft(ctx, &sgitv1.GetDraftRequest{Project: "web", Id: "../x"}); status.Code(err) != codes.InvalidArgument {
 		t.Errorf("bad draft id: want InvalidArgument, got %v", err)
 	}
 }
@@ -143,8 +143,8 @@ func TestCreateDraftQuotedPathCannotSmuggleSgDir(t *testing.T) {
 	alice := e.NewUser("alice", "web", "write")
 	sha := e.Upload(alice, "web", []byte("x\n"))[0]
 	const p = `"\056sg/config"`
-	d, err := e.Repo(alice).CreateDraft(context.Background(), &sgitv1.CreateDraftRequest{
-		Repo: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add(p, sha)}, Message: "sneaky"})
+	d, err := e.Project(alice).CreateDraft(context.Background(), &sgitv1.CreateDraftRequest{
+		Project: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add(p, sha)}, Message: "sneaky"})
 	if err != nil {
 		if status.Code(err) != codes.InvalidArgument {
 			t.Fatalf("want success or InvalidArgument, got %v", err)

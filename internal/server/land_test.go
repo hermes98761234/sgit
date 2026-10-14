@@ -15,9 +15,9 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func commitAndLand(c sgitv1.RepoClient, base string, path, sha, msg string) (*sgitv1.LandResponse, error) {
+func commitAndLand(c sgitv1.ProjectClient, base string, path, sha, msg string) (*sgitv1.LandResponse, error) {
 	return c.CommitAndLand(context.Background(), &sgitv1.CommitAndLandRequest{
-		Repo: "web", Base: base, Changes: []*sgitv1.Change{testenv.Add(path, sha)}, Message: msg,
+		Project: "web", Base: base, Changes: []*sgitv1.Change{testenv.Add(path, sha)}, Message: msg,
 	})
 }
 
@@ -47,18 +47,18 @@ func TestLandFastPath(t *testing.T) {
 	e := testenv.Start(t)
 	main := e.CreateRepo("web")
 	alice := e.NewUser("alice", "web", "write")
-	c := e.Repo(alice)
+	c := e.Project(alice)
 	ctx := context.Background()
 	sha := e.Upload(alice, "web", []byte("hello\n"))[0]
 	resp := testenv.Must(commitAndLand(c, main, "a.txt", sha, "add a"))
 	if e.Files("web", "main")["a.txt"] != "hello\n" {
 		t.Fatal("file not on main")
 	}
-	rr := testenv.Must(c.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Repo: "web"}))
+	rr := testenv.Must(c.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web"}))
 	if rr.Sha != resp.Commit {
 		t.Fatalf("main = %s, landed %s", rr.Sha, resp.Commit)
 	}
-	d := testenv.Must(c.GetDraft(ctx, &sgitv1.GetDraftRequest{Repo: "web", Id: resp.DraftId}))
+	d := testenv.Must(c.GetDraft(ctx, &sgitv1.GetDraftRequest{Project: "web", Id: resp.DraftId}))
 	if d.Status != "landed" || d.LandedAs != resp.Commit {
 		t.Fatalf("draft = %+v", d)
 	}
@@ -74,13 +74,13 @@ func TestLandFastPath(t *testing.T) {
 func TestLandRebasesOntoMovedMain(t *testing.T) {
 	e := testenv.Start(t)
 	main := e.CreateRepo("web")
-	c := e.Repo(e.AdminToken)
+	c := e.Project(e.AdminToken)
 	ctx := context.Background()
 	shas := e.Upload(e.AdminToken, "web", []byte("a\n"), []byte("b\n"))
-	d1 := testenv.Must(c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Repo: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("a.txt", shas[0])}, Message: "a"}))
-	d2 := testenv.Must(c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Repo: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("b.txt", shas[1])}, Message: "b"}))
-	testenv.Must(c.Land(ctx, &sgitv1.LandRequest{Repo: "web", Id: d1.Id}))
-	testenv.Must(c.Land(ctx, &sgitv1.LandRequest{Repo: "web", Id: d2.Id}))
+	d1 := testenv.Must(c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Project: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("a.txt", shas[0])}, Message: "a"}))
+	d2 := testenv.Must(c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Project: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("b.txt", shas[1])}, Message: "b"}))
+	testenv.Must(c.Land(ctx, &sgitv1.LandRequest{Project: "web", Id: d1.Id}))
+	testenv.Must(c.Land(ctx, &sgitv1.LandRequest{Project: "web", Id: d2.Id}))
 	files := e.Files("web", "main")
 	if files["a.txt"] != "a\n" || files["b.txt"] != "b\n" {
 		t.Fatalf("files = %v", files)
@@ -91,12 +91,12 @@ func TestLandRebasesOntoMovedMain(t *testing.T) {
 func TestLandConflict(t *testing.T) {
 	e := testenv.Start(t)
 	e.CreateRepo("web")
-	c := e.Repo(e.AdminToken)
+	c := e.Project(e.AdminToken)
 	ctx := context.Background()
 	base := e.CommitDirect("web", map[string]string{"f.txt": "a\nb\nc\n"}, "base")
 	shas := e.Upload(e.AdminToken, "web", []byte("a\nB1\nc\n"), []byte("a\nB2\nc\n"))
-	first := testenv.Must(c.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{Repo: "web", Base: base, Changes: []*sgitv1.Change{testenv.Modify("f.txt", shas[0])}, Message: "one"}))
-	_, err := c.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{Repo: "web", Base: base, Changes: []*sgitv1.Change{testenv.Modify("f.txt", shas[1])}, Message: "two"})
+	first := testenv.Must(c.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{Project: "web", Base: base, Changes: []*sgitv1.Change{testenv.Modify("f.txt", shas[0])}, Message: "one"}))
+	_, err := c.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{Project: "web", Base: base, Changes: []*sgitv1.Change{testenv.Modify("f.txt", shas[1])}, Message: "two"})
 	st := status.Convert(err)
 	if st.Code() != codes.Aborted {
 		t.Fatalf("want Aborted, got %v", err)
@@ -114,7 +114,7 @@ func TestLandConflict(t *testing.T) {
 	if f.Path != "f.txt" || f.OursSha != shas[0] || f.TheirsSha != shas[1] || f.BaseSha == "" {
 		t.Fatalf("conflict file = %+v", f)
 	}
-	d := testenv.Must(c.GetDraft(ctx, &sgitv1.GetDraftRequest{Repo: "web", Id: det.DraftId}))
+	d := testenv.Must(c.GetDraft(ctx, &sgitv1.GetDraftRequest{Project: "web", Id: det.DraftId}))
 	if d.Status != "open" {
 		t.Fatalf("conflicted draft must stay open: %+v", d)
 	}
@@ -123,7 +123,7 @@ func TestLandConflict(t *testing.T) {
 	}
 	// Resolve: update the draft against the new main and land again.
 	fixed := e.Upload(e.AdminToken, "web", []byte("a\nB1+B2\nc\n"))[0]
-	testenv.Must(c.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{Repo: "web", DraftId: det.DraftId, Base: first.Commit, Changes: []*sgitv1.Change{testenv.Modify("f.txt", fixed)}, Message: "two (resolved)"}))
+	testenv.Must(c.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{Project: "web", DraftId: det.DraftId, Base: first.Commit, Changes: []*sgitv1.Change{testenv.Modify("f.txt", fixed)}, Message: "two (resolved)"}))
 	if e.Files("web", "main")["f.txt"] != "a\nB1+B2\nc\n" {
 		t.Fatal("resolved land missing")
 	}
@@ -132,16 +132,16 @@ func TestLandConflict(t *testing.T) {
 func TestLandTwiceAndAbandoned(t *testing.T) {
 	e := testenv.Start(t)
 	main := e.CreateRepo("web")
-	c := e.Repo(e.AdminToken)
+	c := e.Project(e.AdminToken)
 	ctx := context.Background()
 	sha := e.Upload(e.AdminToken, "web", []byte("x"))[0]
 	resp := testenv.Must(commitAndLand(c, main, "x", sha, "x"))
-	if _, err := c.Land(ctx, &sgitv1.LandRequest{Repo: "web", Id: resp.DraftId}); status.Code(err) != codes.FailedPrecondition {
+	if _, err := c.Land(ctx, &sgitv1.LandRequest{Project: "web", Id: resp.DraftId}); status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("land twice: want FailedPrecondition, got %v", err)
 	}
-	d := testenv.Must(c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Repo: "web", Base: resp.Commit, Changes: []*sgitv1.Change{testenv.Delete("x")}, Message: "rm"}))
-	testenv.Must(c.AbandonDraft(ctx, &sgitv1.AbandonDraftRequest{Repo: "web", Id: d.Id}))
-	if _, err := c.Land(ctx, &sgitv1.LandRequest{Repo: "web", Id: d.Id}); status.Code(err) != codes.FailedPrecondition {
+	d := testenv.Must(c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Project: "web", Base: resp.Commit, Changes: []*sgitv1.Change{testenv.Delete("x")}, Message: "rm"}))
+	testenv.Must(c.AbandonDraft(ctx, &sgitv1.AbandonDraftRequest{Project: "web", Id: d.Id}))
+	if _, err := c.Land(ctx, &sgitv1.LandRequest{Project: "web", Id: d.Id}); status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("land abandoned: want FailedPrecondition, got %v", err)
 	}
 	assertLinear(t, e, 2)
@@ -150,7 +150,7 @@ func TestLandTwiceAndAbandoned(t *testing.T) {
 func TestConcurrentLands(t *testing.T) {
 	e := testenv.Start(t)
 	main := e.CreateRepo("web")
-	c := e.Repo(e.AdminToken)
+	c := e.Project(e.AdminToken)
 	const n = 50
 	var blobs [][]byte
 	for i := 0; i < n; i++ {
@@ -191,7 +191,7 @@ func TestLandRetriesWhenMainMoves(t *testing.T) {
 		}
 	})
 	main := e.CreateRepo("web")
-	c := e.Repo(e.AdminToken)
+	c := e.Project(e.AdminToken)
 	sha := e.Upload(e.AdminToken, "web", []byte("mine\n"))[0]
 	testenv.Must(commitAndLand(c, main, "mine.txt", sha, "mine"))
 	files := e.Files("web", "main")
@@ -212,17 +212,17 @@ func TestLandGivesUpWhenMainKeepsMoving(t *testing.T) {
 		}
 	})
 	main := e.CreateRepo("web")
-	c := e.Repo(e.AdminToken)
+	c := e.Project(e.AdminToken)
 	ctx := context.Background()
 	sha := e.Upload(e.AdminToken, "web", []byte("mine\n"))[0]
-	d := testenv.Must(c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Repo: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("mine.txt", sha)}, Message: "mine"}))
-	if _, err := c.Land(ctx, &sgitv1.LandRequest{Repo: "web", Id: d.Id}); status.Code(err) != codes.ResourceExhausted {
+	d := testenv.Must(c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Project: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("mine.txt", sha)}, Message: "mine"}))
+	if _, err := c.Land(ctx, &sgitv1.LandRequest{Project: "web", Id: d.Id}); status.Code(err) != codes.ResourceExhausted {
 		t.Fatalf("want ResourceExhausted, got %v", err)
 	}
 	if n.Load() != 3 {
 		t.Fatalf("attempts = %d, want 3", n.Load())
 	}
-	got := testenv.Must(c.GetDraft(ctx, &sgitv1.GetDraftRequest{Repo: "web", Id: d.Id}))
+	got := testenv.Must(c.GetDraft(ctx, &sgitv1.GetDraftRequest{Project: "web", Id: d.Id}))
 	if got.Status != "open" {
 		t.Fatalf("draft must stay open: %+v", got)
 	}
@@ -238,14 +238,14 @@ func TestLandByNonOwner(t *testing.T) {
 	bob := e.NewUser("bob", "web", "write")
 	ctx := context.Background()
 	sha := e.Upload(alice, "web", []byte("x"))[0]
-	d := testenv.Must(e.Repo(alice).CreateDraft(ctx, &sgitv1.CreateDraftRequest{Repo: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("a", sha)}, Message: "m"}))
-	if _, err := e.Repo(bob).Land(ctx, &sgitv1.LandRequest{Repo: "web", Id: d.Id}); status.Code(err) != codes.PermissionDenied {
+	d := testenv.Must(e.Project(alice).CreateDraft(ctx, &sgitv1.CreateDraftRequest{Project: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("a", sha)}, Message: "m"}))
+	if _, err := e.Project(bob).Land(ctx, &sgitv1.LandRequest{Project: "web", Id: d.Id}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("bob land: want PermissionDenied, got %v", err)
 	}
-	if _, err := e.Repo(bob).CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{Repo: "web", DraftId: d.Id, Base: main, Changes: []*sgitv1.Change{testenv.Add("a", sha)}, Message: "m"}); status.Code(err) != codes.PermissionDenied {
+	if _, err := e.Project(bob).CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{Project: "web", DraftId: d.Id, Base: main, Changes: []*sgitv1.Change{testenv.Add("a", sha)}, Message: "m"}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("bob commit-and-land: want PermissionDenied, got %v", err)
 	}
-	testenv.Must(e.Repo(e.AdminToken).Land(ctx, &sgitv1.LandRequest{Repo: "web", Id: d.Id})) // admin may land
+	testenv.Must(e.Project(e.AdminToken).Land(ctx, &sgitv1.LandRequest{Project: "web", Id: d.Id})) // admin may land
 }
 
 func TestAbandonDuringLand(t *testing.T) {
@@ -258,19 +258,19 @@ func TestAbandonDuringLand(t *testing.T) {
 			if once.CompareAndSwap(false, true) {
 				id, _ := draftID.Load().(string)
 				go func() {
-					_, err := e.Repo(e.AdminToken).AbandonDraft(context.Background(), &sgitv1.AbandonDraftRequest{Repo: repo, Id: id})
+					_, err := e.Project(e.AdminToken).AbandonDraft(context.Background(), &sgitv1.AbandonDraftRequest{Project: repo, Id: id})
 					abandonErr <- err
 				}()
 			}
 		}
 	})
 	main := e.CreateRepo("web")
-	c := e.Repo(e.AdminToken)
+	c := e.Project(e.AdminToken)
 	ctx := context.Background()
 	sha := e.Upload(e.AdminToken, "web", []byte("mine\n"))[0]
-	d := testenv.Must(c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Repo: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("mine.txt", sha)}, Message: "mine"}))
+	d := testenv.Must(c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Project: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("mine.txt", sha)}, Message: "mine"}))
 	draftID.Store(d.Id)
-	resp := testenv.Must(c.Land(ctx, &sgitv1.LandRequest{Repo: "web", Id: d.Id}))
+	resp := testenv.Must(c.Land(ctx, &sgitv1.LandRequest{Project: "web", Id: d.Id}))
 	select {
 	case err := <-abandonErr:
 		if status.Code(err) != codes.FailedPrecondition {
@@ -279,7 +279,7 @@ func TestAbandonDuringLand(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("abandon did not return")
 	}
-	got := testenv.Must(c.GetDraft(ctx, &sgitv1.GetDraftRequest{Repo: "web", Id: d.Id}))
+	got := testenv.Must(c.GetDraft(ctx, &sgitv1.GetDraftRequest{Project: "web", Id: d.Id}))
 	if got.Status != "landed" || got.LandedAs != resp.Commit {
 		t.Fatalf("draft = %+v", got)
 	}
@@ -298,20 +298,20 @@ func TestUpdateDuringLandCannotReopen(t *testing.T) {
 				id, _ := draftID.Load().(string)
 				sha, _ := other.Load().(string)
 				go func() {
-					_, err := e.Repo(e.AdminToken).UpdateDraft(context.Background(), &sgitv1.UpdateDraftRequest{Repo: repo, Id: id, Base: main, Changes: []*sgitv1.Change{testenv.Add("other.txt", sha)}, Message: "again"})
+					_, err := e.Project(e.AdminToken).UpdateDraft(context.Background(), &sgitv1.UpdateDraftRequest{Project: repo, Id: id, Base: main, Changes: []*sgitv1.Change{testenv.Add("other.txt", sha)}, Message: "again"})
 					updateErr <- err
 				}()
 			}
 		}
 	})
 	main = e.CreateRepo("web")
-	c := e.Repo(e.AdminToken)
+	c := e.Project(e.AdminToken)
 	ctx := context.Background()
 	shas := e.Upload(e.AdminToken, "web", []byte("mine\n"), []byte("other\n"))
 	other.Store(shas[1])
-	d := testenv.Must(c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Repo: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("mine.txt", shas[0])}, Message: "mine"}))
+	d := testenv.Must(c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Project: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("mine.txt", shas[0])}, Message: "mine"}))
 	draftID.Store(d.Id)
-	testenv.Must(c.Land(ctx, &sgitv1.LandRequest{Repo: "web", Id: d.Id}))
+	testenv.Must(c.Land(ctx, &sgitv1.LandRequest{Project: "web", Id: d.Id}))
 	select {
 	case err := <-updateErr:
 		if status.Code(err) != codes.FailedPrecondition {
@@ -320,7 +320,7 @@ func TestUpdateDuringLandCannotReopen(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("update did not return")
 	}
-	got := testenv.Must(c.GetDraft(ctx, &sgitv1.GetDraftRequest{Repo: "web", Id: d.Id}))
+	got := testenv.Must(c.GetDraft(ctx, &sgitv1.GetDraftRequest{Project: "web", Id: d.Id}))
 	if got.Status != "landed" {
 		t.Fatalf("draft = %+v", got)
 	}
@@ -337,17 +337,17 @@ func TestLandRejectsInconsistentDraft(t *testing.T) {
 	e := testenv.Start(t)
 	main := e.CreateRepo("web")
 	alice := e.NewUser("alice", "web", "write")
-	c := e.Repo(alice)
+	c := e.Project(alice)
 	ctx := context.Background()
 	sha := e.Upload(alice, "web", []byte("1\n"))[0]
-	d := testenv.Must(c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Repo: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("x.txt", sha)}, Message: "x"}))
+	d := testenv.Must(c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Project: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("x.txt", sha)}, Message: "x"}))
 	g := e.Git("web")
 	defer g.Close()
 	// simulate a half-applied update: the head ref moved but the DB did not
 	if err := g.UpdateRef(ctx, "refs/sg/drafts/"+d.Id+"/head", main, d.Head); err != nil {
 		t.Fatal(err)
 	}
-	_, err := c.Land(ctx, &sgitv1.LandRequest{Repo: "web", Id: d.Id})
+	_, err := c.Land(ctx, &sgitv1.LandRequest{Project: "web", Id: d.Id})
 	if status.Code(err) != codes.Aborted {
 		t.Fatalf("want Aborted, got %v", err)
 	}
@@ -360,15 +360,15 @@ func TestLandRejectsEmptyCommit(t *testing.T) {
 	e := testenv.Start(t)
 	main := e.CreateRepo("web")
 	alice := e.NewUser("alice", "web", "write")
-	c := e.Repo(alice)
+	c := e.Project(alice)
 	ctx := context.Background()
 	sha := e.Upload(alice, "web", []byte("1\n"))[0]
 	mk := func() *sgitv1.Draft {
-		return testenv.Must(c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Repo: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("x.txt", sha)}, Message: "x"}))
+		return testenv.Must(c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Project: "web", Base: main, Changes: []*sgitv1.Change{testenv.Add("x.txt", sha)}, Message: "x"}))
 	}
 	a, b := mk(), mk()
-	testenv.Must(c.Land(ctx, &sgitv1.LandRequest{Repo: "web", Id: a.Id}))
-	_, err := c.Land(ctx, &sgitv1.LandRequest{Repo: "web", Id: b.Id})
+	testenv.Must(c.Land(ctx, &sgitv1.LandRequest{Project: "web", Id: a.Id}))
+	_, err := c.Land(ctx, &sgitv1.LandRequest{Project: "web", Id: b.Id})
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("want FailedPrecondition, got %v", err)
 	}

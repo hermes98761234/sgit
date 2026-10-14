@@ -49,7 +49,7 @@ func cmdSync(ctx context.Context, a *app, args []string) error {
 		return err
 	}
 	defer unlock()
-	rr, err := s.repo.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Repo: s.name, Rev: "main"})
+	rr, err := s.repo.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: s.name, Rev: "main"})
 	if err != nil {
 		return err
 	}
@@ -315,7 +315,7 @@ func syncTo(ctx context.Context, s *session, target string) (syncResult, error) 
 		}
 		for _, m := range merges {
 			r, err := s.repo.MergeFile(ctx, &sgitv1.MergeFileRequest{
-				Repo: s.name, BaseSha: m.base, OursSha: newT[m.path].SHA, TheirsSha: m.local.SHA, OursLabel: "main", TheirsLabel: "local",
+				Project: s.name, BaseSha: m.base, OursSha: newT[m.path].SHA, TheirsSha: m.local.SHA, OursLabel: "main", TheirsLabel: "local",
 			})
 			if err != nil {
 				return res, err

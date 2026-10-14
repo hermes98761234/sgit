@@ -15,7 +15,7 @@ import (
 
 func (h *harness) mainSHA() string {
 	h.t.Helper()
-	return testenv.Must(h.env.Repo(h.env.AdminToken).ResolveRev(context.Background(), &sgitv1.ResolveRevRequest{Repo: "web", Rev: "main"})).Sha
+	return testenv.Must(h.env.Project(h.env.AdminToken).ResolveRev(context.Background(), &sgitv1.ResolveRevRequest{Project: "web", Rev: "main"})).Sha
 }
 
 // upstream lands changes on main directly through the API (as another user would).
@@ -28,8 +28,8 @@ func (h *harness) upstream(files map[string]string, deletes ...string) string {
 	for _, p := range deletes {
 		ch = append(ch, testenv.Delete(p))
 	}
-	resp := testenv.Must(h.env.Repo(h.env.AdminToken).CommitAndLand(context.Background(),
-		&sgitv1.CommitAndLandRequest{Repo: "web", Base: h.mainSHA(), Changes: ch, Message: "upstream"}))
+	resp := testenv.Must(h.env.Project(h.env.AdminToken).CommitAndLand(context.Background(),
+		&sgitv1.CommitAndLandRequest{Project: "web", Base: h.mainSHA(), Changes: ch, Message: "upstream"}))
 	return resp.Commit
 }
 
@@ -243,8 +243,8 @@ func TestSyncIgnoredFileNotSilentlyOverwritten(t *testing.T) {
 func (h *harness) upstreamMode(path, content, mode string) {
 	h.t.Helper()
 	sha := h.env.Upload(h.env.AdminToken, "web", []byte(content))[0]
-	testenv.Must(h.env.Repo(h.env.AdminToken).CommitAndLand(context.Background(), &sgitv1.CommitAndLandRequest{
-		Repo: "web", Base: h.mainSHA(), Message: "mode",
+	testenv.Must(h.env.Project(h.env.AdminToken).CommitAndLand(context.Background(), &sgitv1.CommitAndLandRequest{
+		Project: "web", Base: h.mainSHA(), Message: "mode",
 		Changes: []*sgitv1.Change{{Path: path, Op: sgitv1.ChangeOp_CHANGE_OP_MODIFY, BlobSha: sha, Mode: mode}},
 	}))
 }

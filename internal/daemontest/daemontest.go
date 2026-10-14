@@ -100,7 +100,7 @@ func CountingConn(t testing.TB, addr string) (*grpc.ClientConn, *Counter) {
 	c := &Counter{shas: map[string]int{}}
 	si := func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
 		cs, err := streamer(ctx, desc, cc, method, opts...)
-		if err == nil && method == "/sgit.v1.Repo/GetObjects" {
+		if err == nil && method == "/sgit.v1.Project/GetObjects" {
 			return &countingStream{ClientStream: cs, c: c}, nil
 		}
 		return cs, err
@@ -155,7 +155,9 @@ func (e *Env) Conn(token string) *grpc.ClientConn {
 	return conn
 }
 
-func (e *Env) Repo(token string) sgitv1.RepoClient { return sgitv1.NewRepoClient(e.Conn(token)) }
+func (e *Env) Project(token string) sgitv1.ProjectClient {
+	return sgitv1.NewProjectClient(e.Conn(token))
+}
 
 // Info calls Daemon/Info.
 func (e *Env) Info() *sgitv1.DaemonInfoResponse {

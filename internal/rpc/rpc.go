@@ -61,7 +61,7 @@ func chunks(data []byte) [][]byte {
 }
 
 // UploadBlobs streams blobs to the server and returns their SHAs in order.
-func UploadBlobs(ctx context.Context, c sgitv1.RepoClient, repo string, blobs [][]byte) ([]string, error) {
+func UploadBlobs(ctx context.Context, c sgitv1.ProjectClient, project string, blobs [][]byte) ([]string, error) {
 	stream, err := c.UploadBlobs(ctx)
 	if err != nil {
 		return nil, err
@@ -72,7 +72,7 @@ func UploadBlobs(ctx context.Context, c sgitv1.RepoClient, repo string, blobs []
 		for i, part := range parts {
 			msg := &sgitv1.BlobChunk{Data: part, EndOfBlob: i == len(parts)-1}
 			if first {
-				msg.Repo, first = repo, false
+				msg.Project, first = project, false
 			}
 			if err := stream.Send(msg); err != nil {
 				_, rerr := stream.CloseAndRecv() // surface the server's status

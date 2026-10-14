@@ -19,29 +19,31 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Repo_ResolveRev_FullMethodName    = "/sgit.v1.Repo/ResolveRev"
-	Repo_GetObjects_FullMethodName    = "/sgit.v1.Repo/GetObjects"
-	Repo_HasObjects_FullMethodName    = "/sgit.v1.Repo/HasObjects"
-	Repo_UploadBlobs_FullMethodName   = "/sgit.v1.Repo/UploadBlobs"
-	Repo_CreateDraft_FullMethodName   = "/sgit.v1.Repo/CreateDraft"
-	Repo_UpdateDraft_FullMethodName   = "/sgit.v1.Repo/UpdateDraft"
-	Repo_GetDraft_FullMethodName      = "/sgit.v1.Repo/GetDraft"
-	Repo_ListDrafts_FullMethodName    = "/sgit.v1.Repo/ListDrafts"
-	Repo_AbandonDraft_FullMethodName  = "/sgit.v1.Repo/AbandonDraft"
-	Repo_Land_FullMethodName          = "/sgit.v1.Repo/Land"
-	Repo_CommitAndLand_FullMethodName = "/sgit.v1.Repo/CommitAndLand"
-	Repo_Log_FullMethodName           = "/sgit.v1.Repo/Log"
-	Repo_Blame_FullMethodName         = "/sgit.v1.Repo/Blame"
-	Repo_Diff_FullMethodName          = "/sgit.v1.Repo/Diff"
-	Repo_MergeFile_FullMethodName     = "/sgit.v1.Repo/MergeFile"
+	Project_ResolveRev_FullMethodName    = "/sgit.v1.Project/ResolveRev"
+	Project_GetObjects_FullMethodName    = "/sgit.v1.Project/GetObjects"
+	Project_HasObjects_FullMethodName    = "/sgit.v1.Project/HasObjects"
+	Project_UploadBlobs_FullMethodName   = "/sgit.v1.Project/UploadBlobs"
+	Project_CreateDraft_FullMethodName   = "/sgit.v1.Project/CreateDraft"
+	Project_UpdateDraft_FullMethodName   = "/sgit.v1.Project/UpdateDraft"
+	Project_GetDraft_FullMethodName      = "/sgit.v1.Project/GetDraft"
+	Project_ListDrafts_FullMethodName    = "/sgit.v1.Project/ListDrafts"
+	Project_AbandonDraft_FullMethodName  = "/sgit.v1.Project/AbandonDraft"
+	Project_Land_FullMethodName          = "/sgit.v1.Project/Land"
+	Project_CommitAndLand_FullMethodName = "/sgit.v1.Project/CommitAndLand"
+	Project_Log_FullMethodName           = "/sgit.v1.Project/Log"
+	Project_Blame_FullMethodName         = "/sgit.v1.Project/Blame"
+	Project_Diff_FullMethodName          = "/sgit.v1.Project/Diff"
+	Project_MergeFile_FullMethodName     = "/sgit.v1.Project/MergeFile"
+	Project_ListProjects_FullMethodName  = "/sgit.v1.Project/ListProjects"
 )
 
-// RepoClient is the client API for Repo service.
+// ProjectClient is the client API for Project service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// Repo is served by both sg-server and sgd (phase 3).
-type RepoClient interface {
+// Project is the client API, served by both sg-server and sgd. Every request
+// names a project by name, alias or `#<id>`.
+type ProjectClient interface {
 	ResolveRev(ctx context.Context, in *ResolveRevRequest, opts ...grpc.CallOption) (*ResolveRevResponse, error)
 	GetObjects(ctx context.Context, in *GetObjectsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Object], error)
 	HasObjects(ctx context.Context, in *HasObjectsRequest, opts ...grpc.CallOption) (*HasObjectsResponse, error)
@@ -57,29 +59,31 @@ type RepoClient interface {
 	Blame(ctx context.Context, in *BlameRequest, opts ...grpc.CallOption) (*BlameResponse, error)
 	Diff(ctx context.Context, in *DiffRequest, opts ...grpc.CallOption) (*DiffResponse, error)
 	MergeFile(ctx context.Context, in *MergeFileRequest, opts ...grpc.CallOption) (*MergeFileResponse, error)
+	// ListProjects lists the projects the caller can access (admins: all).
+	ListProjects(ctx context.Context, in *ListProjectsRequest, opts ...grpc.CallOption) (*ListProjectsResponse, error)
 }
 
-type repoClient struct {
+type projectClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewRepoClient(cc grpc.ClientConnInterface) RepoClient {
-	return &repoClient{cc}
+func NewProjectClient(cc grpc.ClientConnInterface) ProjectClient {
+	return &projectClient{cc}
 }
 
-func (c *repoClient) ResolveRev(ctx context.Context, in *ResolveRevRequest, opts ...grpc.CallOption) (*ResolveRevResponse, error) {
+func (c *projectClient) ResolveRev(ctx context.Context, in *ResolveRevRequest, opts ...grpc.CallOption) (*ResolveRevResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ResolveRevResponse)
-	err := c.cc.Invoke(ctx, Repo_ResolveRev_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Project_ResolveRev_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *repoClient) GetObjects(ctx context.Context, in *GetObjectsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Object], error) {
+func (c *projectClient) GetObjects(ctx context.Context, in *GetObjectsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Object], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Repo_ServiceDesc.Streams[0], Repo_GetObjects_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Project_ServiceDesc.Streams[0], Project_GetObjects_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -94,21 +98,21 @@ func (c *repoClient) GetObjects(ctx context.Context, in *GetObjectsRequest, opts
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type Repo_GetObjectsClient = grpc.ServerStreamingClient[Object]
+type Project_GetObjectsClient = grpc.ServerStreamingClient[Object]
 
-func (c *repoClient) HasObjects(ctx context.Context, in *HasObjectsRequest, opts ...grpc.CallOption) (*HasObjectsResponse, error) {
+func (c *projectClient) HasObjects(ctx context.Context, in *HasObjectsRequest, opts ...grpc.CallOption) (*HasObjectsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(HasObjectsResponse)
-	err := c.cc.Invoke(ctx, Repo_HasObjects_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Project_HasObjects_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *repoClient) UploadBlobs(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[BlobChunk, UploadBlobsResponse], error) {
+func (c *projectClient) UploadBlobs(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[BlobChunk, UploadBlobsResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Repo_ServiceDesc.Streams[1], Repo_UploadBlobs_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Project_ServiceDesc.Streams[1], Project_UploadBlobs_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -117,124 +121,135 @@ func (c *repoClient) UploadBlobs(ctx context.Context, opts ...grpc.CallOption) (
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type Repo_UploadBlobsClient = grpc.ClientStreamingClient[BlobChunk, UploadBlobsResponse]
+type Project_UploadBlobsClient = grpc.ClientStreamingClient[BlobChunk, UploadBlobsResponse]
 
-func (c *repoClient) CreateDraft(ctx context.Context, in *CreateDraftRequest, opts ...grpc.CallOption) (*Draft, error) {
+func (c *projectClient) CreateDraft(ctx context.Context, in *CreateDraftRequest, opts ...grpc.CallOption) (*Draft, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Draft)
-	err := c.cc.Invoke(ctx, Repo_CreateDraft_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Project_CreateDraft_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *repoClient) UpdateDraft(ctx context.Context, in *UpdateDraftRequest, opts ...grpc.CallOption) (*Draft, error) {
+func (c *projectClient) UpdateDraft(ctx context.Context, in *UpdateDraftRequest, opts ...grpc.CallOption) (*Draft, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Draft)
-	err := c.cc.Invoke(ctx, Repo_UpdateDraft_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Project_UpdateDraft_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *repoClient) GetDraft(ctx context.Context, in *GetDraftRequest, opts ...grpc.CallOption) (*Draft, error) {
+func (c *projectClient) GetDraft(ctx context.Context, in *GetDraftRequest, opts ...grpc.CallOption) (*Draft, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Draft)
-	err := c.cc.Invoke(ctx, Repo_GetDraft_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Project_GetDraft_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *repoClient) ListDrafts(ctx context.Context, in *ListDraftsRequest, opts ...grpc.CallOption) (*ListDraftsResponse, error) {
+func (c *projectClient) ListDrafts(ctx context.Context, in *ListDraftsRequest, opts ...grpc.CallOption) (*ListDraftsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListDraftsResponse)
-	err := c.cc.Invoke(ctx, Repo_ListDrafts_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Project_ListDrafts_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *repoClient) AbandonDraft(ctx context.Context, in *AbandonDraftRequest, opts ...grpc.CallOption) (*Draft, error) {
+func (c *projectClient) AbandonDraft(ctx context.Context, in *AbandonDraftRequest, opts ...grpc.CallOption) (*Draft, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Draft)
-	err := c.cc.Invoke(ctx, Repo_AbandonDraft_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Project_AbandonDraft_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *repoClient) Land(ctx context.Context, in *LandRequest, opts ...grpc.CallOption) (*LandResponse, error) {
+func (c *projectClient) Land(ctx context.Context, in *LandRequest, opts ...grpc.CallOption) (*LandResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(LandResponse)
-	err := c.cc.Invoke(ctx, Repo_Land_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Project_Land_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *repoClient) CommitAndLand(ctx context.Context, in *CommitAndLandRequest, opts ...grpc.CallOption) (*LandResponse, error) {
+func (c *projectClient) CommitAndLand(ctx context.Context, in *CommitAndLandRequest, opts ...grpc.CallOption) (*LandResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(LandResponse)
-	err := c.cc.Invoke(ctx, Repo_CommitAndLand_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Project_CommitAndLand_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *repoClient) Log(ctx context.Context, in *LogRequest, opts ...grpc.CallOption) (*LogResponse, error) {
+func (c *projectClient) Log(ctx context.Context, in *LogRequest, opts ...grpc.CallOption) (*LogResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(LogResponse)
-	err := c.cc.Invoke(ctx, Repo_Log_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Project_Log_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *repoClient) Blame(ctx context.Context, in *BlameRequest, opts ...grpc.CallOption) (*BlameResponse, error) {
+func (c *projectClient) Blame(ctx context.Context, in *BlameRequest, opts ...grpc.CallOption) (*BlameResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(BlameResponse)
-	err := c.cc.Invoke(ctx, Repo_Blame_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Project_Blame_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *repoClient) Diff(ctx context.Context, in *DiffRequest, opts ...grpc.CallOption) (*DiffResponse, error) {
+func (c *projectClient) Diff(ctx context.Context, in *DiffRequest, opts ...grpc.CallOption) (*DiffResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DiffResponse)
-	err := c.cc.Invoke(ctx, Repo_Diff_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Project_Diff_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *repoClient) MergeFile(ctx context.Context, in *MergeFileRequest, opts ...grpc.CallOption) (*MergeFileResponse, error) {
+func (c *projectClient) MergeFile(ctx context.Context, in *MergeFileRequest, opts ...grpc.CallOption) (*MergeFileResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(MergeFileResponse)
-	err := c.cc.Invoke(ctx, Repo_MergeFile_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, Project_MergeFile_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// RepoServer is the server API for Repo service.
-// All implementations must embed UnimplementedRepoServer
+func (c *projectClient) ListProjects(ctx context.Context, in *ListProjectsRequest, opts ...grpc.CallOption) (*ListProjectsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListProjectsResponse)
+	err := c.cc.Invoke(ctx, Project_ListProjects_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ProjectServer is the server API for Project service.
+// All implementations must embed UnimplementedProjectServer
 // for forward compatibility.
 //
-// Repo is served by both sg-server and sgd (phase 3).
-type RepoServer interface {
+// Project is the client API, served by both sg-server and sgd. Every request
+// names a project by name, alias or `#<id>`.
+type ProjectServer interface {
 	ResolveRev(context.Context, *ResolveRevRequest) (*ResolveRevResponse, error)
 	GetObjects(*GetObjectsRequest, grpc.ServerStreamingServer[Object]) error
 	HasObjects(context.Context, *HasObjectsRequest) (*HasObjectsResponse, error)
@@ -250,403 +265,430 @@ type RepoServer interface {
 	Blame(context.Context, *BlameRequest) (*BlameResponse, error)
 	Diff(context.Context, *DiffRequest) (*DiffResponse, error)
 	MergeFile(context.Context, *MergeFileRequest) (*MergeFileResponse, error)
-	mustEmbedUnimplementedRepoServer()
+	// ListProjects lists the projects the caller can access (admins: all).
+	ListProjects(context.Context, *ListProjectsRequest) (*ListProjectsResponse, error)
+	mustEmbedUnimplementedProjectServer()
 }
 
-// UnimplementedRepoServer must be embedded to have
+// UnimplementedProjectServer must be embedded to have
 // forward compatible implementations.
 //
 // NOTE: this should be embedded by value instead of pointer to avoid a nil
 // pointer dereference when methods are called.
-type UnimplementedRepoServer struct{}
+type UnimplementedProjectServer struct{}
 
-func (UnimplementedRepoServer) ResolveRev(context.Context, *ResolveRevRequest) (*ResolveRevResponse, error) {
+func (UnimplementedProjectServer) ResolveRev(context.Context, *ResolveRevRequest) (*ResolveRevResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ResolveRev not implemented")
 }
-func (UnimplementedRepoServer) GetObjects(*GetObjectsRequest, grpc.ServerStreamingServer[Object]) error {
+func (UnimplementedProjectServer) GetObjects(*GetObjectsRequest, grpc.ServerStreamingServer[Object]) error {
 	return status.Error(codes.Unimplemented, "method GetObjects not implemented")
 }
-func (UnimplementedRepoServer) HasObjects(context.Context, *HasObjectsRequest) (*HasObjectsResponse, error) {
+func (UnimplementedProjectServer) HasObjects(context.Context, *HasObjectsRequest) (*HasObjectsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method HasObjects not implemented")
 }
-func (UnimplementedRepoServer) UploadBlobs(grpc.ClientStreamingServer[BlobChunk, UploadBlobsResponse]) error {
+func (UnimplementedProjectServer) UploadBlobs(grpc.ClientStreamingServer[BlobChunk, UploadBlobsResponse]) error {
 	return status.Error(codes.Unimplemented, "method UploadBlobs not implemented")
 }
-func (UnimplementedRepoServer) CreateDraft(context.Context, *CreateDraftRequest) (*Draft, error) {
+func (UnimplementedProjectServer) CreateDraft(context.Context, *CreateDraftRequest) (*Draft, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateDraft not implemented")
 }
-func (UnimplementedRepoServer) UpdateDraft(context.Context, *UpdateDraftRequest) (*Draft, error) {
+func (UnimplementedProjectServer) UpdateDraft(context.Context, *UpdateDraftRequest) (*Draft, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateDraft not implemented")
 }
-func (UnimplementedRepoServer) GetDraft(context.Context, *GetDraftRequest) (*Draft, error) {
+func (UnimplementedProjectServer) GetDraft(context.Context, *GetDraftRequest) (*Draft, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetDraft not implemented")
 }
-func (UnimplementedRepoServer) ListDrafts(context.Context, *ListDraftsRequest) (*ListDraftsResponse, error) {
+func (UnimplementedProjectServer) ListDrafts(context.Context, *ListDraftsRequest) (*ListDraftsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListDrafts not implemented")
 }
-func (UnimplementedRepoServer) AbandonDraft(context.Context, *AbandonDraftRequest) (*Draft, error) {
+func (UnimplementedProjectServer) AbandonDraft(context.Context, *AbandonDraftRequest) (*Draft, error) {
 	return nil, status.Error(codes.Unimplemented, "method AbandonDraft not implemented")
 }
-func (UnimplementedRepoServer) Land(context.Context, *LandRequest) (*LandResponse, error) {
+func (UnimplementedProjectServer) Land(context.Context, *LandRequest) (*LandResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Land not implemented")
 }
-func (UnimplementedRepoServer) CommitAndLand(context.Context, *CommitAndLandRequest) (*LandResponse, error) {
+func (UnimplementedProjectServer) CommitAndLand(context.Context, *CommitAndLandRequest) (*LandResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CommitAndLand not implemented")
 }
-func (UnimplementedRepoServer) Log(context.Context, *LogRequest) (*LogResponse, error) {
+func (UnimplementedProjectServer) Log(context.Context, *LogRequest) (*LogResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Log not implemented")
 }
-func (UnimplementedRepoServer) Blame(context.Context, *BlameRequest) (*BlameResponse, error) {
+func (UnimplementedProjectServer) Blame(context.Context, *BlameRequest) (*BlameResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Blame not implemented")
 }
-func (UnimplementedRepoServer) Diff(context.Context, *DiffRequest) (*DiffResponse, error) {
+func (UnimplementedProjectServer) Diff(context.Context, *DiffRequest) (*DiffResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Diff not implemented")
 }
-func (UnimplementedRepoServer) MergeFile(context.Context, *MergeFileRequest) (*MergeFileResponse, error) {
+func (UnimplementedProjectServer) MergeFile(context.Context, *MergeFileRequest) (*MergeFileResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method MergeFile not implemented")
 }
-func (UnimplementedRepoServer) mustEmbedUnimplementedRepoServer() {}
-func (UnimplementedRepoServer) testEmbeddedByValue()              {}
+func (UnimplementedProjectServer) ListProjects(context.Context, *ListProjectsRequest) (*ListProjectsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListProjects not implemented")
+}
+func (UnimplementedProjectServer) mustEmbedUnimplementedProjectServer() {}
+func (UnimplementedProjectServer) testEmbeddedByValue()                 {}
 
-// UnsafeRepoServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to RepoServer will
+// UnsafeProjectServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to ProjectServer will
 // result in compilation errors.
-type UnsafeRepoServer interface {
-	mustEmbedUnimplementedRepoServer()
+type UnsafeProjectServer interface {
+	mustEmbedUnimplementedProjectServer()
 }
 
-func RegisterRepoServer(s grpc.ServiceRegistrar, srv RepoServer) {
-	// If the following call panics, it indicates UnimplementedRepoServer was
+func RegisterProjectServer(s grpc.ServiceRegistrar, srv ProjectServer) {
+	// If the following call panics, it indicates UnimplementedProjectServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
-	s.RegisterService(&Repo_ServiceDesc, srv)
+	s.RegisterService(&Project_ServiceDesc, srv)
 }
 
-func _Repo_ResolveRev_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Project_ResolveRev_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ResolveRevRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RepoServer).ResolveRev(ctx, in)
+		return srv.(ProjectServer).ResolveRev(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Repo_ResolveRev_FullMethodName,
+		FullMethod: Project_ResolveRev_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RepoServer).ResolveRev(ctx, req.(*ResolveRevRequest))
+		return srv.(ProjectServer).ResolveRev(ctx, req.(*ResolveRevRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Repo_GetObjects_Handler(srv interface{}, stream grpc.ServerStream) error {
+func _Project_GetObjects_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(GetObjectsRequest)
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
-	return srv.(RepoServer).GetObjects(m, &grpc.GenericServerStream[GetObjectsRequest, Object]{ServerStream: stream})
+	return srv.(ProjectServer).GetObjects(m, &grpc.GenericServerStream[GetObjectsRequest, Object]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type Repo_GetObjectsServer = grpc.ServerStreamingServer[Object]
+type Project_GetObjectsServer = grpc.ServerStreamingServer[Object]
 
-func _Repo_HasObjects_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Project_HasObjects_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(HasObjectsRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RepoServer).HasObjects(ctx, in)
+		return srv.(ProjectServer).HasObjects(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Repo_HasObjects_FullMethodName,
+		FullMethod: Project_HasObjects_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RepoServer).HasObjects(ctx, req.(*HasObjectsRequest))
+		return srv.(ProjectServer).HasObjects(ctx, req.(*HasObjectsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Repo_UploadBlobs_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(RepoServer).UploadBlobs(&grpc.GenericServerStream[BlobChunk, UploadBlobsResponse]{ServerStream: stream})
+func _Project_UploadBlobs_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(ProjectServer).UploadBlobs(&grpc.GenericServerStream[BlobChunk, UploadBlobsResponse]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type Repo_UploadBlobsServer = grpc.ClientStreamingServer[BlobChunk, UploadBlobsResponse]
+type Project_UploadBlobsServer = grpc.ClientStreamingServer[BlobChunk, UploadBlobsResponse]
 
-func _Repo_CreateDraft_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Project_CreateDraft_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CreateDraftRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RepoServer).CreateDraft(ctx, in)
+		return srv.(ProjectServer).CreateDraft(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Repo_CreateDraft_FullMethodName,
+		FullMethod: Project_CreateDraft_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RepoServer).CreateDraft(ctx, req.(*CreateDraftRequest))
+		return srv.(ProjectServer).CreateDraft(ctx, req.(*CreateDraftRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Repo_UpdateDraft_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Project_UpdateDraft_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(UpdateDraftRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RepoServer).UpdateDraft(ctx, in)
+		return srv.(ProjectServer).UpdateDraft(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Repo_UpdateDraft_FullMethodName,
+		FullMethod: Project_UpdateDraft_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RepoServer).UpdateDraft(ctx, req.(*UpdateDraftRequest))
+		return srv.(ProjectServer).UpdateDraft(ctx, req.(*UpdateDraftRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Repo_GetDraft_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Project_GetDraft_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetDraftRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RepoServer).GetDraft(ctx, in)
+		return srv.(ProjectServer).GetDraft(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Repo_GetDraft_FullMethodName,
+		FullMethod: Project_GetDraft_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RepoServer).GetDraft(ctx, req.(*GetDraftRequest))
+		return srv.(ProjectServer).GetDraft(ctx, req.(*GetDraftRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Repo_ListDrafts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Project_ListDrafts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListDraftsRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RepoServer).ListDrafts(ctx, in)
+		return srv.(ProjectServer).ListDrafts(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Repo_ListDrafts_FullMethodName,
+		FullMethod: Project_ListDrafts_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RepoServer).ListDrafts(ctx, req.(*ListDraftsRequest))
+		return srv.(ProjectServer).ListDrafts(ctx, req.(*ListDraftsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Repo_AbandonDraft_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Project_AbandonDraft_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(AbandonDraftRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RepoServer).AbandonDraft(ctx, in)
+		return srv.(ProjectServer).AbandonDraft(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Repo_AbandonDraft_FullMethodName,
+		FullMethod: Project_AbandonDraft_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RepoServer).AbandonDraft(ctx, req.(*AbandonDraftRequest))
+		return srv.(ProjectServer).AbandonDraft(ctx, req.(*AbandonDraftRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Repo_Land_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Project_Land_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(LandRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RepoServer).Land(ctx, in)
+		return srv.(ProjectServer).Land(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Repo_Land_FullMethodName,
+		FullMethod: Project_Land_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RepoServer).Land(ctx, req.(*LandRequest))
+		return srv.(ProjectServer).Land(ctx, req.(*LandRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Repo_CommitAndLand_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Project_CommitAndLand_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CommitAndLandRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RepoServer).CommitAndLand(ctx, in)
+		return srv.(ProjectServer).CommitAndLand(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Repo_CommitAndLand_FullMethodName,
+		FullMethod: Project_CommitAndLand_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RepoServer).CommitAndLand(ctx, req.(*CommitAndLandRequest))
+		return srv.(ProjectServer).CommitAndLand(ctx, req.(*CommitAndLandRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Repo_Log_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Project_Log_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(LogRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RepoServer).Log(ctx, in)
+		return srv.(ProjectServer).Log(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Repo_Log_FullMethodName,
+		FullMethod: Project_Log_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RepoServer).Log(ctx, req.(*LogRequest))
+		return srv.(ProjectServer).Log(ctx, req.(*LogRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Repo_Blame_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Project_Blame_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(BlameRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RepoServer).Blame(ctx, in)
+		return srv.(ProjectServer).Blame(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Repo_Blame_FullMethodName,
+		FullMethod: Project_Blame_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RepoServer).Blame(ctx, req.(*BlameRequest))
+		return srv.(ProjectServer).Blame(ctx, req.(*BlameRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Repo_Diff_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Project_Diff_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DiffRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RepoServer).Diff(ctx, in)
+		return srv.(ProjectServer).Diff(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Repo_Diff_FullMethodName,
+		FullMethod: Project_Diff_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RepoServer).Diff(ctx, req.(*DiffRequest))
+		return srv.(ProjectServer).Diff(ctx, req.(*DiffRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Repo_MergeFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Project_MergeFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MergeFileRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RepoServer).MergeFile(ctx, in)
+		return srv.(ProjectServer).MergeFile(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Repo_MergeFile_FullMethodName,
+		FullMethod: Project_MergeFile_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RepoServer).MergeFile(ctx, req.(*MergeFileRequest))
+		return srv.(ProjectServer).MergeFile(ctx, req.(*MergeFileRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// Repo_ServiceDesc is the grpc.ServiceDesc for Repo service.
+func _Project_ListProjects_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListProjectsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProjectServer).ListProjects(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Project_ListProjects_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProjectServer).ListProjects(ctx, req.(*ListProjectsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// Project_ServiceDesc is the grpc.ServiceDesc for Project service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var Repo_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "sgit.v1.Repo",
-	HandlerType: (*RepoServer)(nil),
+var Project_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "sgit.v1.Project",
+	HandlerType: (*ProjectServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "ResolveRev",
-			Handler:    _Repo_ResolveRev_Handler,
+			Handler:    _Project_ResolveRev_Handler,
 		},
 		{
 			MethodName: "HasObjects",
-			Handler:    _Repo_HasObjects_Handler,
+			Handler:    _Project_HasObjects_Handler,
 		},
 		{
 			MethodName: "CreateDraft",
-			Handler:    _Repo_CreateDraft_Handler,
+			Handler:    _Project_CreateDraft_Handler,
 		},
 		{
 			MethodName: "UpdateDraft",
-			Handler:    _Repo_UpdateDraft_Handler,
+			Handler:    _Project_UpdateDraft_Handler,
 		},
 		{
 			MethodName: "GetDraft",
-			Handler:    _Repo_GetDraft_Handler,
+			Handler:    _Project_GetDraft_Handler,
 		},
 		{
 			MethodName: "ListDrafts",
-			Handler:    _Repo_ListDrafts_Handler,
+			Handler:    _Project_ListDrafts_Handler,
 		},
 		{
 			MethodName: "AbandonDraft",
-			Handler:    _Repo_AbandonDraft_Handler,
+			Handler:    _Project_AbandonDraft_Handler,
 		},
 		{
 			MethodName: "Land",
-			Handler:    _Repo_Land_Handler,
+			Handler:    _Project_Land_Handler,
 		},
 		{
 			MethodName: "CommitAndLand",
-			Handler:    _Repo_CommitAndLand_Handler,
+			Handler:    _Project_CommitAndLand_Handler,
 		},
 		{
 			MethodName: "Log",
-			Handler:    _Repo_Log_Handler,
+			Handler:    _Project_Log_Handler,
 		},
 		{
 			MethodName: "Blame",
-			Handler:    _Repo_Blame_Handler,
+			Handler:    _Project_Blame_Handler,
 		},
 		{
 			MethodName: "Diff",
-			Handler:    _Repo_Diff_Handler,
+			Handler:    _Project_Diff_Handler,
 		},
 		{
 			MethodName: "MergeFile",
-			Handler:    _Repo_MergeFile_Handler,
+			Handler:    _Project_MergeFile_Handler,
+		},
+		{
+			MethodName: "ListProjects",
+			Handler:    _Project_ListProjects_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "GetObjects",
-			Handler:       _Repo_GetObjects_Handler,
+			Handler:       _Project_GetObjects_Handler,
 			ServerStreams: true,
 		},
 		{
 			StreamName:    "UploadBlobs",
-			Handler:       _Repo_UploadBlobs_Handler,
+			Handler:       _Project_UploadBlobs_Handler,
 			ClientStreams: true,
 		},
 	},
@@ -654,21 +696,30 @@ var Repo_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	Admin_WhoAmI_FullMethodName       = "/sgit.v1.Admin/WhoAmI"
-	Admin_CreateRepo_FullMethodName   = "/sgit.v1.Admin/CreateRepo"
-	Admin_ImportRepo_FullMethodName   = "/sgit.v1.Admin/ImportRepo"
-	Admin_RepoStatus_FullMethodName   = "/sgit.v1.Admin/RepoStatus"
-	Admin_ListRepos_FullMethodName    = "/sgit.v1.Admin/ListRepos"
-	Admin_CreateToken_FullMethodName  = "/sgit.v1.Admin/CreateToken"
-	Admin_RevokeToken_FullMethodName  = "/sgit.v1.Admin/RevokeToken"
-	Admin_GrantACL_FullMethodName     = "/sgit.v1.Admin/GrantACL"
-	Admin_RevokeACL_FullMethodName    = "/sgit.v1.Admin/RevokeACL"
-	Admin_ListUsers_FullMethodName    = "/sgit.v1.Admin/ListUsers"
-	Admin_SetUserAdmin_FullMethodName = "/sgit.v1.Admin/SetUserAdmin"
-	Admin_DeleteUser_FullMethodName   = "/sgit.v1.Admin/DeleteUser"
-	Admin_ListTokens_FullMethodName   = "/sgit.v1.Admin/ListTokens"
-	Admin_ListACL_FullMethodName      = "/sgit.v1.Admin/ListACL"
-	Admin_DeleteRepo_FullMethodName   = "/sgit.v1.Admin/DeleteRepo"
+	Admin_WhoAmI_FullMethodName             = "/sgit.v1.Admin/WhoAmI"
+	Admin_CreateRepo_FullMethodName         = "/sgit.v1.Admin/CreateRepo"
+	Admin_ImportRepo_FullMethodName         = "/sgit.v1.Admin/ImportRepo"
+	Admin_RepoStatus_FullMethodName         = "/sgit.v1.Admin/RepoStatus"
+	Admin_ListRepos_FullMethodName          = "/sgit.v1.Admin/ListRepos"
+	Admin_CreateToken_FullMethodName        = "/sgit.v1.Admin/CreateToken"
+	Admin_RevokeToken_FullMethodName        = "/sgit.v1.Admin/RevokeToken"
+	Admin_GrantACL_FullMethodName           = "/sgit.v1.Admin/GrantACL"
+	Admin_RevokeACL_FullMethodName          = "/sgit.v1.Admin/RevokeACL"
+	Admin_ListUsers_FullMethodName          = "/sgit.v1.Admin/ListUsers"
+	Admin_SetUserAdmin_FullMethodName       = "/sgit.v1.Admin/SetUserAdmin"
+	Admin_DeleteUser_FullMethodName         = "/sgit.v1.Admin/DeleteUser"
+	Admin_ListTokens_FullMethodName         = "/sgit.v1.Admin/ListTokens"
+	Admin_ListACL_FullMethodName            = "/sgit.v1.Admin/ListACL"
+	Admin_DeleteRepo_FullMethodName         = "/sgit.v1.Admin/DeleteRepo"
+	Admin_CreateProject_FullMethodName      = "/sgit.v1.Admin/CreateProject"
+	Admin_MountProject_FullMethodName       = "/sgit.v1.Admin/MountProject"
+	Admin_UnmountProject_FullMethodName     = "/sgit.v1.Admin/UnmountProject"
+	Admin_AddProjectAlias_FullMethodName    = "/sgit.v1.Admin/AddProjectAlias"
+	Admin_RemoveProjectAlias_FullMethodName = "/sgit.v1.Admin/RemoveProjectAlias"
+	Admin_RenameProject_FullMethodName      = "/sgit.v1.Admin/RenameProject"
+	Admin_ListProjects_FullMethodName       = "/sgit.v1.Admin/ListProjects"
+	Admin_GetProject_FullMethodName         = "/sgit.v1.Admin/GetProject"
+	Admin_DeleteProject_FullMethodName      = "/sgit.v1.Admin/DeleteProject"
 )
 
 // AdminClient is the client API for Admin service.
@@ -692,6 +743,15 @@ type AdminClient interface {
 	ListTokens(ctx context.Context, in *ListTokensRequest, opts ...grpc.CallOption) (*ListTokensResponse, error)
 	ListACL(ctx context.Context, in *ListACLRequest, opts ...grpc.CallOption) (*ListACLResponse, error)
 	DeleteRepo(ctx context.Context, in *DeleteRepoRequest, opts ...grpc.CallOption) (*DeleteRepoResponse, error)
+	CreateProject(ctx context.Context, in *CreateProjectRequest, opts ...grpc.CallOption) (*ProjectInfo, error)
+	MountProject(ctx context.Context, in *MountProjectRequest, opts ...grpc.CallOption) (*ProjectInfo, error)
+	UnmountProject(ctx context.Context, in *UnmountProjectRequest, opts ...grpc.CallOption) (*ProjectInfo, error)
+	AddProjectAlias(ctx context.Context, in *AddProjectAliasRequest, opts ...grpc.CallOption) (*ProjectInfo, error)
+	RemoveProjectAlias(ctx context.Context, in *RemoveProjectAliasRequest, opts ...grpc.CallOption) (*ProjectInfo, error)
+	RenameProject(ctx context.Context, in *RenameProjectRequest, opts ...grpc.CallOption) (*ProjectInfo, error)
+	ListProjects(ctx context.Context, in *AdminListProjectsRequest, opts ...grpc.CallOption) (*AdminListProjectsResponse, error)
+	GetProject(ctx context.Context, in *GetProjectRequest, opts ...grpc.CallOption) (*ProjectInfo, error)
+	DeleteProject(ctx context.Context, in *DeleteProjectRequest, opts ...grpc.CallOption) (*DeleteProjectResponse, error)
 }
 
 type adminClient struct {
@@ -852,6 +912,96 @@ func (c *adminClient) DeleteRepo(ctx context.Context, in *DeleteRepoRequest, opt
 	return out, nil
 }
 
+func (c *adminClient) CreateProject(ctx context.Context, in *CreateProjectRequest, opts ...grpc.CallOption) (*ProjectInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ProjectInfo)
+	err := c.cc.Invoke(ctx, Admin_CreateProject_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminClient) MountProject(ctx context.Context, in *MountProjectRequest, opts ...grpc.CallOption) (*ProjectInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ProjectInfo)
+	err := c.cc.Invoke(ctx, Admin_MountProject_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminClient) UnmountProject(ctx context.Context, in *UnmountProjectRequest, opts ...grpc.CallOption) (*ProjectInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ProjectInfo)
+	err := c.cc.Invoke(ctx, Admin_UnmountProject_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminClient) AddProjectAlias(ctx context.Context, in *AddProjectAliasRequest, opts ...grpc.CallOption) (*ProjectInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ProjectInfo)
+	err := c.cc.Invoke(ctx, Admin_AddProjectAlias_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminClient) RemoveProjectAlias(ctx context.Context, in *RemoveProjectAliasRequest, opts ...grpc.CallOption) (*ProjectInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ProjectInfo)
+	err := c.cc.Invoke(ctx, Admin_RemoveProjectAlias_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminClient) RenameProject(ctx context.Context, in *RenameProjectRequest, opts ...grpc.CallOption) (*ProjectInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ProjectInfo)
+	err := c.cc.Invoke(ctx, Admin_RenameProject_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminClient) ListProjects(ctx context.Context, in *AdminListProjectsRequest, opts ...grpc.CallOption) (*AdminListProjectsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdminListProjectsResponse)
+	err := c.cc.Invoke(ctx, Admin_ListProjects_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminClient) GetProject(ctx context.Context, in *GetProjectRequest, opts ...grpc.CallOption) (*ProjectInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ProjectInfo)
+	err := c.cc.Invoke(ctx, Admin_GetProject_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminClient) DeleteProject(ctx context.Context, in *DeleteProjectRequest, opts ...grpc.CallOption) (*DeleteProjectResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteProjectResponse)
+	err := c.cc.Invoke(ctx, Admin_DeleteProject_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AdminServer is the server API for Admin service.
 // All implementations must embed UnimplementedAdminServer
 // for forward compatibility.
@@ -873,6 +1023,15 @@ type AdminServer interface {
 	ListTokens(context.Context, *ListTokensRequest) (*ListTokensResponse, error)
 	ListACL(context.Context, *ListACLRequest) (*ListACLResponse, error)
 	DeleteRepo(context.Context, *DeleteRepoRequest) (*DeleteRepoResponse, error)
+	CreateProject(context.Context, *CreateProjectRequest) (*ProjectInfo, error)
+	MountProject(context.Context, *MountProjectRequest) (*ProjectInfo, error)
+	UnmountProject(context.Context, *UnmountProjectRequest) (*ProjectInfo, error)
+	AddProjectAlias(context.Context, *AddProjectAliasRequest) (*ProjectInfo, error)
+	RemoveProjectAlias(context.Context, *RemoveProjectAliasRequest) (*ProjectInfo, error)
+	RenameProject(context.Context, *RenameProjectRequest) (*ProjectInfo, error)
+	ListProjects(context.Context, *AdminListProjectsRequest) (*AdminListProjectsResponse, error)
+	GetProject(context.Context, *GetProjectRequest) (*ProjectInfo, error)
+	DeleteProject(context.Context, *DeleteProjectRequest) (*DeleteProjectResponse, error)
 	mustEmbedUnimplementedAdminServer()
 }
 
@@ -927,6 +1086,33 @@ func (UnimplementedAdminServer) ListACL(context.Context, *ListACLRequest) (*List
 }
 func (UnimplementedAdminServer) DeleteRepo(context.Context, *DeleteRepoRequest) (*DeleteRepoResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteRepo not implemented")
+}
+func (UnimplementedAdminServer) CreateProject(context.Context, *CreateProjectRequest) (*ProjectInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateProject not implemented")
+}
+func (UnimplementedAdminServer) MountProject(context.Context, *MountProjectRequest) (*ProjectInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method MountProject not implemented")
+}
+func (UnimplementedAdminServer) UnmountProject(context.Context, *UnmountProjectRequest) (*ProjectInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method UnmountProject not implemented")
+}
+func (UnimplementedAdminServer) AddProjectAlias(context.Context, *AddProjectAliasRequest) (*ProjectInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method AddProjectAlias not implemented")
+}
+func (UnimplementedAdminServer) RemoveProjectAlias(context.Context, *RemoveProjectAliasRequest) (*ProjectInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemoveProjectAlias not implemented")
+}
+func (UnimplementedAdminServer) RenameProject(context.Context, *RenameProjectRequest) (*ProjectInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method RenameProject not implemented")
+}
+func (UnimplementedAdminServer) ListProjects(context.Context, *AdminListProjectsRequest) (*AdminListProjectsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListProjects not implemented")
+}
+func (UnimplementedAdminServer) GetProject(context.Context, *GetProjectRequest) (*ProjectInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetProject not implemented")
+}
+func (UnimplementedAdminServer) DeleteProject(context.Context, *DeleteProjectRequest) (*DeleteProjectResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteProject not implemented")
 }
 func (UnimplementedAdminServer) mustEmbedUnimplementedAdminServer() {}
 func (UnimplementedAdminServer) testEmbeddedByValue()               {}
@@ -1219,6 +1405,168 @@ func _Admin_DeleteRepo_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Admin_CreateProject_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateProjectRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServer).CreateProject(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Admin_CreateProject_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServer).CreateProject(ctx, req.(*CreateProjectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Admin_MountProject_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MountProjectRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServer).MountProject(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Admin_MountProject_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServer).MountProject(ctx, req.(*MountProjectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Admin_UnmountProject_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UnmountProjectRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServer).UnmountProject(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Admin_UnmountProject_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServer).UnmountProject(ctx, req.(*UnmountProjectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Admin_AddProjectAlias_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AddProjectAliasRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServer).AddProjectAlias(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Admin_AddProjectAlias_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServer).AddProjectAlias(ctx, req.(*AddProjectAliasRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Admin_RemoveProjectAlias_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemoveProjectAliasRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServer).RemoveProjectAlias(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Admin_RemoveProjectAlias_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServer).RemoveProjectAlias(ctx, req.(*RemoveProjectAliasRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Admin_RenameProject_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RenameProjectRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServer).RenameProject(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Admin_RenameProject_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServer).RenameProject(ctx, req.(*RenameProjectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Admin_ListProjects_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdminListProjectsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServer).ListProjects(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Admin_ListProjects_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServer).ListProjects(ctx, req.(*AdminListProjectsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Admin_GetProject_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetProjectRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServer).GetProject(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Admin_GetProject_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServer).GetProject(ctx, req.(*GetProjectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Admin_DeleteProject_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteProjectRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServer).DeleteProject(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Admin_DeleteProject_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServer).DeleteProject(ctx, req.(*DeleteProjectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Admin_ServiceDesc is the grpc.ServiceDesc for Admin service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1285,6 +1633,42 @@ var Admin_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteRepo",
 			Handler:    _Admin_DeleteRepo_Handler,
+		},
+		{
+			MethodName: "CreateProject",
+			Handler:    _Admin_CreateProject_Handler,
+		},
+		{
+			MethodName: "MountProject",
+			Handler:    _Admin_MountProject_Handler,
+		},
+		{
+			MethodName: "UnmountProject",
+			Handler:    _Admin_UnmountProject_Handler,
+		},
+		{
+			MethodName: "AddProjectAlias",
+			Handler:    _Admin_AddProjectAlias_Handler,
+		},
+		{
+			MethodName: "RemoveProjectAlias",
+			Handler:    _Admin_RemoveProjectAlias_Handler,
+		},
+		{
+			MethodName: "RenameProject",
+			Handler:    _Admin_RenameProject_Handler,
+		},
+		{
+			MethodName: "ListProjects",
+			Handler:    _Admin_ListProjects_Handler,
+		},
+		{
+			MethodName: "GetProject",
+			Handler:    _Admin_GetProject_Handler,
+		},
+		{
+			MethodName: "DeleteProject",
+			Handler:    _Admin_DeleteProject_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
