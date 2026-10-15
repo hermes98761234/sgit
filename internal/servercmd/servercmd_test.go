@@ -188,3 +188,12 @@ func TestDatabaseFilesOwnerOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestHelpExitsZero(t *testing.T) {
+	for _, arg := range []string{"--help", "-h", "help"} {
+		code, out, errs := run(t, arg)
+		if code != 0 || !strings.Contains(out, "usage: sg-server") || strings.Contains(errs, "unknown") {
+			t.Errorf("%s: exit %d, stdout %q, stderr %q", arg, code, out, errs)
+		}
+	}
+}

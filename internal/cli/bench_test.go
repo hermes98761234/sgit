@@ -81,7 +81,7 @@ func BenchmarkProjectLand(b *testing.B) {
 func BenchmarkProjectLog(b *testing.B) {
 	benchMounts(b, func(b *testing.B, h *harness) {
 		var entries []json.RawMessage
-		if err := json.Unmarshal([]byte(h.ok(b.TempDir(), "log", "--project", "big", "-n", "100", "--json")), &entries); err != nil || len(entries) != 100 {
+		if err := json.Unmarshal(unwrap(b, h.ok(b.TempDir(), "log", "--project", "big", "-n", "100", "--json"), "commits"), &entries); err != nil || len(entries) != 100 {
 			b.Fatalf("log -n 100: %d entries, %v", len(entries), err)
 		}
 		for b.Loop() {

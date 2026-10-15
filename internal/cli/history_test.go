@@ -21,7 +21,7 @@ func TestLogBlameCatFromSubdirectory(t *testing.T) {
 		Author  string `json:"author"`
 		Subject string `json:"subject"`
 	}
-	if err := json.Unmarshal([]byte(h.ok(src, "log", "x.go", "--json")), &log); err != nil || len(log) != 2 || log[0].Subject != "extend x" || log[1].Subject != "seed" {
+	if err := json.Unmarshal(unwrap(t, h.ok(src, "log", "x.go", "--json"), "commits"), &log); err != nil || len(log) != 2 || log[0].Subject != "extend x" || log[1].Subject != "seed" {
 		t.Fatalf("log x.go = %+v (%v)", log, err)
 	}
 	var blame []struct {
@@ -29,14 +29,14 @@ func TestLogBlameCatFromSubdirectory(t *testing.T) {
 		Line int    `json:"line"`
 		Text string `json:"text"`
 	}
-	if err := json.Unmarshal([]byte(h.ok(src, "blame", "x.go", "--json")), &blame); err != nil || len(blame) != 2 || blame[1].Text != "more" || blame[1].Sha != log[0].Sha {
+	if err := json.Unmarshal(unwrap(t, h.ok(src, "blame", "x.go", "--json"), "lines"), &blame); err != nil || len(blame) != 2 || blame[1].Text != "more" || blame[1].Sha != log[0].Sha {
 		t.Fatalf("blame = %+v (%v)", blame, err)
 	}
 	if got := h.ok(src, "cat", "main:src/x.go"); got != "X\nmore\n" {
 		t.Fatalf("cat = %q", got)
 	}
 	outside := t.TempDir()
-	if err := json.Unmarshal([]byte(h.ok(outside, "log", "--project", "web", "--json")), &log); err != nil || len(log) != 3 {
+	if err := json.Unmarshal(unwrap(t, h.ok(outside, "log", "--project", "web", "--json"), "commits"), &log); err != nil || len(log) != 3 {
 		t.Fatalf("log --project = %+v (%v)", log, err)
 	}
 	if got := h.ok(outside, "cat", "--project", "web", ":a.txt"); got != "A\n" {
@@ -57,10 +57,10 @@ func TestSparseAddRm(t *testing.T) {
 	h.ok(root, "checkout", "web", "--path", "src")
 	w := filepath.Join(root, "web")
 	var list []string
-	if err := json.Unmarshal([]byte(h.ok(w, "sparse", "list", "--json")), &list); err != nil || len(list) != 1 || list[0] != "src" {
+	if err := json.Unmarshal(unwrap(t, h.ok(w, "sparse", "list", "--json"), "sparse"), &list); err != nil || len(list) != 1 || list[0] != "src" {
 		t.Fatalf("list = %v (%v)", list, err)
 	}
-	if err := json.Unmarshal([]byte(h.ok(w, "sparse", "--json", "list")), &list); err != nil || len(list) != 1 || list[0] != "src" {
+	if err := json.Unmarshal(unwrap(t, h.ok(w, "sparse", "--json", "list"), "sparse"), &list); err != nil || len(list) != 1 || list[0] != "src" {
 		t.Fatalf("sparse --json list = %v (%v)", list, err)
 	}
 	h.ok(w, "sparse", "add", "docs")
@@ -124,7 +124,7 @@ func TestSparseAddParentKeepsLocalEdits(t *testing.T) {
 		t.Fatal("a/c.txt not fetched")
 	}
 	var list []string
-	if err := json.Unmarshal([]byte(h.ok(w, "sparse", "list", "--json")), &list); err != nil || len(list) != 1 || list[0] != "a" {
+	if err := json.Unmarshal(unwrap(t, h.ok(w, "sparse", "list", "--json"), "sparse"), &list); err != nil || len(list) != 1 || list[0] != "a" {
 		t.Fatalf("list = %v (%v)", list, err)
 	}
 	if _, m := h.status(w); m["a/b/x.txt"] != "modified" {
@@ -146,7 +146,7 @@ func TestSparseAddBlockedByUntrackedFile(t *testing.T) {
 		t.Fatalf("file clobbered: %q", got)
 	}
 	var list []string
-	if err := json.Unmarshal([]byte(h.ok(w, "sparse", "list", "--json")), &list); err != nil || len(list) != 1 || list[0] != "src" {
+	if err := json.Unmarshal(unwrap(t, h.ok(w, "sparse", "list", "--json"), "sparse"), &list); err != nil || len(list) != 1 || list[0] != "src" {
 		t.Fatalf("list = %v (%v)", list, err)
 	}
 }
@@ -165,7 +165,7 @@ func TestSparseAddBlockedByFileAtAncestor(t *testing.T) {
 		t.Fatalf("file clobbered: %q", got)
 	}
 	var list []string
-	if err := json.Unmarshal([]byte(h.ok(w, "sparse", "list", "--json")), &list); err != nil || len(list) != 1 || list[0] != "src" {
+	if err := json.Unmarshal(unwrap(t, h.ok(w, "sparse", "list", "--json"), "sparse"), &list); err != nil || len(list) != 1 || list[0] != "src" {
 		t.Fatalf("list = %v (%v)", list, err)
 	}
 }
@@ -213,7 +213,7 @@ func TestSparseRmNarrowsBeforeDeleting(t *testing.T) {
 		t.Fatalf("sparse rm with an undeletable file: exit %d", code)
 	}
 	var list []string
-	if err := json.Unmarshal([]byte(h.ok(w, "sparse", "list", "--json")), &list); err != nil || len(list) != 1 || list[0] != "src" {
+	if err := json.Unmarshal(unwrap(t, h.ok(w, "sparse", "list", "--json"), "sparse"), &list); err != nil || len(list) != 1 || list[0] != "src" {
 		t.Fatalf("sparse set must be narrowed first: %v (%v)", list, err)
 	}
 	if _, m := h.status(w); len(m) != 0 {
@@ -230,7 +230,7 @@ func TestLogAttachedCount(t *testing.T) {
 	for _, args := range [][]string{{"-n1"}, {"-1"}, {"-n", "1"}} {
 		var log []struct{ Subject string }
 		out := h.ok(w, append([]string{"log", "--json"}, args...)...)
-		if err := json.Unmarshal([]byte(out), &log); err != nil || len(log) != 1 || log[0].Subject != "second" {
+		if err := json.Unmarshal(unwrap(t, out, "commits"), &log); err != nil || len(log) != 1 || log[0].Subject != "second" {
 			t.Fatalf("log %v = %+v (%v)", args, log, err)
 		}
 	}

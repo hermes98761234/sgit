@@ -33,7 +33,9 @@ func cmdLogin(ctx context.Context, a *app, args []string) error {
 	}
 	tok := strings.TrimSpace(*token)
 	if tok == "" {
-		fmt.Fprint(a.io.Stderr, "token: ")
+		if isTerminal(a.io.Stdin) {
+			fmt.Fprint(a.io.Stderr, "token: ")
+		}
 		line, _ := bufio.NewReader(a.io.Stdin).ReadString('\n')
 		if tok = strings.TrimSpace(line); tok == "" {
 			return exitf(ExitError, "no token given (use --token, $SG_TOKEN or stdin)")
@@ -66,4 +68,14 @@ func cmdLogin(ctx context.Context, a *app, args []string) error {
 	return a.emit(map[string]any{"server": server, "user": who.User, "admin": who.Admin}, func(w io.Writer) {
 		fmt.Fprintf(w, "logged in to %s as %s\n", server, who.User)
 	})
+}
+
+// isTerminal reports whether r is an interactive terminal.
+func isTerminal(r io.Reader) bool {
+	f, ok := r.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }

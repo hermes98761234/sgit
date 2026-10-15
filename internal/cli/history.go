@@ -93,7 +93,7 @@ func cmdLog(ctx context.Context, a *app, args []string) error {
 	for _, e := range resp.Entries {
 		items = append(items, item{e.Sha, e.AuthorName, e.AuthorEmail, time.Unix(e.Time, 0).UTC().Format(time.RFC3339), e.Subject})
 	}
-	return a.emit(items, func(out io.Writer) {
+	return a.emit(map[string]any{"commits": items}, func(out io.Writer) {
 		for _, it := range items {
 			fmt.Fprintf(out, "%s %s %-12s %s\n", short(it.Sha), it.Time[:10], it.Author, it.Subject)
 		}
@@ -135,7 +135,7 @@ func cmdBlame(ctx context.Context, a *app, args []string) error {
 	for _, l := range resp.Lines {
 		items = append(items, item{l.Sha, l.Author, l.Line, string(l.Text)})
 	}
-	return a.emit(items, func(out io.Writer) {
+	return a.emit(map[string]any{"lines": items}, func(out io.Writer) {
 		for _, it := range items {
 			fmt.Fprintf(out, "%s (%-12s %4d) %s\n", short(it.Sha), it.Author, it.Line, it.Text)
 		}

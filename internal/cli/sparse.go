@@ -43,7 +43,7 @@ func cmdSparse(ctx context.Context, a *app, args []string) error {
 	switch sub {
 	case "list":
 		list := append([]string{}, w.Config.Sparse...)
-		return a.emit(list, func(out io.Writer) {
+		return a.emit(map[string]any{"sparse": list}, func(out io.Writer) {
 			if len(list) == 0 {
 				fmt.Fprintln(out, "(full checkout)")
 			}

@@ -137,7 +137,7 @@ func TestDraftsShowAbandon(t *testing.T) {
 		Status string `json:"status"`
 		Title  string `json:"title"`
 	}
-	if err := json.Unmarshal([]byte(h.ok(w, "drafts", "--mine", "--json")), &list); err != nil || len(list) != 1 || list[0].ID != id || list[0].Title != "show me" {
+	if err := json.Unmarshal(unwrap(t, h.ok(w, "drafts", "--mine", "--json"), "drafts"), &list); err != nil || len(list) != 1 || list[0].ID != id || list[0].Title != "show me" {
 		t.Fatalf("drafts = %+v (%v)", list, err)
 	}
 	if out := h.ok(w, "show", id); !strings.Contains(out, "+shown") || !strings.Contains(out, "show me") {

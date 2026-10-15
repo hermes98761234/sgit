@@ -55,6 +55,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	switch args[0] {
+	case "help", "-h", "--help":
+		fmt.Fprint(stdout, usage)
+		return 0
 	case "init":
 		return runInit(ctx, args[1:], stdout, stderr)
 	case "serve":

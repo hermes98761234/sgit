@@ -71,6 +71,38 @@ func commandTable() []command {
 	}
 }
 
+// groupCommands take a subcommand as their first argument.
+var groupCommands = map[string]bool{"repo": true, "project": true, "user": true, "token": true, "acl": true, "sparse": true}
+
+// hoistGlobalFlags moves --server and --json given before the command to
+// the end of the arguments, where the command's own flag parsing reads them:
+// `sg --server S repo list` is `sg repo list --server S`.
+func hoistGlobalFlags(args []string) ([]string, error) {
+	var flags []string
+	i := 0
+	for ; i < len(args) && strings.HasPrefix(args[i], "-") && args[i] != "-h" && args[i] != "--help"; i++ {
+		name, _, hasValue := strings.Cut(strings.TrimLeft(args[i], "-"), "=")
+		switch {
+		case name == "json":
+			flags = append(flags, args[i])
+		case name == "server" && hasValue:
+			flags = append(flags, args[i])
+		case name == "server" && i+1 < len(args):
+			flags = append(flags, args[i], args[i+1])
+			i++
+		default:
+			return nil, fmt.Errorf("unknown flag %q before the command (only --server and --json may come first)", args[i])
+		}
+	}
+	if len(flags) == 0 {
+		return args, nil
+	}
+	if i == len(args) {
+		return nil, fmt.Errorf("no command after %s", strings.Join(flags, " "))
+	}
+	return append(append([]string{}, args[i:]...), flags...), nil
+}
+
 // Run executes one sg command and returns the process exit code.
 func Run(ctx context.Context, args []string, stdio IO) int {
 	if stdio.Dir == "" {
@@ -90,6 +122,12 @@ func Run(ctx context.Context, args []string, stdio IO) int {
 		usage(stdio.Stdout)
 		return ExitOK
 	}
+	args, err := hoistGlobalFlags(args)
+	if err != nil {
+		fmt.Fprintf(stdio.Stderr, "sg: %v\n\n", err)
+		usage(stdio.Stderr)
+		return ExitError
+	}
 	table := commandTable()
 	idx := -1
 	for i := range table {
@@ -102,7 +140,11 @@ func Run(ctx context.Context, args []string, stdio IO) int {
 		usage(stdio.Stderr)
 		return ExitError
 	}
-	err := table[idx].run(ctx, a, args[1:])
+	if groupCommands[args[0]] && len(args) > 1 && (args[1] == "help" || args[1] == "-h" || args[1] == "--help") {
+		fmt.Fprintf(stdio.Stdout, "usage: sg %s\n", table[idx].usage)
+		return ExitOK
+	}
+	err = table[idx].run(ctx, a, args[1:])
 	if err == nil || errors.Is(err, flag.ErrHelp) {
 		return ExitOK
 	}

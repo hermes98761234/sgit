@@ -53,7 +53,7 @@ func cmdDrafts(ctx context.Context, a *app, args []string) error {
 	for _, d := range resp.Drafts {
 		items = append(items, item{d.Id, d.Version, d.Status, d.Owner, d.Title, d.Head, time.Unix(d.UpdatedAt, 0).UTC().Format(time.RFC3339)})
 	}
-	return a.emit(items, func(out io.Writer) {
+	return a.emit(map[string]any{"drafts": items}, func(out io.Writer) {
 		if len(items) == 0 {
 			fmt.Fprintln(out, "no drafts")
 		}
