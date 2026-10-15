@@ -232,6 +232,7 @@ func runServe(ctx context.Context, args []string, _ io.Writer, stderr io.Writer)
 		select {
 		case <-done:
 		case <-time.After(5 * time.Second):
+			srv.Shutdown() // a detached project mount would not see g.Stop's cancel
 			g.Stop()
 			<-done
 		}

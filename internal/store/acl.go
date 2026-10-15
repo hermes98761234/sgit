@@ -183,7 +183,13 @@ func (s *Store) GetDraft(ctx context.Context, projectID int64, id string) (Draft
 }
 
 func (s *Store) UpdateDraft(ctx context.Context, d Draft) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE drafts SET title=?,base=?,head=?,version=?,status=?,landed_as=?,updated_at=? WHERE project_id=? AND id=?`,
+	return updateDraft(ctx, s.db, d)
+}
+
+func updateDraft(ctx context.Context, db interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}, d Draft) error {
+	res, err := db.ExecContext(ctx, `UPDATE drafts SET title=?,base=?,head=?,version=?,status=?,landed_as=?,updated_at=? WHERE project_id=? AND id=?`,
 		d.Title, d.Base, d.Head, d.Version, d.Status, d.LandedAs, d.UpdatedAt.Unix(), d.ProjectID, d.ID)
 	if err != nil {
 		return err

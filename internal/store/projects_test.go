@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -306,5 +307,35 @@ func TestDeleteProjectRowsCountsDraftsAndGrants(t *testing.T) {
 	}
 	if _, _, err := s.DeleteProjectRows(ctx, p.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("delete twice = %v", err)
+	}
+}
+
+// RecordProjectCommitsLanded stores the commits and the landed draft in one
+// transaction; a missing draft row does not cost the commits.
+func TestRecordProjectCommitsLanded(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	u, _ := s.CreateUser(ctx, "alice", "a@x", false)
+	p, _ := s.CreateProject(ctx, "web", t0)
+	if err := s.InsertDraft(ctx, Draft{ID: "aaaaaaaa", ProjectID: p.ID, OwnerID: u.ID, Status: DraftOpen, CreatedAt: t0, UpdatedAt: t0}); err != nil {
+		t.Fatal(err)
+	}
+	c1 := ProjectCommit{SHA: strings.Repeat("1", 40), Seq: 1, Kind: KindLayout, Sources: map[string]string{}}
+	d := Draft{ID: "aaaaaaaa", ProjectID: p.ID, Status: DraftLanded, LandedAs: c1.SHA, UpdatedAt: t0}
+	marked, err := s.RecordProjectCommitsLanded(ctx, p.ID, []ProjectCommit{c1}, map[string]string{}, d)
+	if err != nil || !marked {
+		t.Fatalf("RecordProjectCommitsLanded = %v, %v", marked, err)
+	}
+	if got, _ := s.GetDraft(ctx, p.ID, "aaaaaaaa"); got.Status != DraftLanded || got.LandedAs != c1.SHA {
+		t.Fatalf("draft = %+v", got)
+	}
+	c2 := ProjectCommit{SHA: strings.Repeat("2", 40), Seq: 2, Kind: KindLayout, Sources: map[string]string{}}
+	d.ID = "bbbbbbbb" // no such draft
+	marked, err = s.RecordProjectCommitsLanded(ctx, p.ID, []ProjectCommit{c2}, map[string]string{}, d)
+	if err != nil || marked {
+		t.Fatalf("RecordProjectCommitsLanded without the draft = %v, %v", marked, err)
+	}
+	if head, seq, _ := s.ProjectHead(ctx, p.ID); head != c2.SHA || seq != 2 {
+		t.Fatalf("head = %s %d, want the commit recorded", head, seq)
 	}
 }

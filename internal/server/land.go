@@ -255,15 +255,21 @@ func (r *projectService) landDraft(ctx context.Context, pr *proj, u store.User, 
 	if !landedAny {
 		return nil, status.Errorf(codes.FailedPrecondition, "draft %s changes are already on main", id)
 	}
-	// 5. Catch up and answer with the new project head.
-	head, err := r.s.projects.CatchUp(ctx, pr.h)
+	// 5. Catch up and answer with the new project head. The draft is marked
+	// landed in the transaction that records the new project commits; only
+	// when that recorded nothing (a concurrent catch-up got there first) is
+	// it updated on its own.
+	d.Status, d.UpdatedAt = store.DraftLanded, r.s.cfg.Now()
+	head, marked, err := r.s.projects.CatchUpLanded(ctx, pr.h, d)
 	if err != nil {
 		return nil, r.s.hide(ctx, err)
 	}
-	bg := context.WithoutCancel(ctx)
-	d.Status, d.LandedAs, d.UpdatedAt = store.DraftLanded, head, r.s.cfg.Now()
-	if err := r.s.store.UpdateDraft(bg, d); err != nil {
-		r.s.log.ErrorContext(bg, "landed but failed to mark draft", "draft", d.ID, "err", err)
+	if !marked {
+		bg := context.WithoutCancel(ctx)
+		d.LandedAs = head
+		if err := r.s.store.UpdateDraft(bg, d); err != nil {
+			r.s.log.ErrorContext(bg, "landed but failed to mark draft", "draft", d.ID, "err", err)
+		}
 	}
 	parent := ""
 	if hc, err := pr.h.Git.ReadCommit(ctx, head); err == nil && hc.Tree == dc.Tree && len(hc.Parents) == 1 {
@@ -285,16 +291,7 @@ func (r *projectService) landGroup(ctx context.Context, pr *proj, d store.Draft,
 	if err != nil {
 		return nil, r.s.hide(ctx, err)
 	}
-	var blobs []string
-	for _, c := range g.source {
-		if c.Op != gitx.OpDelete {
-			blobs = append(blobs, c.BlobSHA)
-		}
-	}
-	if _, err := gitx.CopyObjects(ctx, pr.h.Git, rh.git, blobs, nil); err != nil {
-		return nil, r.s.hide(ctx, err)
-	}
-	tree, err := rh.git.BuildTree(ctx, srcBase, g.source)
+	tree, err := r.sourceTree(ctx, pr, d, rh, srcBase, g)
 	if err != nil {
 		return nil, r.s.hide(ctx, err)
 	}
@@ -323,6 +320,76 @@ func (r *projectService) landGroup(ctx context.Context, pr *proj, d store.Draft,
 		conflicts[i].Path = p
 	}
 	return conflicts, nil
+}
+
+// sourceTree returns the tree of the source commit for g: srcBase's tree
+// with g's changes applied, after copying the objects it needs into the
+// source repo. The project tree at d.Base holds, at each touched mount path,
+// exactly srcBase's folder (checkLayout), so the draft head's subtree there is
+// that folder with the changes applied; it is spliced in place of the folder,
+// which rewrites only the directories on the folder's path. When two touched
+// mounts map to nesting or equal folders the splice is ambiguous, and the
+// changes are applied to a full index instead (BuildTree); both give the same
+// tree.
+func (r *projectService) sourceTree(ctx context.Context, pr *proj, d store.Draft, rh *repoHandle, srcBase string, g *repoChanges) (string, error) {
+	ms := make([]store.Mount, 0, len(g.mounts))
+	for _, p := range g.mounts {
+		i := slices.IndexFunc(pr.mounts, func(m store.Mount) bool { return m.Path == p })
+		ms = append(ms, pr.mounts[i])
+	}
+	nest := func(a, b string) bool {
+		return a == "." || b == "." || a == b || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
+	}
+	for i := range ms {
+		for _, o := range ms[i+1:] {
+			if nest(ms[i].Folder, o.Folder) {
+				return r.buildSourceTree(ctx, pr, rh, srcBase, g)
+			}
+		}
+	}
+	paths := make([]string, len(ms))
+	for i, m := range ms {
+		paths[i] = m.Path
+	}
+	sub, err := pr.h.Git.SubtreesMulti(ctx, []string{d.Base, d.Head}, paths)
+	if err != nil {
+		return "", err
+	}
+	var want, have []string
+	repl := map[string]string{}
+	for i, m := range ms {
+		base, head := sub[i][0], sub[i][1]
+		if head != "" && head != gitx.EmptyTree {
+			want = append(want, head)
+		}
+		if base != "" {
+			have = append(have, base)
+		}
+		repl[m.Folder] = head
+	}
+	// Only objects of the touched mounts (new in the draft) go to the source.
+	if _, err := gitx.CopyObjects(ctx, pr.h.Git, rh.git, want, have); err != nil {
+		return "", err
+	}
+	bc, err := rh.git.ReadCommit(ctx, srcBase)
+	if err != nil {
+		return "", err
+	}
+	return rh.git.SpliceTree(ctx, bc.Tree, repl)
+}
+
+// buildSourceTree applies g's source changes to srcBase with a full index.
+func (r *projectService) buildSourceTree(ctx context.Context, pr *proj, rh *repoHandle, srcBase string, g *repoChanges) (string, error) {
+	var blobs []string
+	for _, c := range g.source {
+		if c.Op != gitx.OpDelete {
+			blobs = append(blobs, c.BlobSHA)
+		}
+	}
+	if _, err := gitx.CopyObjects(ctx, pr.h.Git, rh.git, blobs, nil); err != nil {
+		return "", err
+	}
+	return rh.git.BuildTree(ctx, srcBase, g.source)
 }
 
 // checkLayout refuses a draft whose project base was made under a different

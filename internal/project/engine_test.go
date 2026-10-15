@@ -681,3 +681,83 @@ func TestGetRepairsLaggingMainRef(t *testing.T) {
 		t.Fatalf("main after Get = %s, want the recorded head %s", got, head)
 	}
 }
+
+// Stop (server shutdown) ends a first mount's detached import instead of
+// letting it run up to MountTimeout. The part already recorded is kept and
+// the next catch-up finishes it, with the same history as an uninterrupted
+// import.
+func TestStopInterruptsFirstMountResumably(t *testing.T) {
+	defer func(n int) { catchUpChunk = n }(catchUpChunk)
+	catchUpChunk = 5
+	e := newEnv(t)
+	e.repo("core")
+	e.history("core", 0, 300)
+	ref := e.project("ref")
+	e.mount(ref, "lib", "core", "src")
+	h := e.project("web")
+	bg := context.Background()
+	done := make(chan struct{})
+	go func() { // stop once the first chunk is recorded
+		defer close(done)
+		for {
+			if _, seq, err := e.st.ProjectHead(bg, h.ID); err == nil && seq > 0 {
+				e.eng.Stop()
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	_, err := e.eng.Mount(bg, h, store.Mount{Path: "lib", Repo: "core", Folder: "src"}, admin)
+	<-done
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Mount stopped part way = %v, want context.Canceled", err)
+	}
+	head1, seq1 := must2(e.st.ProjectHead(bg, h.ID))
+	if seq1 == 0 || seq1 >= 300 {
+		t.Fatalf("after the stop seq = %d, want part of 300", seq1)
+	}
+	if ms := must(e.st.Mounts(bg, h.ID)); len(ms) != 1 {
+		t.Fatalf("mounts after the stop = %+v, want the mount kept", ms)
+	}
+	if got := must(h.Git.ReadRef(bg, gitx.MainRef)); got != head1 {
+		t.Fatalf("project main %s, recorded head %s", got, head1)
+	}
+	if _, err := e.eng.Mount(bg, h, store.Mount{Path: "x", Repo: "core", Folder: "src"}, admin); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Mount after Stop = %v, want context.Canceled", err)
+	}
+
+	// A restarted server (new engine, same data) resumes the import.
+	e.eng.CloseAll()
+	eng2 := New(Config{Root: filepath.Dir(h.Git.Dir()), Store: e.st, Sources: e.srcs, Now: e.now})
+	t.Cleanup(eng2.CloseAll)
+	h2 := must(eng2.Get(bg, h.ID))
+	if _, err := eng2.CatchUp(bg, h2); err != nil {
+		t.Fatal(err)
+	}
+	got := must(h2.Git.Log(bg, "main", "", 1000))
+	ref2 := must(eng2.Get(bg, ref.ID))
+	want := must(ref2.Git.Log(bg, "main", "", 1000))
+	if len(got) != 300 || !reflect.DeepEqual(got, want) {
+		t.Fatalf("resumed import has %d commits, uninterrupted %d (or they differ)", len(got), len(want))
+	}
+}
+
+// A first mount stopped before it recorded any commit is undone like any
+// other failed first mount, so a retry starts clean.
+func TestStopBeforeAnyCommitUndoesFirstMount(t *testing.T) {
+	e := newEnv(t)
+	e.repo("core")
+	e.history("core", 0, 3)
+	h := e.project("web")
+	e.eng.Stop()
+	bg := context.Background()
+	if _, err := e.eng.Mount(bg, h, store.Mount{Path: "lib", Repo: "core", Folder: "src"}, admin); err == nil {
+		t.Fatal("Mount after Stop succeeded")
+	}
+	if ms := must(e.st.Mounts(bg, h.ID)); len(ms) != 0 {
+		t.Fatalf("mounts = %+v, want none", ms)
+	}
+	if head, _ := must2(e.st.ProjectHead(bg, h.ID)); head != "" {
+		t.Fatalf("head = %s, want none", head)
+	}
+}

@@ -59,18 +59,35 @@ func (r *Repo) Subtrees(ctx context.Context, commits []string, folder string) ([
 	if len(commits) == 0 {
 		return nil, nil
 	}
-	if strings.ContainsAny(folder, "\n\x00") {
-		return nil, fmt.Errorf("%w: folder %q", ErrInvalid, folder)
+	res, err := r.SubtreesMulti(ctx, commits, []string{folder})
+	if err != nil {
+		return nil, err
+	}
+	return res[0], nil
+}
+
+// SubtreesMulti returns res[f][c]: the tree at folders[f] ("." = root tree)
+// in commits[c], or "" when that folder is missing or not a directory. One
+// git process serves every folder and commit.
+func (r *Repo) SubtreesMulti(ctx context.Context, commits, folders []string) ([][]string, error) {
+	res := make([][]string, len(folders))
+	if len(commits) == 0 || len(folders) == 0 {
+		return res, nil
 	}
 	var in bytes.Buffer
-	for _, c := range commits {
-		if !IsSHA(c) {
-			return nil, fmt.Errorf("%w: commit %q", ErrInvalid, c)
+	for _, f := range folders {
+		if strings.ContainsAny(f, "\n\x00") {
+			return nil, fmt.Errorf("%w: folder %q", ErrInvalid, f)
 		}
-		if folder == "." {
-			fmt.Fprintf(&in, "%s^{tree}\n", c)
-		} else {
-			fmt.Fprintf(&in, "%s:%s\n", c, folder)
+		for _, c := range commits {
+			if !IsSHA(c) {
+				return nil, fmt.Errorf("%w: commit %q", ErrInvalid, c)
+			}
+			if f == "." {
+				fmt.Fprintf(&in, "%s^{tree}\n", c)
+			} else {
+				fmt.Fprintf(&in, "%s:%s\n", c, f)
+			}
 		}
 	}
 	out, err := r.run(ctx, &in, nil, "cat-file", "--batch-check=%(objectname) %(objecttype)")
@@ -78,13 +95,15 @@ func (r *Repo) Subtrees(ctx context.Context, commits []string, folder string) ([
 		return nil, err
 	}
 	lines := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
-	if len(lines) != len(commits) {
-		return nil, fmt.Errorf("gitx: cat-file returned %d lines for %d commits", len(lines), len(commits))
+	if len(lines) != len(commits)*len(folders) {
+		return nil, fmt.Errorf("gitx: cat-file returned %d lines for %d commits x %d folders", len(lines), len(commits), len(folders))
 	}
-	res := make([]string, len(commits))
-	for i, l := range lines {
-		if f := strings.Fields(l); len(f) == 2 && f[1] == "tree" && IsSHA(f[0]) {
-			res[i] = f[0]
+	for fi := range folders {
+		res[fi] = make([]string, len(commits))
+		for ci := range commits {
+			if f := strings.Fields(lines[fi*len(commits)+ci]); len(f) == 2 && f[1] == "tree" && IsSHA(f[0]) {
+				res[fi][ci] = f[0]
+			}
 		}
 	}
 	return res, nil
@@ -140,6 +159,108 @@ func (r *Repo) writeNode(ctx context.Context, n *dirNode) (string, error) {
 			return "", err
 		}
 		fmt.Fprintf(&in, "040000 tree %s\t%s\x00", sha, name)
+	}
+	out, err := r.run(ctx, &in, nil, "mktree", "-z")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// SpliceTree returns tree base ("" = empty) with the entry at each folder of
+// repl replaced by the given tree; "" or the empty tree removes it, and the
+// key "." replaces the whole tree. Only the directories on the path to each
+// folder are read and rewritten (one ls-tree and one mktree per directory),
+// so the cost does not grow with the size of the rest of the tree. Folders
+// must not nest within each other. Missing parent directories are created
+// and directories left empty are dropped, as BuildTree does.
+func (r *Repo) SpliceTree(ctx context.Context, base string, repl map[string]string) (string, error) {
+	if t, ok := repl["."]; ok {
+		if len(repl) != 1 {
+			return "", fmt.Errorf("%w: splice of \".\" with other folders", ErrInvalid)
+		}
+		if t == "" || t == EmptyTree {
+			return r.emptyTree(ctx)
+		}
+		return t, nil
+	}
+	for f, t := range repl {
+		if f == "" || strings.ContainsAny(f, "\x00\n") || strings.HasPrefix(f, "/") || strings.HasSuffix(f, "/") || (t != "" && !IsSHA(t)) {
+			return "", fmt.Errorf("%w: splice %q -> %q", ErrInvalid, f, t)
+		}
+		for o := range repl {
+			if strings.HasPrefix(o, f+"/") {
+				return "", fmt.Errorf("%w: splice folders %q and %q nest", ErrInvalid, f, o)
+			}
+		}
+	}
+	return r.spliceDir(ctx, base, repl)
+}
+
+func (r *Repo) spliceDir(ctx context.Context, base string, repl map[string]string) (string, error) {
+	type entry struct{ mode, typ, sha string }
+	entries := map[string]entry{}
+	if base != "" && base != EmptyTree {
+		out, err := r.run(ctx, nil, nil, "ls-tree", "-z", base)
+		if err != nil {
+			return "", err
+		}
+		for _, rec := range strings.Split(string(out), "\x00") {
+			if rec == "" {
+				continue
+			}
+			meta, name, ok := strings.Cut(rec, "\t")
+			f := strings.Fields(meta) // mode type sha
+			if !ok || len(f) != 3 {
+				return "", fmt.Errorf("gitx: bad ls-tree record %q", rec)
+			}
+			entries[name] = entry{f[0], f[1], f[2]}
+		}
+	}
+	sub := map[string]map[string]string{}
+	for p, t := range repl {
+		name, rest, nested := strings.Cut(p, "/")
+		if !nested {
+			if t == "" || t == EmptyTree {
+				delete(entries, name)
+			} else {
+				entries[name] = entry{"040000", "tree", t}
+			}
+			continue
+		}
+		if sub[name] == nil {
+			sub[name] = map[string]string{}
+		}
+		sub[name][rest] = t
+	}
+	for name, m := range sub {
+		old, had := entries[name]
+		child := ""
+		if had && old.typ == "tree" {
+			child = old.sha
+		}
+		t, err := r.spliceDir(ctx, child, m)
+		if err != nil {
+			return "", err
+		}
+		switch {
+		case t != EmptyTree:
+			entries[name] = entry{"040000", "tree", t}
+		case had && old.typ != "tree":
+			// nothing to place under a file: leave the file alone
+		default:
+			delete(entries, name)
+		}
+	}
+	names := make([]string, 0, len(entries))
+	for name := range entries {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var in bytes.Buffer
+	for _, name := range names {
+		e := entries[name]
+		fmt.Fprintf(&in, "%s %s %s\t%s\x00", e.mode, e.typ, e.sha, name)
 	}
 	out, err := r.run(ctx, &in, nil, "mktree", "-z")
 	if err != nil {
@@ -207,11 +328,22 @@ func CopyObjects(ctx context.Context, src, dst *Repo, want, have []string) (int,
 	if err != nil {
 		return 0, err
 	}
-	if _, err := dst.run(ctx, bytes.NewReader(pack), nil, "index-pack", "--stdin"); err != nil {
+	// Like git's fetch.unpackLimit: a few objects are written loose, which
+	// costs no pack fsync and leaves no tiny pack behind per call. Objects
+	// are still checked one by one above, so a copy that stops part way is
+	// completed by the next one.
+	cmd := []string{"index-pack", "--stdin"}
+	if n < unpackLimit {
+		cmd = []string{"unpack-objects", "-q"}
+	}
+	if _, err := dst.run(ctx, bytes.NewReader(pack), nil, cmd...); err != nil {
 		return 0, err
 	}
 	return n, nil
 }
+
+// unpackLimit is the object count from which CopyObjects keeps a pack.
+const unpackLimit = 100
 
 // FormatIdent renders a signature as a raw ident line in UTC.
 func FormatIdent(s Signature) string {

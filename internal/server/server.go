@@ -133,7 +133,13 @@ func (s *Server) Register(g *grpc.Server) {
 	healthpb.RegisterHealthServer(g, health.NewServer())
 }
 
+// Shutdown cancels long work that ignores its caller's context (a project
+// mount importing a folder's history), so a stopping server is not held up
+// by it. The interrupted work resumes later; see project.Engine.Stop.
+func (s *Server) Shutdown() { s.projects.Stop() }
+
 func (s *Server) Close() {
+	s.projects.Stop()
 	s.mirror.Close()
 	s.projects.CloseAll()
 	s.repos.closeAll()

@@ -208,11 +208,13 @@ The repo `big` has the same 20,000 files in `d0`..`d19`, a seed commit and 119 o
 
 | Operation (project over the 20,000-file repo) | 20 folder mounts | whole repo at `.` |
 |---|---|---|
-| `sg checkout`, full | 2.4 s | 2.4 s |
-| `sg commit --land`, 1 file | 0.88–0.90 s | 0.98–1.05 s |
-| `sg log -n 100` (100 entries) | 16–17 ms | 14–17 ms |
+| `sg checkout`, full | 2.3–2.4 s | 2.3–2.4 s |
+| `sg commit --land`, 1 file | 0.70–0.86 s | 0.73–0.86 s |
+| `sg log -n 100` (100 entries) | 10 ms | 8–10 ms |
 
-On this machine, 20 folder mounts cost no more than one `.` mount. A one-file land takes about 0.9 s here. That is longer than the 0.48 s in the v0.2.0 table, but the setups differ: here the client and server share one process and its CPUs, on different hardware. The same land on a `.` mount, which mirrors the source repo's trees and history, is no faster.
+With 5 iterations the land figure is noisy: the disk of this machine is nearly full, and a single fsync takes 10–16 ms on it. Longer runs (`-bench BenchmarkProjectLand -benchtime 20x`, two runs) give 0.55–0.58 s with 20 folder mounts and 0.63–0.64 s with a `.` mount. The same 20x runs of the previous build (commit 0e6a795), run alternately with these, gave 0.79–0.81 s and 0.74–0.77 s. `sg log` went from 14–17 ms to 8–10 ms because catch-ups no longer leave one small pack per translated commit in the project repo.
+
+Most of a one-file land is spent in the client, which costs the same with or without projects: it scans the 20,000 files and saves its index twice (about 0.3 s here). On the server, small object copies are written as loose objects instead of an fsynced pack, the catch-up reads all folders of a repo with one git process, the source tree is built by replacing only the touched folder (no full index of the source repo), and the new project commits and the landed draft are stored in one SQLite transaction. The land is still slower than the 0.48 s in the v0.2.0 table, but the setups differ: here the client and server share one process and its CPUs, on different hardware.
 
 ## Docs
 

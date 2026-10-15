@@ -411,6 +411,29 @@ func (s *Store) ProjectsUsing(ctx context.Context, repo string) ([]string, error
 // per-repo sources) and replaces the cursors. A nil cursors map leaves the
 // cursors untouched; an empty non-nil map clears them.
 func (s *Store) RecordProjectCommits(ctx context.Context, id int64, commits []ProjectCommit, cursors map[string]string, mc *MountChange) error {
+	_, err := s.recordProjectCommits(ctx, id, commits, cursors, mc, nil)
+	return err
+}
+
+// RecordProjectCommitsLanded is RecordProjectCommits plus the update of a
+// just-landed draft in the same transaction (one commit instead of two on the
+// land path). marked is false, with the commits still recorded, when the
+// draft row is gone; the caller then reports it as UpdateDraft would.
+func (s *Store) RecordProjectCommitsLanded(ctx context.Context, id int64, commits []ProjectCommit, cursors map[string]string, landed Draft) (marked bool, err error) {
+	return s.recordProjectCommits(ctx, id, commits, cursors, nil, &landed)
+}
+
+func (s *Store) recordProjectCommits(ctx context.Context, id int64, commits []ProjectCommit, cursors map[string]string, mc *MountChange, landed *Draft) (bool, error) {
+	err := s.recordTx(ctx, id, commits, cursors, mc, landed)
+	if landed != nil && errors.Is(err, errDraftGone) {
+		return false, s.recordTx(ctx, id, commits, cursors, mc, nil)
+	}
+	return landed != nil && err == nil, err
+}
+
+var errDraftGone = errors.New("store: landed draft row is gone")
+
+func (s *Store) recordTx(ctx context.Context, id int64, commits []ProjectCommit, cursors map[string]string, mc *MountChange, landed *Draft) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -457,6 +480,13 @@ func (s *Store) RecordProjectCommits(ctx context.Context, id int64, commits []Pr
 			if _, err := tx.ExecContext(ctx, `INSERT INTO project_cursors(project_id,repo,source_sha) VALUES(?,?,?)`, id, repo, src); err != nil {
 				return err
 			}
+		}
+	}
+	if landed != nil {
+		if err := updateDraft(ctx, tx, *landed); errors.Is(err, ErrNotFound) {
+			return errDraftGone
+		} else if err != nil {
+			return err
 		}
 	}
 	return tx.Commit()

@@ -53,6 +53,10 @@ type Engine struct {
 	mu      sync.Mutex
 	open    map[int64]*Handle
 	opening map[int64]*sync.Mutex // per-project lock held while opening or deleting a repo
+	// stopped is cancelled by Stop; it ends mounts, which otherwise ignore
+	// the caller's context.
+	stopped context.Context
+	stop    context.CancelFunc
 }
 
 // catchUpChunk is how many translated commits a catch-up records at once, so
@@ -66,8 +70,16 @@ func New(cfg Config) *Engine {
 	if cfg.MountTimeout <= 0 {
 		cfg.MountTimeout = DefaultMountTimeout
 	}
-	return &Engine{cfg: cfg, open: map[int64]*Handle{}, opening: map[int64]*sync.Mutex{}}
+	e := &Engine{cfg: cfg, open: map[int64]*Handle{}, opening: map[int64]*sync.Mutex{}}
+	e.stopped, e.stop = context.WithCancel(context.Background())
+	return e
 }
+
+// Stop cancels running mounts (for server shutdown); later mounts fail at
+// once. A first mount that already recorded part of the folder's history
+// keeps it and the next catch-up resumes the import; one that recorded no
+// commit is undone as on any other failure.
+func (e *Engine) Stop() { e.stop() }
 
 func (e *Engine) Path(id int64) string {
 	return filepath.Join(e.cfg.Root, strconv.FormatInt(id, 10)+".git")
@@ -148,23 +160,36 @@ func (e *Engine) Get(ctx context.Context, id int64) (*Handle, error) {
 // CatchUp translates new source commits. When no mounted repo's main moved
 // it costs one ref read per mounted repo and takes no lock.
 func (e *Engine) CatchUp(ctx context.Context, h *Handle) (string, error) {
+	head, _, err := e.catchUp(ctx, h, nil)
+	return head, err
+}
+
+// CatchUpLanded is CatchUp after a land: when it records new commits, the
+// same transaction stores landed (a draft just landed) with LandedAs set to
+// the new head. marked reports whether that happened; when it is false
+// (nothing to record, or the draft row is gone) the caller updates the draft.
+func (e *Engine) CatchUpLanded(ctx context.Context, h *Handle, landed store.Draft) (head string, marked bool, err error) {
+	return e.catchUp(ctx, h, &landed)
+}
+
+func (e *Engine) catchUp(ctx context.Context, h *Handle, landed *store.Draft) (string, bool, error) {
 	mounts, err := e.cfg.Store.Mounts(ctx, h.ID)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	cursors, err := e.cfg.Store.ProjectCursors(ctx, h.ID)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	moved := false
 	for _, repo := range reposOf(mounts) {
 		src, err := e.cfg.Sources.Source(ctx, repo)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		main, err := src.ReadRef(ctx, gitx.MainRef)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		if main != cursors[repo] {
 			moved = true
@@ -173,34 +198,41 @@ func (e *Engine) CatchUp(ctx context.Context, h *Handle) (string, error) {
 	}
 	if !moved {
 		head, _, err := e.cfg.Store.ProjectHead(ctx, h.ID)
-		return head, err
+		return head, false, err
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return e.catchUpLocked(ctx, h)
+	return e.catchUpLockedLanded(ctx, h, landed)
 }
 
 func (e *Engine) catchUpLocked(ctx context.Context, h *Handle) (string, error) {
+	head, _, err := e.catchUpLockedLanded(ctx, h, nil)
+	return head, err
+}
+
+// catchUpLockedLanded is catchUpLocked that also marks landed (when not nil)
+// in the transaction recording the last commits; see CatchUpLanded.
+func (e *Engine) catchUpLockedLanded(ctx context.Context, h *Handle, landed *store.Draft) (string, bool, error) {
 	st := e.cfg.Store
 	// Delete removes the rows under h.mu, so a handle that outlived its
 	// project finds it gone here and writes nothing.
 	if _, err := st.GetProject(ctx, h.ID); err != nil {
-		return "", err
+		return "", false, err
 	}
 	head, seq, err := st.ProjectHead(ctx, h.ID)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if err := e.moveRef(ctx, h, head); err != nil { // the DB is the truth; repair a lagging ref
-		return "", err
+		return "", false, err
 	}
 	mounts, err := st.Mounts(ctx, h.ID)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	cursors, err := st.ProjectCursors(ctx, h.ID)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	byRepo := map[string][]store.Mount{}
 	for _, m := range mounts {
@@ -211,46 +243,57 @@ func (e *Engine) catchUpLocked(ctx context.Context, h *Handle) (string, error) {
 	for _, repo := range reposOf(mounts) {
 		src, err := e.cfg.Sources.Source(ctx, repo)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		main, err := src.ReadRef(ctx, gitx.MainRef)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		c := cursors[repo]
+		var list []gitx.FPCommit
+		if main != c {
+			if list, err = src.FirstParents(ctx, main, c); err != nil {
+				return "", false, err
+			}
+		}
+		// One git process reads every mounted folder of this repo at the
+		// cursor and at each new commit.
+		var shas []string
 		if c != "" {
-			for _, m := range byRepo[repo] {
-				t, err := src.Subtrees(ctx, []string{c}, m.Folder)
-				if err != nil {
-					return "", err
-				}
-				cur[m.Path] = norm(m.Path, t[0])
+			shas = append(shas, c)
+		}
+		for _, fc := range list {
+			shas = append(shas, fc.SHA)
+		}
+		folders := make([]string, len(byRepo[repo]))
+		for i, m := range byRepo[repo] {
+			folders[i] = m.Folder
+		}
+		trees, err := src.SubtreesMulti(ctx, shas, folders)
+		if err != nil {
+			return "", false, err
+		}
+		off := 0
+		if c != "" {
+			off = 1
+			for i, m := range byRepo[repo] {
+				cur[m.Path] = norm(m.Path, trees[i][0])
 			}
 		}
 		if main == c {
 			continue
 		}
-		list, err := src.FirstParents(ctx, main, c)
-		if err != nil {
-			return "", err
-		}
-		shas := make([]string, len(list))
-		for i, fc := range list {
-			shas[i] = fc.SHA
-		}
 		q := &queue{repo: repo, src: src, commits: list, trees: map[string][]string{}}
-		for _, m := range byRepo[repo] {
-			if q.trees[m.Path], err = src.Subtrees(ctx, shas, m.Folder); err != nil {
-				return "", err
-			}
+		for i, m := range byRepo[repo] {
+			q.trees[m.Path] = trees[i][off:]
 		}
-		if q.seqs, err = st.LandSeqs(ctx, repo, shas); err != nil {
-			return "", err
+		if q.seqs, err = st.LandSeqs(ctx, repo, shas[off:]); err != nil {
+			return "", false, err
 		}
 		queues = append(queues, q)
 	}
 	if len(queues) == 0 {
-		return head, nil
+		return head, false, nil
 	}
 	sources := maps.Clone(cursors)
 	if sources == nil {
@@ -283,45 +326,54 @@ func (e *Engine) catchUpLocked(ctx context.Context, h *Handle) (string, error) {
 			continue
 		}
 		if _, err := gitx.CopyObjects(ctx, q.src, h.Git, want, have); err != nil {
-			return "", err
+			return "", false, err
 		}
 		tree, err := compose(ctx, h.Git, mountTrees(mounts, cur))
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		sc, err := q.src.ReadCommit(ctx, c.SHA)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		sha, err := h.Git.WriteCommit(ctx, tree, parents(parent), sc.AuthorRaw, sc.CommitterRaw, sc.Message)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		seq++
 		out = append(out, store.ProjectCommit{SHA: sha, Seq: seq, Kind: store.KindSource, Repo: q.repo,
 			SourceSHA: c.SHA, Layout: layout, Sources: maps.Clone(sources)})
 		parent = sha
 		if len(out) >= catchUpChunk { // keep progress if a later step fails
-			if err := e.record(ctx, h, out, sources, parent); err != nil {
-				return "", err
+			if _, err := e.record(ctx, h, out, sources, parent, nil); err != nil {
+				return "", false, err
 			}
 			out = nil
 		}
 	}
-	if err := e.record(ctx, h, out, sources, parent); err != nil {
-		return "", err
+	marked, err := e.record(ctx, h, out, sources, parent, landed)
+	if err != nil {
+		return "", false, err
 	}
-	return parent, nil
+	return parent, marked, nil
 }
 
 // record stores translated commits with the cursors reached so far and
-// points the project's main at head.
-func (e *Engine) record(ctx context.Context, h *Handle, out []store.ProjectCommit, cursors map[string]string, head string) error {
-	if err := e.cfg.Store.RecordProjectCommits(ctx, h.ID, out, maps.Clone(cursors), nil); err != nil {
-		return err
+// points the project's main at head. A non-nil landed draft is stored as
+// landed at head in the same transaction (marked reports it).
+func (e *Engine) record(ctx context.Context, h *Handle, out []store.ProjectCommit, cursors map[string]string, head string, landed *store.Draft) (marked bool, err error) {
+	if landed != nil {
+		d := *landed
+		d.LandedAs = head
+		marked, err = e.cfg.Store.RecordProjectCommitsLanded(ctx, h.ID, out, maps.Clone(cursors), d)
+	} else {
+		err = e.cfg.Store.RecordProjectCommits(ctx, h.ID, out, maps.Clone(cursors), nil)
+	}
+	if err != nil {
+		return false, err
 	}
 	// Once recorded, the ref follows even if the caller has gone.
-	return e.moveRef(context.WithoutCancel(ctx), h, head)
+	return marked, e.moveRef(context.WithoutCancel(ctx), h, head)
 }
 
 // moveRef points the project's main at sha (no-op when sha is "" or current).
@@ -412,8 +464,10 @@ func (e *Engine) Mount(ctx context.Context, h *Handle, m store.Mount, actor gitx
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	// A first mount can take long; a client giving up must not undo it.
+	// Only the timeout and a server shutdown (Stop) end it early.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), e.cfg.MountTimeout)
 	defer cancel()
+	defer context.AfterFunc(e.stopped, cancel)()
 	head, err := e.catchUpLocked(ctx, h)
 	if err != nil {
 		return "", err
@@ -437,7 +491,16 @@ func (e *Engine) Mount(ctx context.Context, h *Handle, m store.Mount, actor gitx
 	if head == "" {
 		sha, err := e.firstMountLocked(ctx, h, m, actor)
 		if err != nil {
-			if rerr := e.resetLocked(context.WithoutCancel(ctx), h); rerr != nil {
+			bg := context.WithoutCancel(ctx)
+			if e.stopped.Err() != nil {
+				// Interrupted by shutdown: keep the recorded part of the
+				// import (the mount and its cursor), which the next catch-up
+				// continues. With nothing recorded yet, undo it as below.
+				if head, _, herr := e.cfg.Store.ProjectHead(bg, h.ID); herr == nil && head != "" {
+					return "", fmt.Errorf("mount of %s/ interrupted by server shutdown; its import resumes on the next request: %w", m.Path, context.Canceled)
+				}
+			}
+			if rerr := e.resetLocked(bg, h); rerr != nil {
 				return "", errors.Join(err, rerr)
 			}
 			return "", err
