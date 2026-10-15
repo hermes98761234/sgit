@@ -2,7 +2,10 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
+	"slices"
 	"strconv"
 
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
@@ -124,6 +127,96 @@ func (a *adminService) migrateMount(ctx context.Context, req *sgitv1.MigrateInRe
 	return nil
 }
 
+// migrateInto replays from_url's main under into_folder of into_repo
+// (spec §3.2), then mounts that folder.
 func (a *adminService) migrateInto(ctx context.Context, req *sgitv1.MigrateInRequest) (*sgitv1.MigrateInResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "--into is not implemented yet")
+	h, err := a.s.repos.get(ctx, req.IntoRepo)
+	if err != nil {
+		return nil, a.s.toStatus(ctx, err)
+	}
+	allow := a.s.repos.allowLocal
+	if err := gitx.ValidateRemote(req.FromUrl, allow); err != nil {
+		return nil, a.s.toStatus(ctx, err)
+	}
+	skipped, err := gitx.RemoteBranches(ctx, req.FromUrl, "release/", allow)
+	if err != nil {
+		return nil, a.s.remoteErr(ctx, "import from", req.FromUrl, err)
+	}
+	ref, err := migrateRef()
+	if err != nil {
+		return nil, a.s.toStatus(ctx, err)
+	}
+	defer func() {
+		if err := h.git.DeleteRef(context.WithoutCancel(ctx), ref); err != nil {
+			a.s.log.ErrorContext(ctx, "migrate: removing temporary ref failed", "repo", h.name, "ref", ref, "err", err)
+		}
+	}()
+	tip, err := h.git.FetchMain(ctx, req.FromUrl, ref, allow)
+	if err != nil {
+		return nil, a.s.remoteErr(ctx, "import from", req.FromUrl, err)
+	}
+	main, n, err := a.replayInto(ctx, h, tip, req.IntoFolder)
+	if err != nil {
+		return nil, err
+	}
+	resp := &sgitv1.MigrateInResponse{Repo: h.name, Folder: req.IntoFolder, Main: main, Commits: int32(n), SkippedBranches: skipped}
+	if err := a.migrateMount(ctx, req, resp, h.name, req.IntoFolder); err != nil {
+		st := status.Convert(err)
+		return nil, status.Errorf(st.Code(), "%s (the code landed at %s:%s; mount it with sg project mount)", st.Message(), h.name, req.IntoFolder)
+	}
+	return resp, nil
+}
+
+// replayInto rewrites tip's history under folder on top of the repo's main
+// and moves main, holding the repo's land lock throughout.
+func (a *adminService) replayInto(ctx context.Context, h *repoHandle, tip, folder string) (string, int, error) {
+	h.landMu.Lock()
+	defer h.landMu.Unlock()
+	base, err := h.git.ReadRef(ctx, gitx.MainRef)
+	if err != nil {
+		return "", 0, a.s.toStatus(ctx, err)
+	}
+	main, n, err := h.git.ReplayUnder(ctx, base, tip, folder)
+	if errors.Is(err, gitx.ErrFolderNotEmpty) {
+		return "", 0, status.Errorf(codes.FailedPrecondition, "folder %q is not empty in repo %q", folder, h.name)
+	}
+	if err != nil {
+		return "", 0, a.s.toStatus(ctx, err)
+	}
+	// Once main moves the bookkeeping must finish; the sequence row goes
+	// first, as in landSource.
+	bg := context.WithoutCancel(ctx)
+	if err := a.s.store.RecordLand(bg, h.name, main, a.s.cfg.Now()); err != nil {
+		return "", 0, status.Error(codes.Internal, "recording the land sequence failed")
+	}
+	if err := h.git.UpdateRef(bg, gitx.MainRef, main, base); err != nil {
+		if errors.Is(err, gitx.ErrRefMoved) {
+			return "", 0, status.Errorf(codes.Aborted, "main of repo %q moved during the migration; retry", h.name)
+		}
+		return "", 0, a.s.toStatus(ctx, err)
+	}
+	a.s.mirror.Notify(h.name)
+	return main, n, nil
+}
+
+// migrateRef returns a fresh temporary ref for fetched history.
+func migrateRef() (string, error) {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return "refs/sgit/migrate/" + hex.EncodeToString(b[:]), nil
+}
+
+// remoteErr maps a failed fetch, ls-remote or push to a client status that
+// carries git's own one-line reason.
+func (s *Server) remoteErr(ctx context.Context, what, url string, err error) error {
+	if ctx.Err() != nil {
+		return status.FromContextError(ctx.Err()).Err()
+	}
+	var ge *gitx.GitError
+	if errors.As(err, &ge) && slices.ContainsFunc([]string{"fetch", "ls-remote", "push"}, func(c string) bool { return slices.Contains(ge.Args, c) }) {
+		return status.Errorf(codes.FailedPrecondition, "%s %s failed: %s", what, url, gitx.ErrSummary(err))
+	}
+	return s.toStatus(ctx, err)
 }

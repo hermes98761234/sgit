@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -170,5 +173,144 @@ func TestMigrateInValidation(t *testing.T) {
 	}
 	if _, err := e.Store.ResolveProject(ctx, "x"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("a failed MigrateIn left project x: %v", err)
+	}
+}
+
+// tempRefs lists refs under refs/sgit/ in a server repo.
+func tempRefs(t *testing.T, e *testenv.Env, repo string) string {
+	t.Helper()
+	out, err := exec.Command("git", "--git-dir", filepath.Join(e.DataDir, "repos", repo+".git"), "for-each-ref", "refs/sgit/").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
+}
+
+func TestMigrateInInto(t *testing.T) {
+	ctx := context.Background()
+	e := testenv.Start(t, allowLocal)
+	e.CreateRepo("mono")
+	before := e.CommitDirect("mono", map[string]string{"README": "r"}, "seed")
+	src, main := srcRepo(t, map[string]string{"a.txt": "a"}, map[string]string{"b/c.txt": "c"})
+	r := gitx.Open(src)
+	if err := r.UpdateRef(ctx, "refs/heads/release/1", main, ""); err != nil {
+		t.Fatal(err)
+	}
+	r.Close()
+
+	resp, err := e.Admin(e.AdminToken).MigrateIn(ctx, &sgitv1.MigrateInRequest{
+		FromUrl: "file://" + src, Name: "app", IntoRepo: "mono", IntoFolder: "svc/app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Repo != "mono" || resp.Folder != "svc/app" || resp.Project != "app" || resp.Path != "." ||
+		resp.Commits != 3 || !slices.Equal(resp.SkippedBranches, []string{"release/1"}) || resp.ProjectHead == "" {
+		t.Fatalf("MigrateIn = %+v", resp)
+	}
+	g := e.Git("mono")
+	defer g.Close()
+	if got := testenv.Must(g.ReadRef(ctx, gitx.MainRef)); got != resp.Main {
+		t.Fatalf("mono main = %s, resp.Main = %s", got, resp.Main)
+	}
+	if fps := testenv.Must(g.FirstParents(ctx, resp.Main, before)); len(fps) != 3 {
+		t.Fatalf("mono gained %d commits, want 3", len(fps))
+	}
+	files := e.Files("mono", "main")
+	if files["README"] != "r" || files["svc/app/a.txt"] != "a" || files["svc/app/b/c.txt"] != "c" || len(files) != 3 {
+		t.Fatalf("mono files = %v", files)
+	}
+	if pf := e.ProjectFiles("app", "main"); pf["a.txt"] != "a" || pf["b/c.txt"] != "c" || len(pf) != 2 {
+		t.Fatalf("project files = %v", pf)
+	}
+	// every original commit that touched the folder is in the project history
+	pg := e.ProjectGit(e.ProjectID("app"))
+	defer pg.Close()
+	var msgs []string
+	for _, fp := range testenv.Must(pg.FirstParents(ctx, resp.ProjectHead, "")) {
+		msgs = append(msgs, testenv.Must(pg.ReadCommit(ctx, fp.SHA)).Message)
+	}
+	if !slices.Contains(msgs, "commit 1\n") || !slices.Contains(msgs, "commit 2\n") {
+		t.Fatalf("project history messages = %q", msgs)
+	}
+	if refs := tempRefs(t, e, "mono"); refs != "" {
+		t.Fatalf("temporary refs left: %s", refs)
+	}
+}
+
+func TestMigrateIntoRefusesNonEmptyFolder(t *testing.T) {
+	ctx := context.Background()
+	e := testenv.Start(t, allowLocal)
+	e.CreateRepo("mono")
+	before := e.CommitDirect("mono", map[string]string{"svc/app/x": "x"}, "seed")
+	src, _ := srcRepo(t, map[string]string{"a.txt": "a"})
+	_, err := e.Admin(e.AdminToken).MigrateIn(ctx, &sgitv1.MigrateInRequest{
+		FromUrl: "file://" + src, Name: "app", IntoRepo: "mono", IntoFolder: "svc/app"})
+	if status.Code(err) != codes.FailedPrecondition || !strings.Contains(status.Convert(err).Message(), "not empty") {
+		t.Fatalf("err = %v, want FailedPrecondition not empty", err)
+	}
+	g := e.Git("mono")
+	defer g.Close()
+	if got := testenv.Must(g.ReadRef(ctx, gitx.MainRef)); got != before {
+		t.Fatalf("mono main moved to %s", got)
+	}
+	if _, err := e.Store.ResolveProject(ctx, "app"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("project app created: %v", err)
+	}
+	if refs := tempRefs(t, e, "mono"); refs != "" {
+		t.Fatalf("temporary refs left: %s", refs)
+	}
+}
+
+func TestMigrateIntoLockReleased(t *testing.T) {
+	ctx := context.Background()
+	e := testenv.Start(t, allowLocal)
+	e.CreateRepo("mono")
+	e.CommitDirect("mono", map[string]string{"svc/x": "x"}, "seed")
+	src, _ := srcRepo(t, map[string]string{"a.txt": "a"})
+	ac := e.Admin(e.AdminToken)
+	if _, err := ac.MigrateIn(ctx, &sgitv1.MigrateInRequest{FromUrl: "file://" + src, Name: "one", IntoRepo: "mono", IntoFolder: "svc"}); err == nil {
+		t.Fatal("first MigrateIn succeeded; want not empty")
+	}
+	ctx2, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if _, err := ac.MigrateIn(ctx2, &sgitv1.MigrateInRequest{FromUrl: "file://" + src, Name: "two", IntoRepo: "mono", IntoFolder: "lib/two"}); err != nil {
+		t.Fatalf("second MigrateIn after a refused one: %v", err)
+	}
+}
+
+func TestMigrateIntoErrors(t *testing.T) {
+	ctx := context.Background()
+	e := testenv.Start(t, allowLocal)
+	e.CreateRepo("mono")
+	ac := e.Admin(e.AdminToken)
+	src, main := srcRepo(t, map[string]string{"a.txt": "a"})
+	if _, err := ac.MigrateIn(ctx, &sgitv1.MigrateInRequest{FromUrl: "file://" + src, Name: "x", IntoRepo: "nope", IntoFolder: "f"}); status.Code(err) != codes.NotFound {
+		t.Errorf("unknown repo: %v", err)
+	}
+	noMain := filepath.Join(t.TempDir(), "m.git")
+	if err := gitx.InitBare(ctx, noMain); err != nil {
+		t.Fatal(err)
+	}
+	r := gitx.Open(src)
+	if err := r.Push(ctx, noMain, main, "", true); err != nil {
+		t.Fatal(err)
+	}
+	r.Close()
+	m := gitx.Open(noMain)
+	if err := m.UpdateRef(ctx, "refs/heads/master", main, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.DeleteRef(ctx, gitx.MainRef); err != nil {
+		t.Fatal(err)
+	}
+	m.Close()
+	if _, err := ac.MigrateIn(ctx, &sgitv1.MigrateInRequest{FromUrl: "file://" + noMain, Name: "x", IntoRepo: "mono", IntoFolder: "f"}); status.Code(err) != codes.InvalidArgument {
+		t.Errorf("no main: %v", err)
+	}
+	if refs := tempRefs(t, e, "mono"); refs != "" {
+		t.Fatalf("temporary refs left: %s", refs)
+	}
+	if _, err := e.Store.ResolveProject(ctx, "x"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("project x created: %v", err)
 	}
 }
