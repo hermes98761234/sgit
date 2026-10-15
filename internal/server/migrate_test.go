@@ -103,6 +103,9 @@ func TestMigrateInRollsBackRepoWhenMountFails(t *testing.T) {
 	}
 	// the name is free again
 	testenv.Must(e.Admin(e.AdminToken).MigrateIn(ctx, &sgitv1.MigrateInRequest{FromUrl: "file://" + src, Name: "app"}))
+	if files := e.Files("app", "main"); files["a.txt"] != "a" {
+		t.Fatalf("re-imported app files = %v", files)
+	}
 }
 
 func TestMigrateInNameTaken(t *testing.T) {

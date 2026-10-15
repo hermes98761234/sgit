@@ -240,7 +240,7 @@ message MigrateInResponse {
   string project = 3;       // canonical project name
   string path = 4;          // mount path in the project
   string main = 5;          // repo main after the migration
-  int32 commits = 6;        // commits imported or replayed
+  int32 commits = 6;        // commits imported or replayed (every first-parent commit, incl. an initial empty one)
   repeated string skipped_branches = 7;
   string project_head = 8;
 }

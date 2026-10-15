@@ -239,6 +239,12 @@ func (m *repoManager) importRepo(ctx context.Context, name, from, mirrorURL stri
 // rollbackNew undoes a create or import whose land sequence could not be
 // recorded, so a retry starts clean instead of finding AlreadyExists.
 func (m *repoManager) rollbackNew(name, dir string) {
+	m.mu.Lock()
+	if h, ok := m.open[name]; ok {
+		delete(m.open, name)
+		h.git.Close()
+	}
+	m.mu.Unlock()
 	_ = m.st.DeleteRepo(context.Background(), name)
 	os.RemoveAll(dir)
 }

@@ -4675,7 +4675,7 @@ type MigrateInResponse struct {
 	Project         string                 `protobuf:"bytes,3,opt,name=project,proto3" json:"project,omitempty"`  // canonical project name
 	Path            string                 `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`        // mount path in the project
 	Main            string                 `protobuf:"bytes,5,opt,name=main,proto3" json:"main,omitempty"`        // repo main after the migration
-	Commits         int32                  `protobuf:"varint,6,opt,name=commits,proto3" json:"commits,omitempty"` // commits imported or replayed
+	Commits         int32                  `protobuf:"varint,6,opt,name=commits,proto3" json:"commits,omitempty"` // commits imported or replayed (every first-parent commit, incl. an initial empty one)
 	SkippedBranches []string               `protobuf:"bytes,7,rep,name=skipped_branches,json=skippedBranches,proto3" json:"skipped_branches,omitempty"`
 	ProjectHead     string                 `protobuf:"bytes,8,opt,name=project_head,json=projectHead,proto3" json:"project_head,omitempty"`
 	unknownFields   protoimpl.UnknownFields
