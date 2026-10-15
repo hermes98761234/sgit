@@ -187,12 +187,17 @@ func (s *Server) toStatus(ctx context.Context, err error) error {
 
 // userMessage rewrites err, which wraps sentinel as "<sentinel>: <detail>",
 // into "<detail><suffix>" for clients: "store: not found: draft "x"" becomes
-// "draft "x" not found". The internal package prefix never reaches a client;
-// the log keeps the original error.
+// "draft "x" not found". A detail that already contains suffix ("mount "x"
+// already exists; unmount it first") is returned as is. The internal package
+// prefix never reaches a client; the log keeps the original error.
 func userMessage(err, sentinel error, suffix string) string {
 	msg, p := err.Error(), sentinel.Error()
 	if i := strings.Index(msg, p+": "); i >= 0 {
-		return msg[:i] + msg[i+len(p)+2:] + suffix
+		detail := msg[:i] + msg[i+len(p)+2:]
+		if strings.Contains(detail, suffix) { // the detail says it already
+			return detail
+		}
+		return detail + suffix
 	}
 	if _, bare, ok := strings.Cut(p, ": "); ok {
 		return strings.Replace(msg, p, bare, 1)

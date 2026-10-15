@@ -131,9 +131,19 @@ func TestReplayUnderRefusesNonEmptyFolder(t *testing.T) {
 		{Path: "file", Op: OpAdd, BlobSHA: blob(t, r, "f")},
 	})
 	tip := sideCommit(t, r, root, []Change{{Path: "a", Op: OpAdd, BlobSHA: blob(t, r, "a")}}, "a\n", testSig)
-	for _, folder := range []string{"svc", "file", "file/sub", "file/sub/deep"} {
-		if _, _, err := r.ReplayUnder(ctx, base, tip, folder); !errors.Is(err, ErrFolderNotEmpty) {
-			t.Errorf("folder %q: err = %v, want ErrFolderNotEmpty", folder, err)
+	if _, _, err := r.ReplayUnder(ctx, base, tip, "svc"); !errors.Is(err, ErrFolderNotEmpty) {
+		t.Errorf("folder svc: err = %v, want ErrFolderNotEmpty", err)
+	}
+	// a file at the folder or at a parent is not a folder, not a non-empty one
+	for _, folder := range []string{"file", "file/sub", "file/sub/deep", "svc/x.txt"} {
+		var nf *NotAFolderError
+		_, _, err := r.ReplayUnder(ctx, base, tip, folder)
+		if !errors.As(err, &nf) || errors.Is(err, ErrFolderNotEmpty) {
+			t.Errorf("folder %q: err = %v, want NotAFolderError", folder, err)
+			continue
+		}
+		if want := map[bool]string{true: "file", false: "svc/x.txt"}[folder != "svc/x.txt"]; nf.Path != want {
+			t.Errorf("folder %q: NotAFolderError.Path = %q, want %q", folder, nf.Path, want)
 		}
 	}
 	if _, n, err := r.ReplayUnder(ctx, base, tip, "svc/new"); err != nil || n != 2 {

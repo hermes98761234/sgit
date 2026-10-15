@@ -50,17 +50,36 @@ func srcRepo(t *testing.T, commits ...map[string]string) (string, string) {
 	return dir, main
 }
 
+// setBranches points branches of the bare repo src at sha.
+func setBranches(t *testing.T, src, sha string, branches ...string) {
+	t.Helper()
+	r := gitx.Open(src)
+	defer r.Close()
+	for _, b := range branches {
+		if err := r.UpdateRef(context.Background(), "refs/heads/"+b, sha, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestMigrateInPlain(t *testing.T) {
 	ctx := context.Background()
 	e := testenv.Start(t, allowLocal)
 	src, main := srcRepo(t, map[string]string{"a.txt": "a"}, map[string]string{"b/c.txt": "c"})
+	setBranches(t, src, main, "release/1", "feature/x")
 	resp, err := e.Admin(e.AdminToken).MigrateIn(ctx, &sgitv1.MigrateInRequest{FromUrl: "file://" + src, Name: "app"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if resp.Repo != "app" || resp.Folder != "." || resp.Project != "app" || resp.Path != "." ||
-		resp.Main != main || resp.Commits != 3 || resp.ProjectHead != main || len(resp.SkippedBranches) != 0 {
+		resp.Main != main || resp.Commits != 3 || resp.ProjectHead != main ||
+		!slices.Equal(resp.SkippedBranches, []string{"feature/x"}) { // release/* is migrated
 		t.Fatalf("MigrateIn = %+v", resp)
+	}
+	g := e.Git("app")
+	defer g.Close()
+	if got := testenv.Must(g.ReadRef(ctx, "refs/heads/release/1")); got != main {
+		t.Fatalf("release/1 = %s, want %s", got, main)
 	}
 	if files := e.ProjectFiles("app", "main"); files["a.txt"] != "a" || files["b/c.txt"] != "c" || len(files) != 2 {
 		t.Fatalf("project files = %v", files)
@@ -161,11 +180,23 @@ func TestMigrateInValidation(t *testing.T) {
 		{"into root", &sgitv1.MigrateInRequest{FromUrl: "file://" + src, Name: "x", IntoRepo: "r", IntoFolder: "."}, codes.InvalidArgument},
 		{"folder without repo", &sgitv1.MigrateInRequest{FromUrl: "file://" + src, Name: "x", IntoFolder: "f"}, codes.InvalidArgument},
 		{"credentials", &sgitv1.MigrateInRequest{FromUrl: "https://u:p@example.com/x.git", Name: "x"}, codes.InvalidArgument},
+		// the URL is checked before the name: "taken" exists as a project
+		{"credentials, name taken", &sgitv1.MigrateInRequest{FromUrl: "https://u:p@example.com/taken.git", Name: "taken"}, codes.InvalidArgument},
+		{"credentials, bad name", &sgitv1.MigrateInRequest{FromUrl: "https://u:p@example.com/x.git", Name: "Bad Name"}, codes.InvalidArgument},
+		{"file URL without path", &sgitv1.MigrateInRequest{FromUrl: "file://", Name: "x"}, codes.InvalidArgument},
 		{"no main", &sgitv1.MigrateInRequest{FromUrl: "file://" + noMain, Name: "x"}, codes.InvalidArgument},
 	}
+	e.CreateProject("taken")
 	for _, c := range cases {
-		if _, err := ac.MigrateIn(ctx, c.req); status.Code(err) != c.code {
+		_, err := ac.MigrateIn(ctx, c.req)
+		if status.Code(err) != c.code {
 			t.Errorf("%s: err = %v, want %s", c.name, err, c.code)
+		}
+		if strings.HasPrefix(c.req.FromUrl, "https://u:p@") && !strings.Contains(status.Convert(err).Message(), "credentials") {
+			t.Errorf("%s: err = %v, want the credentials error", c.name, err)
+		}
+		if strings.HasPrefix(c.req.FromUrl, "file://") && strings.Contains(status.Convert(err).Message(), "fatal:") {
+			t.Errorf("%s: err = %v leaks git's message", c.name, err)
 		}
 	}
 	if _, err := e.Store.GetRepo(ctx, "x"); !errors.Is(err, store.ErrNotFound) {
@@ -192,11 +223,7 @@ func TestMigrateInInto(t *testing.T) {
 	e.CreateRepo("mono")
 	before := e.CommitDirect("mono", map[string]string{"README": "r"}, "seed")
 	src, main := srcRepo(t, map[string]string{"a.txt": "a"}, map[string]string{"b/c.txt": "c"})
-	r := gitx.Open(src)
-	if err := r.UpdateRef(ctx, "refs/heads/release/1", main, ""); err != nil {
-		t.Fatal(err)
-	}
-	r.Close()
+	setBranches(t, src, main, "release/1", "feature/x")
 
 	resp, err := e.Admin(e.AdminToken).MigrateIn(ctx, &sgitv1.MigrateInRequest{
 		FromUrl: "file://" + src, Name: "app", IntoRepo: "mono", IntoFolder: "svc/app"})
@@ -204,7 +231,7 @@ func TestMigrateInInto(t *testing.T) {
 		t.Fatal(err)
 	}
 	if resp.Repo != "mono" || resp.Folder != "svc/app" || resp.Project != "app" || resp.Path != "." ||
-		resp.Commits != 3 || !slices.Equal(resp.SkippedBranches, []string{"release/1"}) || resp.ProjectHead == "" {
+		resp.Commits != 3 || !slices.Equal(resp.SkippedBranches, []string{"feature/x", "release/1"}) || resp.ProjectHead == "" {
 		t.Fatalf("MigrateIn = %+v", resp)
 	}
 	g := e.Git("mono")
@@ -315,25 +342,139 @@ func TestMigrateIntoErrors(t *testing.T) {
 	}
 }
 
-func TestMigrateIntoMountFailureKeepsCommits(t *testing.T) {
+// A mount that cannot fit the target project is refused before anything is
+// fetched or replayed, with the same rules as sg project mount.
+func TestMigrateInChecksMountFirst(t *testing.T) {
 	ctx := context.Background()
 	e := testenv.Start(t, allowLocal)
 	e.CreateRepo("mono")
-	e.CreateRepoProject("core")
+	monoMain := e.CommitDirect("mono", map[string]string{"README": "r"}, "seed")
+	e.CreateRepoProject("core") // project core mounts core at "."
+	e.CommitDirect("core", map[string]string{"src/x.go": "x"}, "seed")
+	e.CreateProject("web")
+	e.Mount("web", "lib", "core", "src", false)
 	src, _ := srcRepo(t, map[string]string{"a.txt": "a"})
-	_, err := e.Admin(e.AdminToken).MigrateIn(ctx, &sgitv1.MigrateInRequest{
-		FromUrl: "file://" + src, Name: "app", IntoRepo: "mono", IntoFolder: "svc/app", Project: "core", Path: "lib"})
-	if err == nil || !strings.Contains(status.Convert(err).Message(), "the code landed at mono:svc/app") {
-		t.Fatalf("err = %v, want the code landed at mono:svc/app", err)
+	ac := e.Admin(e.AdminToken)
+	cases := []struct {
+		project, path string
+		code          codes.Code
+		msg           string
+	}{
+		{"core", "lib", codes.InvalidArgument, `mount path "lib" overlaps "."`},
+		{"web", "lib", codes.AlreadyExists, `mount "lib" already exists; unmount it first`},
+		{"web", "lib/sub", codes.InvalidArgument, `mount path "lib/sub" overlaps "lib"`},
+		{"web", ".", codes.InvalidArgument, `mount path "." overlaps "lib"`},
 	}
-	if files := e.Files("mono", "main"); files["svc/app/a.txt"] != "a" {
+	for _, into := range []bool{false, true} {
+		for _, c := range cases {
+			req := &sgitv1.MigrateInRequest{FromUrl: "file://" + src, Name: "app", Project: c.project, Path: c.path}
+			if into {
+				req.IntoRepo, req.IntoFolder = "mono", "svc/app"
+			}
+			_, err := ac.MigrateIn(ctx, req)
+			if msg := status.Convert(err).Message(); status.Code(err) != c.code || msg != c.msg {
+				t.Errorf("into=%v %s:%s: err = %v, want %s %q", into, c.project, c.path, err, c.code, c.msg)
+			}
+		}
+	}
+	if files := e.Files("mono", "main"); len(files) != 1 {
 		t.Fatalf("mono files = %v", files)
+	}
+	g := e.Git("mono")
+	defer g.Close()
+	if got := testenv.Must(g.ReadRef(ctx, gitx.MainRef)); got != monoMain {
+		t.Fatalf("mono main moved to %s", got)
+	}
+	if _, err := e.Store.GetRepo(ctx, "app"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("repo app exists: %v", err)
 	}
 	if _, err := e.Store.ResolveProject(ctx, "app"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("project app exists: %v", err)
 	}
 	if refs := tempRefs(t, e, "mono"); refs != "" {
 		t.Fatalf("temporary refs left: %s", refs)
+	}
+}
+
+// Concurrent --into migrations creating the same project: one wins, the
+// others fail before replaying anything.
+func TestMigrateIntoProjectNameRace(t *testing.T) {
+	ctx := context.Background()
+	e := testenv.Start(t, allowLocal)
+	e.CreateRepo("mono")
+	e.CommitDirect("mono", map[string]string{"README": "r"}, "seed")
+	src, _ := srcRepo(t, map[string]string{"a.txt": "a"})
+	ac := e.Admin(e.AdminToken)
+	const n = 4
+	errs := make(chan error, n)
+	for i := range n {
+		go func() {
+			_, err := ac.MigrateIn(ctx, &sgitv1.MigrateInRequest{
+				FromUrl: "file://" + src, Name: "svc", IntoRepo: "mono", IntoFolder: fmt.Sprintf("svc/a%d", i)})
+			errs <- err
+		}()
+	}
+	ok := 0
+	for range n {
+		err := <-errs
+		if err == nil {
+			ok++
+			continue
+		}
+		if status.Code(err) != codes.AlreadyExists || strings.Contains(status.Convert(err).Message(), "landed") {
+			t.Errorf("loser: %v, want AlreadyExists before replaying", err)
+		}
+	}
+	if ok != 1 {
+		t.Fatalf("%d migrations succeeded, want 1", ok)
+	}
+	folders := map[string]bool{}
+	for p := range e.Files("mono", "main") {
+		if rest, found := strings.CutPrefix(p, "svc/"); found {
+			folders[strings.Split(rest, "/")[0]] = true
+		}
+	}
+	if len(folders) != 1 {
+		t.Fatalf("mono has replayed folders %v, want 1", folders)
+	}
+}
+
+// A file (or a file above the folder) is not reported as a non-empty folder.
+func TestMigrateIntoRefusesFile(t *testing.T) {
+	ctx := context.Background()
+	e := testenv.Start(t, allowLocal)
+	e.CreateRepo("mono")
+	e.CommitDirect("mono", map[string]string{"svc/app": "x"}, "seed")
+	src, _ := srcRepo(t, map[string]string{"a.txt": "a"})
+	for folder, want := range map[string]string{
+		"svc/app":     `"svc/app" is a file in repo "mono"`,
+		"svc/app/sub": `"svc/app/sub" is under a file in repo "mono"`,
+	} {
+		_, err := e.Admin(e.AdminToken).MigrateIn(ctx, &sgitv1.MigrateInRequest{
+			FromUrl: "file://" + src, Name: "app", IntoRepo: "mono", IntoFolder: folder})
+		if status.Code(err) != codes.FailedPrecondition || status.Convert(err).Message() != want {
+			t.Errorf("%s: err = %v, want FailedPrecondition %q", folder, err, want)
+		}
+	}
+}
+
+// With --into and --project the name is not used, so it is not checked.
+func TestMigrateIntoProjectIgnoresName(t *testing.T) {
+	ctx := context.Background()
+	e := testenv.Start(t, allowLocal)
+	e.CreateRepo("mono")
+	e.CreateProject("web")
+	src, _ := srcRepo(t, map[string]string{"a.txt": "a"})
+	for i, name := range []string{"", "Bad Name"} {
+		resp, err := e.Admin(e.AdminToken).MigrateIn(ctx, &sgitv1.MigrateInRequest{
+			FromUrl: "file://" + src, Name: name, IntoRepo: "mono", IntoFolder: fmt.Sprintf("svc/a%d", i),
+			Project: "web", Path: fmt.Sprintf("a%d", i)})
+		if err != nil || resp.Project != "web" {
+			t.Fatalf("name %q: %+v, %v", name, resp, err)
+		}
+	}
+	if files := e.ProjectFiles("web", "main"); files["a0/a.txt"] != "a" || files["a1/a.txt"] != "a" {
+		t.Fatalf("project files = %v", files)
 	}
 }
 

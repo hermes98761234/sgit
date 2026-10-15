@@ -66,6 +66,11 @@ func TestValidateRemote(t *testing.T) {
 			t.Errorf("ValidateRemote(%q, allowLocal) = %v, want nil", u, err)
 		}
 	}
+	for _, u := range []string{"file://", "file://host"} { // no path: git's raw error would leak
+		if err := ValidateRemote(u, true); !errors.Is(err, ErrInvalid) {
+			t.Errorf("ValidateRemote(%q, allowLocal) = %v, want ErrInvalid", u, err)
+		}
+	}
 	if err := ValidateRemote("relative/path", true); !errors.Is(err, ErrInvalid) {
 		t.Errorf("relative path with allowLocal = %v, want ErrInvalid", err)
 	}

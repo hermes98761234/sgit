@@ -108,6 +108,10 @@ func TestMountProjectValidation(t *testing.T) {
 			t.Errorf("MountProject(%+v) = %v, want %v", c.req, err, c.code)
 		}
 	}
+	_, err := ac.MountProject(ctx, &sgitv1.MountProjectRequest{Project: "web", Path: "lib", Repo: "core", Folder: "other"})
+	if msg := status.Convert(err).Message(); msg != `mount "lib" already exists; unmount it first` {
+		t.Errorf("mount exists message = %q", msg)
+	}
 	// "." is allowed only as the sole mount.
 	testenv.Must(ac.CreateProject(ctx, &sgitv1.CreateProjectRequest{Name: "whole"}))
 	testenv.Must(ac.MountProject(ctx, &sgitv1.MountProjectRequest{Project: "whole", Path: ".", Repo: "core", Folder: "."}))

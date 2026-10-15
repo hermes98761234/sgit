@@ -59,6 +59,9 @@ func ValidateRemote(raw string, allowLocal bool) error {
 			if !allowLocal {
 				return bad("local remotes are disabled")
 			}
+			if u.Path == "" {
+				return bad("missing path")
+			}
 			return nil
 		default:
 			return bad("scheme must be https or ssh")

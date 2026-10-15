@@ -460,6 +460,26 @@ func overlaps(a, b string) bool {
 	return a == "." || b == "." || a == b || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
 }
 
+// CheckMount reports whether m fits next to a project's mounts: its path
+// must not exist (remount is true when the same path already mounts the
+// same repo and folder) and must not overlap another mount path, so a "."
+// mount is the only one. Mount applies it under the project lock; callers
+// may use it earlier to fail before expensive work.
+func CheckMount(mounts []store.Mount, m store.Mount) (remount bool, err error) {
+	for _, old := range mounts {
+		if old.Path == m.Path {
+			if old.Repo == m.Repo && old.Folder == m.Folder {
+				return true, nil
+			}
+			return false, fmt.Errorf("%w: mount %q already exists; unmount it first", store.ErrExists, m.Path)
+		}
+		if overlaps(old.Path, m.Path) {
+			return false, fmt.Errorf("%w: mount path %q overlaps %q", gitx.ErrInvalid, m.Path, old.Path)
+		}
+	}
+	return false, nil
+}
+
 // Mount adds m. The first mount of a project without commits imports the
 // history of the folder (§5.4); later mounts write one layout commit (§5.5).
 // Re-mounting the same path with the same source only sets the read-only flag.
@@ -482,16 +502,12 @@ func (e *Engine) Mount(ctx context.Context, h *Handle, m store.Mount, actor gitx
 	if err != nil {
 		return "", err
 	}
-	for _, old := range mounts {
-		if old.Path == m.Path {
-			if old.Repo == m.Repo && old.Folder == m.Folder {
-				return head, e.cfg.Store.SetMountReadOnly(ctx, h.ID, m.Path, m.ReadOnly)
-			}
-			return "", fmt.Errorf("%w: mount %q already exists; unmount it first", store.ErrExists, m.Path)
-		}
-		if overlaps(old.Path, m.Path) {
-			return "", fmt.Errorf("%w: mount path %q overlaps %q", gitx.ErrInvalid, m.Path, old.Path)
-		}
+	remount, err := CheckMount(mounts, m)
+	if err != nil {
+		return "", err
+	}
+	if remount {
+		return head, e.cfg.Store.SetMountReadOnly(ctx, h.ID, m.Path, m.ReadOnly)
 	}
 	m.AddedAt = e.cfg.Now()
 	if head == "" {

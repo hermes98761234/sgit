@@ -14,7 +14,8 @@ var ErrFolderNotEmpty = errors.New("gitx: folder not empty")
 // base. Each copy's tree is base's tree with folder replaced by the original
 // commit's root tree. Author, committer, encoding and message are kept byte
 // for byte; signatures (gpgsig, mergetag) are dropped because they no longer
-// match. folder must be absent from base, or an empty tree there. tip's
+// match. folder must be absent from base, or an empty tree there
+// (ErrFolderNotEmpty; *NotAFolderError for a file at folder or a parent). tip's
 // objects must already be in r. Refs are not touched.
 func (r *Repo) ReplayUnder(ctx context.Context, base, tip, folder string) (string, int, error) {
 	if !IsSHA(base) || !IsSHA(tip) || folder == "" || folder == "." ||
@@ -50,8 +51,9 @@ func (r *Repo) ReplayUnder(ctx context.Context, base, tip, folder string) (strin
 	return parent, len(list), nil
 }
 
-// folderFree returns ErrFolderNotEmpty unless folder is absent from tree or
-// is an empty tree there, or if a parent component of folder is not a tree.
+// folderFree returns nil when folder is absent from tree or is an empty tree
+// there, a *NotAFolderError when folder or a parent of it is not a tree, and
+// ErrFolderNotEmpty otherwise.
 func (r *Repo) folderFree(ctx context.Context, tree, folder string) error {
 	parts := strings.Split(folder, "/")
 	paths := make([]string, len(parts))
@@ -80,14 +82,23 @@ func (r *Repo) folderFree(ctx context.Context, tree, folder string) error {
 				continue
 			}
 			if f[1] != "tree" {
-				return fmt.Errorf("%w: %s is not a folder", ErrFolderNotEmpty, name)
+				return &NotAFolderError{Path: name}
 			}
 			continue
 		}
-		if f[1] == "tree" && f[2] == EmptyTree {
+		if f[1] != "tree" {
+			return &NotAFolderError{Path: name}
+		}
+		if f[2] == EmptyTree {
 			return nil
 		}
 		return fmt.Errorf("%w: %s", ErrFolderNotEmpty, folder)
 	}
 	return nil
 }
+
+// NotAFolderError means a replay target folder, or one of its parents, is
+// not a folder: a file, a symlink or a submodule. Path is that entry.
+type NotAFolderError struct{ Path string }
+
+func (e *NotAFolderError) Error() string { return "gitx: " + e.Path + " is not a folder" }
