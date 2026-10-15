@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
@@ -160,14 +161,16 @@ func (s *Server) toStatus(ctx context.Context, err error) error {
 		return err
 	}
 	switch {
-	case errors.Is(err, gitx.ErrNotFound), errors.Is(err, store.ErrNotFound):
-		return status.Error(codes.NotFound, err.Error())
+	case errors.Is(err, gitx.ErrNotFound):
+		return status.Error(codes.NotFound, userMessage(err, gitx.ErrNotFound, " not found"))
+	case errors.Is(err, store.ErrNotFound):
+		return status.Error(codes.NotFound, userMessage(err, store.ErrNotFound, " not found"))
 	case errors.Is(err, gitx.ErrInvalid):
-		return status.Error(codes.InvalidArgument, err.Error())
+		return status.Error(codes.InvalidArgument, userMessage(err, gitx.ErrInvalid, ""))
 	case errors.Is(err, store.ErrExists):
-		return status.Error(codes.AlreadyExists, err.Error())
+		return status.Error(codes.AlreadyExists, userMessage(err, store.ErrExists, " already exists"))
 	case errors.Is(err, store.ErrMounted):
-		return status.Error(codes.FailedPrecondition, err.Error())
+		return status.Error(codes.FailedPrecondition, "repo "+userMessage(err, store.ErrMounted, " is mounted by a project"))
 	case errors.Is(err, context.Canceled):
 		return status.Error(codes.Canceled, err.Error())
 	case errors.Is(err, context.DeadlineExceeded):
@@ -180,6 +183,21 @@ func (s *Server) toStatus(ctx context.Context, err error) error {
 	id := auth.RequestID(ctx)
 	s.log.ErrorContext(ctx, "internal error", "request_id", id, "err", err)
 	return status.Errorf(codes.Internal, "internal error (request %s)", id)
+}
+
+// userMessage rewrites err, which wraps sentinel as "<sentinel>: <detail>",
+// into "<detail><suffix>" for clients: "store: not found: draft "x"" becomes
+// "draft "x" not found". The internal package prefix never reaches a client;
+// the log keeps the original error.
+func userMessage(err, sentinel error, suffix string) string {
+	msg, p := err.Error(), sentinel.Error()
+	if i := strings.Index(msg, p+": "); i >= 0 {
+		return msg[:i] + msg[i+len(p)+2:] + suffix
+	}
+	if _, bare, ok := strings.Cut(p, ": "); ok {
+		return strings.Replace(msg, p, bare, 1)
+	}
+	return msg
 }
 
 // proj is an opened, authorized and caught-up project for one RPC.

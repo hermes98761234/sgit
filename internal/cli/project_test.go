@@ -95,3 +95,33 @@ func TestProjectCommandsNeedAdminAndValidate(t *testing.T) {
 		}
 	}
 }
+
+// Errors name what went wrong without the server's internal package
+// prefixes ("store: ", "gitx: ").
+func TestErrorsCarryNoInternalPrefixes(t *testing.T) {
+	h := newHarness(t)
+	h.seed(seedFiles)
+	dir := t.TempDir()
+	w := h.checkout(t.TempDir())
+	h.ok(dir, "repo", "create", "core")
+	h.ok(dir, "project", "create", "site")
+	h.ok(dir, "project", "mount", "site", "lib", "core:.")
+	cases := []struct {
+		dir  string
+		args []string
+		want string
+	}{
+		{dir, []string{"project", "create", "site"}, `project "site" already exists`},
+		{dir, []string{"project", "unmount", "site", "nope"}, `mount "nope" not found`},
+		{dir, []string{"project", "mount", "site", "lib/sub", "core:."}, `mount path "lib/sub" overlaps "lib"`},
+		{w, []string{"land", "zzzzzzzz"}, `draft "zzzzzzzz" not found`},
+		{w, []string{"blame", "missing.txt", "--rev", "main"}, `not found`},
+		{w, []string{"log", "--rev", "--all"}, `invalid revision "--all"`},
+	}
+	for _, c := range cases {
+		code, _, errs := h.run(c.dir, c.args...)
+		if code == 0 || !strings.Contains(errs, c.want) || strings.Contains(errs, "store:") || strings.Contains(errs, "gitx:") {
+			t.Errorf("sg %s: exit %d, stderr %q (want %q)", strings.Join(c.args, " "), code, errs, c.want)
+		}
+	}
+}
