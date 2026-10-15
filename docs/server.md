@@ -212,6 +212,44 @@ Then use `--mirror https://github.com/acme/web.git`.
 - The helper refuses every host except `SG_MIRROR_HOST`, so the token is never sent to an import source on another host.
 - The token file is bind-mounted with its host permissions, so make it readable by uid 10001: `sudo chown 10001 github_token && chmod 600 github_token`.
 
+## Migrating repos in and out
+
+`sg migrate` moves code between plain git repos and the server. Both commands are admin only.
+
+### In
+
+```
+sg migrate in <url> [name] [--into <repo>:<folder>] [--project P --path DIR] [--mirror URL]
+```
+
+- Without `--into`, the repo is imported as a new repo `name` (its `main` and `release/*` keep their SHAs), like `sg repo import`.
+- With `--into mono:services/api`, the history of `main` is replayed under `services/api/` of the existing repo `mono`: one new commit per original first-parent commit, with the original author, committer, date and message. Commit SHAs change. Signatures are dropped and merges are flattened. The folder must be absent or empty. Lands into `mono` wait while the replay runs. Other branches are not migrated and are listed as skipped.
+- `name` defaults to the last segment of the URL without `.git`.
+- The code is then mounted at the root of a new project `name`, or with `--project P --path DIR` at `DIR` in the existing project `P`.
+- If the project step fails, a plain import is rolled back. After `--into` the replayed commits stay; mount them with `sg project mount`.
+
+The command prints what it did:
+
+```
+migrated https://github.com/acme/api.git into mono:services/api: 42 commits, main 1a2b3c4
+mounted at services/api/ of project mono
+warning: branches not migrated: dev, feature/x
+```
+
+### Out
+
+```
+sg migrate out <project> --to <url> [--force]
+```
+
+Pushes the project's `main` to `url`. The project is not changed; run it again to update the target. A project that mounts one whole repo at `.` keeps the repo's commit SHAs; other projects export their project history. The push is fast-forward only; `--force` overwrites a target whose `main` has diverged.
+
+```
+pushed project api to git@github.com:acme/api-export.git (main 1a2b3c4)
+```
+
+A repeat run with nothing new prints `<url> is up to date with project api (main 1a2b3c4)`.
+
 ## Releases
 
 Pushing a tag `vX.Y.Z` runs the tests, then publishes `ghcr.io/hermes98761234/sgit-server:X.Y.Z`, `:X.Y` and `:latest` for linux/amd64 and linux/arm64. Only release tags move `latest`. Prerelease tags such as `v1.0.0-rc1`, and tags that are not semver, do not.

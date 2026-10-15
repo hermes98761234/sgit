@@ -1,7 +1,7 @@
 # sgit migrate: git repos in, projects out
 
 **Date:** 2026-10-15
-**Status:** Draft, awaiting review
+**Status:** Implemented
 **Builds on:** [sgit design](2026-10-14-sgit-design.md) (§8 import and mirror), [sgit projects](2026-10-15-sgit-projects-design.md).
 
 ## 1. Goal
@@ -134,3 +134,10 @@ Everything runs under `go test -race -count=1 ./...`, plus `go vet` and staticch
 - `docs/server.md`: a migrate section with both directions and the limits from section 1.
 - `sgit-admin` skill (`skills/` and `.claude/skills/`): the commands and examples.
 - `README.md`: one line in the admin overview.
+
+## 7. Implementation notes
+
+- `--into` fetches the source `main` straight into the target repo under a temporary `refs/sgit/migrate/<rand>` ref instead of a staging repo under `.incoming/`; the ref is deleted on every path. Unreferenced objects from a failed fetch are left for git's gc.
+- `migrate out` does not fetch the target to test ancestry. It pushes without force, and git refuses a non-fast-forward; `--force` pushes with a lease on the `main` read by `ls-remote`.
+- The default name is derived by the CLI; the server validates it like any repo or project name.
+- A rolled-back import also drops the server's cached handle for the repo, so a retry with the same name starts clean.

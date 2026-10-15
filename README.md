@@ -91,6 +91,7 @@ flowchart LR
    1. Give the server credentials. See [Mirror credentials](docs/server.md#mirror-credentials).
    2. Create the repo with an empty GitHub mirror: `sg repo create web --mirror git@github.com:acme/web.git`.
    3. Or import an existing git repo and mirror it back: `sg repo import web --from URL --mirror URL`. Mount it into a project to give users access.
+7. **Optional: migrate.** `sg migrate in/out` — bring a git repo in (as its own repo or into a monorepo folder) or push a project out as a git repo.
 
 More in the **[server guide](docs/server.md)**: configuration, running without Docker, administration, import and mirroring, and releases.
 

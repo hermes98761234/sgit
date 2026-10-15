@@ -1,6 +1,6 @@
 ---
 name: sgit-admin
-description: Administer an sgit server - run sg-server, create, list, promote, demote and delete users, create, list, rotate and revoke tokens, create projects and mount repo folders into them, manage aliases, renames and read-only mounts, grant, list or revoke per-project access, create, import and delete repos, set up GitHub mirrors. Use when asked to add or remove a user, give or check someone's access to a project, set up a project, make someone admin, manage repos, check mirror status, or set up or troubleshoot sg-server.
+description: Administer an sgit server - run sg-server, create, list, promote, demote and delete users, create, list, rotate and revoke tokens, create projects and mount repo folders into them, manage aliases, renames and read-only mounts, grant, list or revoke per-project access, create, import and delete repos, migrate a repo in or out, set up GitHub mirrors. Use when asked to add or remove a user, give or check someone's access to a project, set up a project, make someone admin, manage repos, check mirror status, or set up or troubleshoot sg-server.
 ---
 
 # sgit administration
@@ -106,6 +106,22 @@ Add `--json` to any command for machine-readable output (`token create --json` i
 - The mirror pushes `main` after every land with `--force-with-lease`, never overwrites, and retries with backoff.
 - Mirror URLs: `https://…`, `ssh://…` or `user@host:path`, with no credentials in the URL. Credentials come from server env: `SG_MIRROR_TOKEN` / `SG_MIRROR_TOKEN_FILE` (HTTPS, user `SG_MIRROR_USER`, default `x-access-token`), or an SSH deploy key mounted at `/home/sg/.ssh`.
 - `sg repo list` MIRROR column: `-`, `ok`, `pending`, `error`, `broken`. For `error`/`broken`, read `sg repo status <name>` and fix credentials or the remote.
+
+### Migrate
+
+```
+sg migrate in <url> [name] [--into <repo>:<folder>] [--project P --path DIR] [--mirror URL]
+sg migrate out <project> --to <url> [--force]
+```
+
+```
+sg migrate in https://github.com/acme/api.git                       # repo api + project api
+sg migrate in https://github.com/acme/api.git --into mono:services/api  # into the monorepo
+sg migrate out api --to git@github.com:acme/api-export.git
+```
+
+- `--into` replays the history of `main` under the folder with new SHAs (signatures dropped, merges flattened); the folder must be absent or empty. Other branches are skipped.
+- `migrate out` pushes the project's `main`, fast-forward only; `--force` overwrites a diverged target. The project is not changed.
 
 ## Running the server
 
