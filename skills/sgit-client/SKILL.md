@@ -75,7 +75,7 @@ Files outside the sparse paths are ignored by `sg status` and `sg commit`, even 
 
 ## Undoing local changes
 
-There is no revert command. Restore a file from `main` with `sg cat main:<path> > <path>` (delete a file you added); this also clears a conflicted file's markers. `sg abandon` drops the draft on the server but does not touch your files.
+There is no revert command. Restore a file from `main` with `sg cat main:<path> > <path>` (delete a file you added); this also clears a conflicted file's markers, but the file stays `conflict:` in `sg status` until `sg commit` runs. `sg abandon` drops the draft on the server but does not touch your files.
 
 ## Exit codes - handle them
 
@@ -91,9 +91,9 @@ There is no revert command. Restore a file from `main` with `sg cat main:<path> 
 ## Tips for agents
 
 - Use `--json` on any command for machine-readable output; errors become `{"error": ..., "exit_code": ...}`. Lists are wrapped in objects: `log` → `commits`, `blame` → `lines`, `drafts` → `drafts`, `sparse list` → `sparse`. `sync` lists `updated`, `deleted`, `merged` and `conflicts`.
-- Rerunning `sg commit -m ... --land` after a land whose answer was lost is safe: it syncs, lands only newer edits, and with none prints `these changes are already on main` (exit 0, `--json` `"already_on_main": true`).
+- Rerunning `sg commit -m ... --land` after a land whose answer was lost is safe: it syncs, lands only newer edits, and with none prints `these changes are already on main` (exit 0, `--json` `"already_on_main": true`). If the sync conflicts with later edits it exits 3 with `"landed": false`.
 - Run `sg sync` before editing and `sg status` + `sg diff` before landing, so you only land what you intended.
-- Check `sg status` for `skipped:` files: names with newlines, CR, backslashes or invalid UTF-8, and names git reads as `.git` (`GIT~1`, `.git.`, `.git ` folders; a symlink named `.gitmodules`) cannot be stored and are never committed.
+- Check `sg status` for `skipped:` files: names with newlines, CR, backslashes or invalid UTF-8, and names git reads as `.git` (`GIT~1`, `.git.`, `.git ` folders; a symlink named `.gitmodules`) cannot be stored and are never committed. A tracked file with such a name (imported history) can still be deleted; edits to it are skipped.
 - Max file size is set by the server (100 MB by default).
 - If `sgd` (local cache daemon) runs, `sg` uses it automatically; `SG_NO_DAEMON=1` bypasses it. An error that says `through sgd at <socket>` means sgd cannot reach the server: retry with `SG_NO_DAEMON=1` and tell the human.
 - Confirm with the human before landing on `main` unless they already asked you to land.

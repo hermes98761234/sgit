@@ -12,7 +12,7 @@ sgit is source control on top of git where git runs only on the server. `sg-serv
 - **Users** are created implicitly by `sg token create <user>`. Name: `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`.
 - **Tokens** look like `sgt_…`. Only the hash is stored, so a token is shown **once**. Each token has a short **id** (printed on stderr) used to revoke it.
 - **Global admin** is a user flag: set at creation with `--admin`, or later with `sg user promote` / `sg user demote`. It bypasses all project ACLs. The server never lets the last admin be demoted or deleted.
-- **Repos are admin-only.** Users never see repo names or source paths, and never source commit SHAs except in one case: a project whose first mount is a whole repo at `.` copies that repo's commits byte for byte, so they keep their SHAs (up to the first signed, `encoding`-header or merge commit; all of them for repos made through sgit). Use folder mounts when the SHAs must stay private. Users get **projects**.
+- **Repos are admin-only.** Users never see repo names or source paths, and never source commit SHAs except in one case: a project whose first mount is a whole repo at `.` copies that repo's commits byte for byte, so they keep their SHAs (up to the first merge commit or commit with any extra header, such as a signature or `encoding`; all of them for repos made through sgit). Use folder mounts when the SHAs must stay private. Users get **projects**.
 - **Project**: an id, a unique name, optional **aliases**, and **mounts**. A mount maps a project path to `<repo>:<folder>` and can be `--read-only` (refuses writes from everyone, admins included). One project can mount folders of several repos.
 - **Project reference**: name, alias or `#<id>` (e.g. `#3`). A bare number is a name, never an id.
 - **Mount rules**: the path is a clean relative path or `.` (project root); the folder is a clean repo-relative path or `.` (repo root). Mount paths must not nest. `.` only as the single mount. A missing folder shows up empty until it is created.
@@ -116,7 +116,7 @@ sg-server serve [--data DIR] [--listen :7419] --tls-cert cert.pem --tls-key key.
 sg-server health [--addr 127.0.0.1:7419]              # prints SERVING
 ```
 
-Env: `SG_DATA_DIR` (`/data` in Docker, `./sgdata` otherwise), `SG_LISTEN` (`:7419`), `SG_TLS_CERT`, `SG_TLS_KEY`, `SG_TLS_SELF_SIGNED=1` + `SG_TLS_HOSTS` (Docker image only; without Docker use `gen-cert`), `SG_MAX_BLOB_MB` (100), `SG_LOG_LEVEL`, `SG_DEV_INSECURE`. TLS is required; `--dev-insecure` works only on loopback. Docker: `docker compose up -d`, data in the `/data` volume. Only one `sg-server` can use a data dir at a time (a lock on `<data>/sg.lock`); a second one exits with `another sg-server is already using data dir …`.
+Env: `SG_DATA_DIR` (`/data` in Docker, `./sgdata` otherwise), `SG_LISTEN` (`:7419`), `SG_TLS_CERT`, `SG_TLS_KEY`, `SG_TLS_SELF_SIGNED=1` + `SG_TLS_HOSTS` (Docker image only; without Docker use `gen-cert`), `SG_MAX_BLOB_MB` (100), `SG_LOG_LEVEL`, `SG_DEV_INSECURE`. TLS is required; `--dev-insecure` works only on loopback. Docker: `docker compose up -d`, data in the `/data` volume. Only one `sg-server` can use a data dir at a time (a lock on `<data>/sg.lock`); a second one exits with `another sg-server is already using data dir …`. A filesystem without locks, or a `sg.db` it cannot chmod to 0600, only gives a warning in the log.
 
 ## Exit codes
 
