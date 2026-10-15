@@ -174,6 +174,29 @@ You can also call them explicitly: `/sgit-admin` or `/sgit-client` in Claude Cod
 
 ## Performance
 
+### v0.3.0: projects
+
+Measured on one machine (Intel i7-4790, 8 CPUs, git 2.43) with the Go benchmarks in `internal/cli/bench_test.go`:
+
+```bash
+go test -run '^$' -bench 'BenchmarkProject(Checkout|Log)' -benchtime 5x ./internal/cli/
+go test -run '^$' -bench 'BenchmarkProjectLand' -benchtime 20x ./internal/cli/
+```
+
+The repo has 20,000 files of about 2.7 KB in `d0`..`d19`, plus 120 commits. Two project layouts are measured: 20 folder mounts (`d0`..`d19`), and the whole repo mounted at `.`. Server and client run in one process over loopback, without TLS, Docker or `sgd`. The ranges cover two runs.
+
+| Operation (project over the 20,000-file repo) | 20 folder mounts | whole repo at `.` |
+|---|---|---|
+| `sg checkout`, full | 2.4 s | 2.4 s |
+| `sg commit --land`, 1 file | 0.63 s | 0.61–0.62 s |
+| `sg log -n 100` (100 entries) | 9–10 ms | 10 ms |
+
+- **Cost of projects.** On the same machine and harness, the code before projects landed one file in 0.48–0.57 s, so projects add about 0.05–0.15 s per land. The extra time goes to updating the project's derived repo after the land and one more fsynced database write. Checkout and log cost the same with or without projects.
+- **Where a land's time goes.** About 0.3 s of a one-file land is the client scanning 20,000 files and saving its index; that part is the same without projects. The number of folders mounted makes no measurable difference.
+- **Robustness.** A randomized run of 10,000 steps (`go test -tags monkey`) by several users across two repos and their projects had 566 successful lands. Every acknowledged land was still on `main` at the end, every working copy matched its project, every project folder matched its source folder, and `git fsck --strict` was clean on every repo.
+
+### v0.2.0: repos, in Docker
+
 Measured with v0.2.0 in Docker on one machine (8 CPUs, 31 GB RAM, git 2.45): `sg-server`, `sgd` and the clients each ran in their own container on a local network, over TLS. The test repo has 20,000 files of about 2.7 KB in 20 directories, plus 20 commits of history. The bare repo is 41 MB.
 
 | Operation (20,000-file repo) | Time |
@@ -195,26 +218,6 @@ Measured with v0.2.0 in Docker on one machine (8 CPUs, 31 GB RAM, git 2.45): `sg
 - **Small repos.** A one-file land takes about 60 ms. In large repos, landing still costs time proportional to the repo size: the client scans the working copy, and the server rebuilds the tree.
 - **Many users.** 30 users, each with their own token, landed 10 rounds each on one repo at the same time. All 300 lands succeeded in 17 s, about 18 lands/s, with a p50 of 1.3 s and a p95 of 1.7 s per land. Lands that touch different files never conflict; the server rebases them. When many users edit the same file at the same moment, most of their lands conflict and have to be fixed by hand, as with git.
 - **Robustness.** A randomized "monkey" run made about 6,300 sg calls while killing the server, restarting `sgd` and sending junk to the port. The calls included random edits, garbage arguments and `kill -9` mid-command. No call crashed or broke a working copy. At the end, every working copy matched `main` and `git fsck` was clean.
-
-### Projects (in-process, same 20,000-file layout)
-
-These numbers come from Go benchmarks: `go test -run '^$' -bench BenchmarkProject -benchtime 5x ./internal/cli/`. They were measured on one machine (Intel i7-4790, 8 CPUs, git 2.43). The setup differs from the v0.2.0 runs above in several ways, so do not compare the two tables row by row:
-
-- Server and client run in one test process over loopback, without TLS, Docker or `sgd`, and share the same CPUs.
-- Each figure is the mean of 5 iterations, and the first iteration is cold.
-- The ranges cover two runs.
-
-The repo `big` has the same 20,000 files in `d0`..`d19`, a seed commit and 119 one-file commits, so `sg log -n 100` returns 100 entries. Two project layouts are measured: 20 folder mounts (`d0`..`d19`) and one mount of the whole repo at `.`.
-
-| Operation (project over the 20,000-file repo) | 20 folder mounts | whole repo at `.` |
-|---|---|---|
-| `sg checkout`, full | 2.3–2.4 s | 2.3–2.4 s |
-| `sg commit --land`, 1 file | 0.70–0.86 s | 0.73–0.86 s |
-| `sg log -n 100` (100 entries) | 10 ms | 8–10 ms |
-
-With 5 iterations the land figure is noisy: the disk of this machine is nearly full, and a single fsync takes 10–16 ms on it. Longer runs (`-bench BenchmarkProjectLand -benchtime 20x`, two runs) give 0.55–0.58 s with 20 folder mounts and 0.63–0.64 s with a `.` mount. The same 20x runs of the previous build (commit 0e6a795), run alternately with these, gave 0.79–0.81 s and 0.74–0.77 s. `sg log` went from 14–17 ms to 8–10 ms because catch-ups no longer leave one small pack per translated commit in the project repo.
-
-Most of a one-file land is spent in the client, which costs the same with or without projects: it scans the 20,000 files and saves its index twice (about 0.3 s here). On the server, small object copies are written as loose objects instead of an fsynced pack, the catch-up reads all folders of a repo with one git process, the source tree is built by replacing only the touched folder (no full index of the source repo), and the new project commits and the landed draft are stored in one SQLite transaction. Projects still make a land slower. On this same harness and machine, the code before projects (a port of `BenchmarkProjectLand` to plain repos, 20x, three runs) landed one file in 0.48–0.57 s. Projects therefore add roughly 0.05–0.15 s per land (0.55–0.58 s with 20 folder mounts, 0.63–0.64 s with a `.` mount), mostly the post-land catch-up and the extra fsynced SQLite commit that records the land sequence.
 
 ## Docs
 
