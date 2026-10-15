@@ -4573,6 +4573,322 @@ func (x *DeleteProjectResponse) GetAclsRemoved() int32 {
 	return 0
 }
 
+// MigrateIn imports from_url as repo `name`, or with into_repo replays its
+// main under into_folder of that repo; then mounts it in a new project
+// `name`, or in `project` at `path`.
+type MigrateInRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	FromUrl       string                 `protobuf:"bytes,1,opt,name=from_url,json=fromUrl,proto3" json:"from_url,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	IntoRepo      string                 `protobuf:"bytes,3,opt,name=into_repo,json=intoRepo,proto3" json:"into_repo,omitempty"`
+	IntoFolder    string                 `protobuf:"bytes,4,opt,name=into_folder,json=intoFolder,proto3" json:"into_folder,omitempty"`
+	Project       string                 `protobuf:"bytes,5,opt,name=project,proto3" json:"project,omitempty"`
+	Path          string                 `protobuf:"bytes,6,opt,name=path,proto3" json:"path,omitempty"`
+	MirrorUrl     string                 `protobuf:"bytes,7,opt,name=mirror_url,json=mirrorUrl,proto3" json:"mirror_url,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MigrateInRequest) Reset() {
+	*x = MigrateInRequest{}
+	mi := &file_sgit_v1_sgit_proto_msgTypes[80]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MigrateInRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MigrateInRequest) ProtoMessage() {}
+
+func (x *MigrateInRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sgit_v1_sgit_proto_msgTypes[80]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MigrateInRequest.ProtoReflect.Descriptor instead.
+func (*MigrateInRequest) Descriptor() ([]byte, []int) {
+	return file_sgit_v1_sgit_proto_rawDescGZIP(), []int{80}
+}
+
+func (x *MigrateInRequest) GetFromUrl() string {
+	if x != nil {
+		return x.FromUrl
+	}
+	return ""
+}
+
+func (x *MigrateInRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *MigrateInRequest) GetIntoRepo() string {
+	if x != nil {
+		return x.IntoRepo
+	}
+	return ""
+}
+
+func (x *MigrateInRequest) GetIntoFolder() string {
+	if x != nil {
+		return x.IntoFolder
+	}
+	return ""
+}
+
+func (x *MigrateInRequest) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *MigrateInRequest) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *MigrateInRequest) GetMirrorUrl() string {
+	if x != nil {
+		return x.MirrorUrl
+	}
+	return ""
+}
+
+type MigrateInResponse struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Repo            string                 `protobuf:"bytes,1,opt,name=repo,proto3" json:"repo,omitempty"`
+	Folder          string                 `protobuf:"bytes,2,opt,name=folder,proto3" json:"folder,omitempty"`    // "." for a whole-repo import
+	Project         string                 `protobuf:"bytes,3,opt,name=project,proto3" json:"project,omitempty"`  // canonical project name
+	Path            string                 `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`        // mount path in the project
+	Main            string                 `protobuf:"bytes,5,opt,name=main,proto3" json:"main,omitempty"`        // repo main after the migration
+	Commits         int32                  `protobuf:"varint,6,opt,name=commits,proto3" json:"commits,omitempty"` // commits imported or replayed
+	SkippedBranches []string               `protobuf:"bytes,7,rep,name=skipped_branches,json=skippedBranches,proto3" json:"skipped_branches,omitempty"`
+	ProjectHead     string                 `protobuf:"bytes,8,opt,name=project_head,json=projectHead,proto3" json:"project_head,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *MigrateInResponse) Reset() {
+	*x = MigrateInResponse{}
+	mi := &file_sgit_v1_sgit_proto_msgTypes[81]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MigrateInResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MigrateInResponse) ProtoMessage() {}
+
+func (x *MigrateInResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sgit_v1_sgit_proto_msgTypes[81]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MigrateInResponse.ProtoReflect.Descriptor instead.
+func (*MigrateInResponse) Descriptor() ([]byte, []int) {
+	return file_sgit_v1_sgit_proto_rawDescGZIP(), []int{81}
+}
+
+func (x *MigrateInResponse) GetRepo() string {
+	if x != nil {
+		return x.Repo
+	}
+	return ""
+}
+
+func (x *MigrateInResponse) GetFolder() string {
+	if x != nil {
+		return x.Folder
+	}
+	return ""
+}
+
+func (x *MigrateInResponse) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *MigrateInResponse) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *MigrateInResponse) GetMain() string {
+	if x != nil {
+		return x.Main
+	}
+	return ""
+}
+
+func (x *MigrateInResponse) GetCommits() int32 {
+	if x != nil {
+		return x.Commits
+	}
+	return 0
+}
+
+func (x *MigrateInResponse) GetSkippedBranches() []string {
+	if x != nil {
+		return x.SkippedBranches
+	}
+	return nil
+}
+
+func (x *MigrateInResponse) GetProjectHead() string {
+	if x != nil {
+		return x.ProjectHead
+	}
+	return ""
+}
+
+// MigrateOut pushes a project's main to to_url (fast-forward unless force).
+type MigrateOutRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
+	ToUrl         string                 `protobuf:"bytes,2,opt,name=to_url,json=toUrl,proto3" json:"to_url,omitempty"`
+	Force         bool                   `protobuf:"varint,3,opt,name=force,proto3" json:"force,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MigrateOutRequest) Reset() {
+	*x = MigrateOutRequest{}
+	mi := &file_sgit_v1_sgit_proto_msgTypes[82]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MigrateOutRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MigrateOutRequest) ProtoMessage() {}
+
+func (x *MigrateOutRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sgit_v1_sgit_proto_msgTypes[82]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MigrateOutRequest.ProtoReflect.Descriptor instead.
+func (*MigrateOutRequest) Descriptor() ([]byte, []int) {
+	return file_sgit_v1_sgit_proto_rawDescGZIP(), []int{82}
+}
+
+func (x *MigrateOutRequest) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *MigrateOutRequest) GetToUrl() string {
+	if x != nil {
+		return x.ToUrl
+	}
+	return ""
+}
+
+func (x *MigrateOutRequest) GetForce() bool {
+	if x != nil {
+		return x.Force
+	}
+	return false
+}
+
+type MigrateOutResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
+	Pushed        string                 `protobuf:"bytes,2,opt,name=pushed,proto3" json:"pushed,omitempty"`
+	UpToDate      bool                   `protobuf:"varint,3,opt,name=up_to_date,json=upToDate,proto3" json:"up_to_date,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MigrateOutResponse) Reset() {
+	*x = MigrateOutResponse{}
+	mi := &file_sgit_v1_sgit_proto_msgTypes[83]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MigrateOutResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MigrateOutResponse) ProtoMessage() {}
+
+func (x *MigrateOutResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sgit_v1_sgit_proto_msgTypes[83]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MigrateOutResponse.ProtoReflect.Descriptor instead.
+func (*MigrateOutResponse) Descriptor() ([]byte, []int) {
+	return file_sgit_v1_sgit_proto_rawDescGZIP(), []int{83}
+}
+
+func (x *MigrateOutResponse) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *MigrateOutResponse) GetPushed() string {
+	if x != nil {
+		return x.Pushed
+	}
+	return ""
+}
+
+func (x *MigrateOutResponse) GetUpToDate() bool {
+	if x != nil {
+		return x.UpToDate
+	}
+	return false
+}
+
 type DaemonInfoRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -4581,7 +4897,7 @@ type DaemonInfoRequest struct {
 
 func (x *DaemonInfoRequest) Reset() {
 	*x = DaemonInfoRequest{}
-	mi := &file_sgit_v1_sgit_proto_msgTypes[80]
+	mi := &file_sgit_v1_sgit_proto_msgTypes[84]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4593,7 +4909,7 @@ func (x *DaemonInfoRequest) String() string {
 func (*DaemonInfoRequest) ProtoMessage() {}
 
 func (x *DaemonInfoRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sgit_v1_sgit_proto_msgTypes[80]
+	mi := &file_sgit_v1_sgit_proto_msgTypes[84]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4606,7 +4922,7 @@ func (x *DaemonInfoRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DaemonInfoRequest.ProtoReflect.Descriptor instead.
 func (*DaemonInfoRequest) Descriptor() ([]byte, []int) {
-	return file_sgit_v1_sgit_proto_rawDescGZIP(), []int{80}
+	return file_sgit_v1_sgit_proto_rawDescGZIP(), []int{84}
 }
 
 type DaemonInfoResponse struct {
@@ -4621,7 +4937,7 @@ type DaemonInfoResponse struct {
 
 func (x *DaemonInfoResponse) Reset() {
 	*x = DaemonInfoResponse{}
-	mi := &file_sgit_v1_sgit_proto_msgTypes[81]
+	mi := &file_sgit_v1_sgit_proto_msgTypes[85]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4633,7 +4949,7 @@ func (x *DaemonInfoResponse) String() string {
 func (*DaemonInfoResponse) ProtoMessage() {}
 
 func (x *DaemonInfoResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sgit_v1_sgit_proto_msgTypes[81]
+	mi := &file_sgit_v1_sgit_proto_msgTypes[85]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4646,7 +4962,7 @@ func (x *DaemonInfoResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DaemonInfoResponse.ProtoReflect.Descriptor instead.
 func (*DaemonInfoResponse) Descriptor() ([]byte, []int) {
-	return file_sgit_v1_sgit_proto_rawDescGZIP(), []int{81}
+	return file_sgit_v1_sgit_proto_rawDescGZIP(), []int{85}
 }
 
 func (x *DaemonInfoResponse) GetUpstream() string {
@@ -4977,7 +5293,35 @@ const file_sgit_v1_sgit_proto_rawDesc = "" +
 	"\aproject\x18\x01 \x01(\tR\aproject\"a\n" +
 	"\x15DeleteProjectResponse\x12%\n" +
 	"\x0edrafts_removed\x18\x01 \x01(\x05R\rdraftsRemoved\x12!\n" +
-	"\facls_removed\x18\x02 \x01(\x05R\vaclsRemoved\"\x13\n" +
+	"\facls_removed\x18\x02 \x01(\x05R\vaclsRemoved\"\xcc\x01\n" +
+	"\x10MigrateInRequest\x12\x19\n" +
+	"\bfrom_url\x18\x01 \x01(\tR\afromUrl\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1b\n" +
+	"\tinto_repo\x18\x03 \x01(\tR\bintoRepo\x12\x1f\n" +
+	"\vinto_folder\x18\x04 \x01(\tR\n" +
+	"intoFolder\x12\x18\n" +
+	"\aproject\x18\x05 \x01(\tR\aproject\x12\x12\n" +
+	"\x04path\x18\x06 \x01(\tR\x04path\x12\x1d\n" +
+	"\n" +
+	"mirror_url\x18\a \x01(\tR\tmirrorUrl\"\xe9\x01\n" +
+	"\x11MigrateInResponse\x12\x12\n" +
+	"\x04repo\x18\x01 \x01(\tR\x04repo\x12\x16\n" +
+	"\x06folder\x18\x02 \x01(\tR\x06folder\x12\x18\n" +
+	"\aproject\x18\x03 \x01(\tR\aproject\x12\x12\n" +
+	"\x04path\x18\x04 \x01(\tR\x04path\x12\x12\n" +
+	"\x04main\x18\x05 \x01(\tR\x04main\x12\x18\n" +
+	"\acommits\x18\x06 \x01(\x05R\acommits\x12)\n" +
+	"\x10skipped_branches\x18\a \x03(\tR\x0fskippedBranches\x12!\n" +
+	"\fproject_head\x18\b \x01(\tR\vprojectHead\"Z\n" +
+	"\x11MigrateOutRequest\x12\x18\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\x12\x15\n" +
+	"\x06to_url\x18\x02 \x01(\tR\x05toUrl\x12\x14\n" +
+	"\x05force\x18\x03 \x01(\bR\x05force\"d\n" +
+	"\x12MigrateOutResponse\x12\x18\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\x12\x16\n" +
+	"\x06pushed\x18\x02 \x01(\tR\x06pushed\x12\x1c\n" +
+	"\n" +
+	"up_to_date\x18\x03 \x01(\bR\bupToDate\"\x13\n" +
 	"\x11DaemonInfoRequest\"\x93\x01\n" +
 	"\x12DaemonInfoResponse\x12\x1a\n" +
 	"\bupstream\x18\x01 \x01(\tR\bupstream\x12\x18\n" +
@@ -5010,7 +5354,7 @@ const file_sgit_v1_sgit_proto_rawDesc = "" +
 	"\x05Blame\x12\x15.sgit.v1.BlameRequest\x1a\x16.sgit.v1.BlameResponse\x123\n" +
 	"\x04Diff\x12\x14.sgit.v1.DiffRequest\x1a\x15.sgit.v1.DiffResponse\x12B\n" +
 	"\tMergeFile\x12\x19.sgit.v1.MergeFileRequest\x1a\x1a.sgit.v1.MergeFileResponse\x12K\n" +
-	"\fListProjects\x12\x1c.sgit.v1.ListProjectsRequest\x1a\x1d.sgit.v1.ListProjectsResponse2\xa7\r\n" +
+	"\fListProjects\x12\x1c.sgit.v1.ListProjectsRequest\x1a\x1d.sgit.v1.ListProjectsResponse2\xb2\x0e\n" +
 	"\x05Admin\x129\n" +
 	"\x06WhoAmI\x12\x16.sgit.v1.WhoAmIRequest\x1a\x17.sgit.v1.WhoAmIResponse\x12E\n" +
 	"\n" +
@@ -5042,7 +5386,10 @@ const file_sgit_v1_sgit_proto_rawDesc = "" +
 	"\fListProjects\x12!.sgit.v1.AdminListProjectsRequest\x1a\".sgit.v1.AdminListProjectsResponse\x12>\n" +
 	"\n" +
 	"GetProject\x12\x1a.sgit.v1.GetProjectRequest\x1a\x14.sgit.v1.ProjectInfo\x12N\n" +
-	"\rDeleteProject\x12\x1d.sgit.v1.DeleteProjectRequest\x1a\x1e.sgit.v1.DeleteProjectResponse2I\n" +
+	"\rDeleteProject\x12\x1d.sgit.v1.DeleteProjectRequest\x1a\x1e.sgit.v1.DeleteProjectResponse\x12B\n" +
+	"\tMigrateIn\x12\x19.sgit.v1.MigrateInRequest\x1a\x1a.sgit.v1.MigrateInResponse\x12E\n" +
+	"\n" +
+	"MigrateOut\x12\x1a.sgit.v1.MigrateOutRequest\x1a\x1b.sgit.v1.MigrateOutResponse2I\n" +
 	"\x06Daemon\x12?\n" +
 	"\x04Info\x12\x1a.sgit.v1.DaemonInfoRequest\x1a\x1b.sgit.v1.DaemonInfoResponseB3Z1github.com/hermes98761234/sgit/gen/sgit/v1;sgitv1b\x06proto3"
 
@@ -5059,7 +5406,7 @@ func file_sgit_v1_sgit_proto_rawDescGZIP() []byte {
 }
 
 var file_sgit_v1_sgit_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_sgit_v1_sgit_proto_msgTypes = make([]protoimpl.MessageInfo, 82)
+var file_sgit_v1_sgit_proto_msgTypes = make([]protoimpl.MessageInfo, 86)
 var file_sgit_v1_sgit_proto_goTypes = []any{
 	(ChangeOp)(0),                     // 0: sgit.v1.ChangeOp
 	(*ResolveRevRequest)(nil),         // 1: sgit.v1.ResolveRevRequest
@@ -5142,8 +5489,12 @@ var file_sgit_v1_sgit_proto_goTypes = []any{
 	(*GetProjectRequest)(nil),         // 78: sgit.v1.GetProjectRequest
 	(*DeleteProjectRequest)(nil),      // 79: sgit.v1.DeleteProjectRequest
 	(*DeleteProjectResponse)(nil),     // 80: sgit.v1.DeleteProjectResponse
-	(*DaemonInfoRequest)(nil),         // 81: sgit.v1.DaemonInfoRequest
-	(*DaemonInfoResponse)(nil),        // 82: sgit.v1.DaemonInfoResponse
+	(*MigrateInRequest)(nil),          // 81: sgit.v1.MigrateInRequest
+	(*MigrateInResponse)(nil),         // 82: sgit.v1.MigrateInResponse
+	(*MigrateOutRequest)(nil),         // 83: sgit.v1.MigrateOutRequest
+	(*MigrateOutResponse)(nil),        // 84: sgit.v1.MigrateOutResponse
+	(*DaemonInfoRequest)(nil),         // 85: sgit.v1.DaemonInfoRequest
+	(*DaemonInfoResponse)(nil),        // 86: sgit.v1.DaemonInfoResponse
 }
 var file_sgit_v1_sgit_proto_depIdxs = []int32{
 	0,  // 0: sgit.v1.Change.op:type_name -> sgit.v1.ChangeOp
@@ -5202,50 +5553,54 @@ var file_sgit_v1_sgit_proto_depIdxs = []int32{
 	76, // 53: sgit.v1.Admin.ListProjects:input_type -> sgit.v1.AdminListProjectsRequest
 	78, // 54: sgit.v1.Admin.GetProject:input_type -> sgit.v1.GetProjectRequest
 	79, // 55: sgit.v1.Admin.DeleteProject:input_type -> sgit.v1.DeleteProjectRequest
-	81, // 56: sgit.v1.Daemon.Info:input_type -> sgit.v1.DaemonInfoRequest
-	2,  // 57: sgit.v1.Project.ResolveRev:output_type -> sgit.v1.ResolveRevResponse
-	4,  // 58: sgit.v1.Project.GetObjects:output_type -> sgit.v1.Object
-	6,  // 59: sgit.v1.Project.HasObjects:output_type -> sgit.v1.HasObjectsResponse
-	8,  // 60: sgit.v1.Project.UploadBlobs:output_type -> sgit.v1.UploadBlobsResponse
-	16, // 61: sgit.v1.Project.CreateDraft:output_type -> sgit.v1.Draft
-	16, // 62: sgit.v1.Project.UpdateDraft:output_type -> sgit.v1.Draft
-	16, // 63: sgit.v1.Project.GetDraft:output_type -> sgit.v1.Draft
-	14, // 64: sgit.v1.Project.ListDrafts:output_type -> sgit.v1.ListDraftsResponse
-	16, // 65: sgit.v1.Project.AbandonDraft:output_type -> sgit.v1.Draft
-	19, // 66: sgit.v1.Project.Land:output_type -> sgit.v1.LandResponse
-	19, // 67: sgit.v1.Project.CommitAndLand:output_type -> sgit.v1.LandResponse
-	24, // 68: sgit.v1.Project.Log:output_type -> sgit.v1.LogResponse
-	27, // 69: sgit.v1.Project.Blame:output_type -> sgit.v1.BlameResponse
-	29, // 70: sgit.v1.Project.Diff:output_type -> sgit.v1.DiffResponse
-	31, // 71: sgit.v1.Project.MergeFile:output_type -> sgit.v1.MergeFileResponse
-	34, // 72: sgit.v1.Project.ListProjects:output_type -> sgit.v1.ListProjectsResponse
-	36, // 73: sgit.v1.Admin.WhoAmI:output_type -> sgit.v1.WhoAmIResponse
-	38, // 74: sgit.v1.Admin.CreateRepo:output_type -> sgit.v1.CreateRepoResponse
-	38, // 75: sgit.v1.Admin.ImportRepo:output_type -> sgit.v1.CreateRepoResponse
-	43, // 76: sgit.v1.Admin.RepoStatus:output_type -> sgit.v1.RepoInfo
-	42, // 77: sgit.v1.Admin.ListRepos:output_type -> sgit.v1.ListReposResponse
-	45, // 78: sgit.v1.Admin.CreateToken:output_type -> sgit.v1.CreateTokenResponse
-	47, // 79: sgit.v1.Admin.RevokeToken:output_type -> sgit.v1.RevokeTokenResponse
-	49, // 80: sgit.v1.Admin.GrantACL:output_type -> sgit.v1.GrantACLResponse
-	51, // 81: sgit.v1.Admin.RevokeACL:output_type -> sgit.v1.RevokeACLResponse
-	54, // 82: sgit.v1.Admin.ListUsers:output_type -> sgit.v1.ListUsersResponse
-	56, // 83: sgit.v1.Admin.SetUserAdmin:output_type -> sgit.v1.SetUserAdminResponse
-	58, // 84: sgit.v1.Admin.DeleteUser:output_type -> sgit.v1.DeleteUserResponse
-	61, // 85: sgit.v1.Admin.ListTokens:output_type -> sgit.v1.ListTokensResponse
-	64, // 86: sgit.v1.Admin.ListACL:output_type -> sgit.v1.ListACLResponse
-	66, // 87: sgit.v1.Admin.DeleteRepo:output_type -> sgit.v1.DeleteRepoResponse
-	69, // 88: sgit.v1.Admin.CreateProject:output_type -> sgit.v1.ProjectInfo
-	69, // 89: sgit.v1.Admin.MountProject:output_type -> sgit.v1.ProjectInfo
-	69, // 90: sgit.v1.Admin.UnmountProject:output_type -> sgit.v1.ProjectInfo
-	69, // 91: sgit.v1.Admin.AddProjectAlias:output_type -> sgit.v1.ProjectInfo
-	69, // 92: sgit.v1.Admin.RemoveProjectAlias:output_type -> sgit.v1.ProjectInfo
-	69, // 93: sgit.v1.Admin.RenameProject:output_type -> sgit.v1.ProjectInfo
-	77, // 94: sgit.v1.Admin.ListProjects:output_type -> sgit.v1.AdminListProjectsResponse
-	69, // 95: sgit.v1.Admin.GetProject:output_type -> sgit.v1.ProjectInfo
-	80, // 96: sgit.v1.Admin.DeleteProject:output_type -> sgit.v1.DeleteProjectResponse
-	82, // 97: sgit.v1.Daemon.Info:output_type -> sgit.v1.DaemonInfoResponse
-	57, // [57:98] is the sub-list for method output_type
-	16, // [16:57] is the sub-list for method input_type
+	81, // 56: sgit.v1.Admin.MigrateIn:input_type -> sgit.v1.MigrateInRequest
+	83, // 57: sgit.v1.Admin.MigrateOut:input_type -> sgit.v1.MigrateOutRequest
+	85, // 58: sgit.v1.Daemon.Info:input_type -> sgit.v1.DaemonInfoRequest
+	2,  // 59: sgit.v1.Project.ResolveRev:output_type -> sgit.v1.ResolveRevResponse
+	4,  // 60: sgit.v1.Project.GetObjects:output_type -> sgit.v1.Object
+	6,  // 61: sgit.v1.Project.HasObjects:output_type -> sgit.v1.HasObjectsResponse
+	8,  // 62: sgit.v1.Project.UploadBlobs:output_type -> sgit.v1.UploadBlobsResponse
+	16, // 63: sgit.v1.Project.CreateDraft:output_type -> sgit.v1.Draft
+	16, // 64: sgit.v1.Project.UpdateDraft:output_type -> sgit.v1.Draft
+	16, // 65: sgit.v1.Project.GetDraft:output_type -> sgit.v1.Draft
+	14, // 66: sgit.v1.Project.ListDrafts:output_type -> sgit.v1.ListDraftsResponse
+	16, // 67: sgit.v1.Project.AbandonDraft:output_type -> sgit.v1.Draft
+	19, // 68: sgit.v1.Project.Land:output_type -> sgit.v1.LandResponse
+	19, // 69: sgit.v1.Project.CommitAndLand:output_type -> sgit.v1.LandResponse
+	24, // 70: sgit.v1.Project.Log:output_type -> sgit.v1.LogResponse
+	27, // 71: sgit.v1.Project.Blame:output_type -> sgit.v1.BlameResponse
+	29, // 72: sgit.v1.Project.Diff:output_type -> sgit.v1.DiffResponse
+	31, // 73: sgit.v1.Project.MergeFile:output_type -> sgit.v1.MergeFileResponse
+	34, // 74: sgit.v1.Project.ListProjects:output_type -> sgit.v1.ListProjectsResponse
+	36, // 75: sgit.v1.Admin.WhoAmI:output_type -> sgit.v1.WhoAmIResponse
+	38, // 76: sgit.v1.Admin.CreateRepo:output_type -> sgit.v1.CreateRepoResponse
+	38, // 77: sgit.v1.Admin.ImportRepo:output_type -> sgit.v1.CreateRepoResponse
+	43, // 78: sgit.v1.Admin.RepoStatus:output_type -> sgit.v1.RepoInfo
+	42, // 79: sgit.v1.Admin.ListRepos:output_type -> sgit.v1.ListReposResponse
+	45, // 80: sgit.v1.Admin.CreateToken:output_type -> sgit.v1.CreateTokenResponse
+	47, // 81: sgit.v1.Admin.RevokeToken:output_type -> sgit.v1.RevokeTokenResponse
+	49, // 82: sgit.v1.Admin.GrantACL:output_type -> sgit.v1.GrantACLResponse
+	51, // 83: sgit.v1.Admin.RevokeACL:output_type -> sgit.v1.RevokeACLResponse
+	54, // 84: sgit.v1.Admin.ListUsers:output_type -> sgit.v1.ListUsersResponse
+	56, // 85: sgit.v1.Admin.SetUserAdmin:output_type -> sgit.v1.SetUserAdminResponse
+	58, // 86: sgit.v1.Admin.DeleteUser:output_type -> sgit.v1.DeleteUserResponse
+	61, // 87: sgit.v1.Admin.ListTokens:output_type -> sgit.v1.ListTokensResponse
+	64, // 88: sgit.v1.Admin.ListACL:output_type -> sgit.v1.ListACLResponse
+	66, // 89: sgit.v1.Admin.DeleteRepo:output_type -> sgit.v1.DeleteRepoResponse
+	69, // 90: sgit.v1.Admin.CreateProject:output_type -> sgit.v1.ProjectInfo
+	69, // 91: sgit.v1.Admin.MountProject:output_type -> sgit.v1.ProjectInfo
+	69, // 92: sgit.v1.Admin.UnmountProject:output_type -> sgit.v1.ProjectInfo
+	69, // 93: sgit.v1.Admin.AddProjectAlias:output_type -> sgit.v1.ProjectInfo
+	69, // 94: sgit.v1.Admin.RemoveProjectAlias:output_type -> sgit.v1.ProjectInfo
+	69, // 95: sgit.v1.Admin.RenameProject:output_type -> sgit.v1.ProjectInfo
+	77, // 96: sgit.v1.Admin.ListProjects:output_type -> sgit.v1.AdminListProjectsResponse
+	69, // 97: sgit.v1.Admin.GetProject:output_type -> sgit.v1.ProjectInfo
+	80, // 98: sgit.v1.Admin.DeleteProject:output_type -> sgit.v1.DeleteProjectResponse
+	82, // 99: sgit.v1.Admin.MigrateIn:output_type -> sgit.v1.MigrateInResponse
+	84, // 100: sgit.v1.Admin.MigrateOut:output_type -> sgit.v1.MigrateOutResponse
+	86, // 101: sgit.v1.Daemon.Info:output_type -> sgit.v1.DaemonInfoResponse
+	59, // [59:102] is the sub-list for method output_type
+	16, // [16:59] is the sub-list for method input_type
 	16, // [16:16] is the sub-list for extension type_name
 	16, // [16:16] is the sub-list for extension extendee
 	0,  // [0:16] is the sub-list for field type_name
@@ -5262,7 +5617,7 @@ func file_sgit_v1_sgit_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sgit_v1_sgit_proto_rawDesc), len(file_sgit_v1_sgit_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   82,
+			NumMessages:   86,
 			NumExtensions: 0,
 			NumServices:   3,
 		},

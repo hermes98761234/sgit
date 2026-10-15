@@ -720,6 +720,8 @@ const (
 	Admin_ListProjects_FullMethodName       = "/sgit.v1.Admin/ListProjects"
 	Admin_GetProject_FullMethodName         = "/sgit.v1.Admin/GetProject"
 	Admin_DeleteProject_FullMethodName      = "/sgit.v1.Admin/DeleteProject"
+	Admin_MigrateIn_FullMethodName          = "/sgit.v1.Admin/MigrateIn"
+	Admin_MigrateOut_FullMethodName         = "/sgit.v1.Admin/MigrateOut"
 )
 
 // AdminClient is the client API for Admin service.
@@ -752,6 +754,8 @@ type AdminClient interface {
 	ListProjects(ctx context.Context, in *AdminListProjectsRequest, opts ...grpc.CallOption) (*AdminListProjectsResponse, error)
 	GetProject(ctx context.Context, in *GetProjectRequest, opts ...grpc.CallOption) (*ProjectInfo, error)
 	DeleteProject(ctx context.Context, in *DeleteProjectRequest, opts ...grpc.CallOption) (*DeleteProjectResponse, error)
+	MigrateIn(ctx context.Context, in *MigrateInRequest, opts ...grpc.CallOption) (*MigrateInResponse, error)
+	MigrateOut(ctx context.Context, in *MigrateOutRequest, opts ...grpc.CallOption) (*MigrateOutResponse, error)
 }
 
 type adminClient struct {
@@ -1002,6 +1006,26 @@ func (c *adminClient) DeleteProject(ctx context.Context, in *DeleteProjectReques
 	return out, nil
 }
 
+func (c *adminClient) MigrateIn(ctx context.Context, in *MigrateInRequest, opts ...grpc.CallOption) (*MigrateInResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MigrateInResponse)
+	err := c.cc.Invoke(ctx, Admin_MigrateIn_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminClient) MigrateOut(ctx context.Context, in *MigrateOutRequest, opts ...grpc.CallOption) (*MigrateOutResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MigrateOutResponse)
+	err := c.cc.Invoke(ctx, Admin_MigrateOut_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AdminServer is the server API for Admin service.
 // All implementations must embed UnimplementedAdminServer
 // for forward compatibility.
@@ -1032,6 +1056,8 @@ type AdminServer interface {
 	ListProjects(context.Context, *AdminListProjectsRequest) (*AdminListProjectsResponse, error)
 	GetProject(context.Context, *GetProjectRequest) (*ProjectInfo, error)
 	DeleteProject(context.Context, *DeleteProjectRequest) (*DeleteProjectResponse, error)
+	MigrateIn(context.Context, *MigrateInRequest) (*MigrateInResponse, error)
+	MigrateOut(context.Context, *MigrateOutRequest) (*MigrateOutResponse, error)
 	mustEmbedUnimplementedAdminServer()
 }
 
@@ -1113,6 +1139,12 @@ func (UnimplementedAdminServer) GetProject(context.Context, *GetProjectRequest) 
 }
 func (UnimplementedAdminServer) DeleteProject(context.Context, *DeleteProjectRequest) (*DeleteProjectResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteProject not implemented")
+}
+func (UnimplementedAdminServer) MigrateIn(context.Context, *MigrateInRequest) (*MigrateInResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method MigrateIn not implemented")
+}
+func (UnimplementedAdminServer) MigrateOut(context.Context, *MigrateOutRequest) (*MigrateOutResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method MigrateOut not implemented")
 }
 func (UnimplementedAdminServer) mustEmbedUnimplementedAdminServer() {}
 func (UnimplementedAdminServer) testEmbeddedByValue()               {}
@@ -1567,6 +1599,42 @@ func _Admin_DeleteProject_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Admin_MigrateIn_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MigrateInRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServer).MigrateIn(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Admin_MigrateIn_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServer).MigrateIn(ctx, req.(*MigrateInRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Admin_MigrateOut_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MigrateOutRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServer).MigrateOut(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Admin_MigrateOut_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServer).MigrateOut(ctx, req.(*MigrateOutRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Admin_ServiceDesc is the grpc.ServiceDesc for Admin service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1669,6 +1737,14 @@ var Admin_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteProject",
 			Handler:    _Admin_DeleteProject_Handler,
+		},
+		{
+			MethodName: "MigrateIn",
+			Handler:    _Admin_MigrateIn_Handler,
+		},
+		{
+			MethodName: "MigrateOut",
+			Handler:    _Admin_MigrateOut_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -52,6 +52,8 @@ service Admin {
   rpc ListProjects(AdminListProjectsRequest) returns (AdminListProjectsResponse);
   rpc GetProject(GetProjectRequest) returns (ProjectInfo);
   rpc DeleteProject(DeleteProjectRequest) returns (DeleteProjectResponse);
+  rpc MigrateIn(MigrateInRequest) returns (MigrateInResponse);
+  rpc MigrateOut(MigrateOutRequest) returns (MigrateOutResponse);
 }
 
 message ResolveRevRequest { string project = 1; string rev = 2; }
@@ -220,6 +222,31 @@ message AdminListProjectsResponse { repeated ProjectInfo projects = 1; }
 message GetProjectRequest { string project = 1; }
 message DeleteProjectRequest { string project = 1; }
 message DeleteProjectResponse { int32 drafts_removed = 1; int32 acls_removed = 2; }
+// MigrateIn imports from_url as repo `name`, or with into_repo replays its
+// main under into_folder of that repo; then mounts it in a new project
+// `name`, or in `project` at `path`.
+message MigrateInRequest {
+  string from_url = 1;
+  string name = 2;
+  string into_repo = 3;
+  string into_folder = 4;
+  string project = 5;
+  string path = 6;
+  string mirror_url = 7;
+}
+message MigrateInResponse {
+  string repo = 1;
+  string folder = 2;        // "." for a whole-repo import
+  string project = 3;       // canonical project name
+  string path = 4;          // mount path in the project
+  string main = 5;          // repo main after the migration
+  int32 commits = 6;        // commits imported or replayed
+  repeated string skipped_branches = 7;
+  string project_head = 8;
+}
+// MigrateOut pushes a project's main to to_url (fast-forward unless force).
+message MigrateOutRequest { string project = 1; string to_url = 2; bool force = 3; }
+message MigrateOutResponse { string project = 1; string pushed = 2; bool up_to_date = 3; }
 
 // Daemon is served only by sgd, so clients can check which server it fronts
 // before sending it a token.
