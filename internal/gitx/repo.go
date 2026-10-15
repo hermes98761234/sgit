@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 const catFilePoolSize = 4
@@ -21,6 +22,9 @@ type Repo struct {
 	idle   []*catFile // live processes not currently checked out
 	gen    int        // processes from an older generation are not reused
 	closed bool
+	// emptyTreeStored is set once the empty tree object is known to be stored;
+	// until then every commit write stores it first (ensureEmptyTree).
+	emptyTreeStored atomic.Bool
 }
 
 // Open returns a handle to an existing bare repo. Processes start lazily.

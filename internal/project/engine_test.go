@@ -842,3 +842,41 @@ func TestProjectRepoStoresEmptyTree(t *testing.T) {
 	must(e.eng.Get(ctx, h.ID))
 	fsckStrict(t, dir, "after reopening a repo without it")
 }
+
+// TestOpenWhenEmptyTreeCannotBeWritten: a failed empty-tree write (full or
+// read-only disk) does not make the project unreadable; the next commit
+// written stores it.
+func TestOpenWhenEmptyTreeCannotBeWritten(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	e := newEnv(t)
+	e.repo("r8")
+	e.commit("r8", "one", map[string]string{"a.txt": "a\n"}, false)
+	h := e.project("p8")
+	e.mount(h, ".", "r8", ".")
+	ctx := context.Background()
+	dir := e.eng.Path(h.ID)
+	e.eng.CloseAll()
+	objDir := filepath.Join(dir, "objects", gitx.EmptyTree[:2])
+	if err := os.Remove(filepath.Join(objDir, gitx.EmptyTree[2:])); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(objDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(objDir, 0o755) })
+	h2, err := e.eng.Get(ctx, h.ID)
+	if err != nil {
+		t.Fatalf("Get with an unwritable object dir: %v", err)
+	}
+	if got := e.files(h2); got["a.txt"] != "a\n" {
+		t.Fatalf("files = %v", got)
+	}
+	if err := os.Chmod(objDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e.commit("r8", "two", map[string]string{"b.txt": "b\n"}, false)
+	must(e.eng.CatchUp(ctx, h2))
+	fsckStrict(t, dir, "after the next write")
+}

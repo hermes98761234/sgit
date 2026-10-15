@@ -32,6 +32,9 @@ func gitDate(t time.Time) string { return fmt.Sprintf("%d %s", t.Unix(), t.Forma
 
 // CommitTree creates a commit object (no ref is moved) and returns its SHA.
 func (r *Repo) CommitTree(ctx context.Context, tree string, parents []string, msg string, author, committer Signature) (string, error) {
+	if err := r.ensureEmptyTree(ctx); err != nil {
+		return "", err
+	}
 	if !strings.HasSuffix(msg, "\n") {
 		msg += "\n"
 	}

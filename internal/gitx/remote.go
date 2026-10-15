@@ -124,8 +124,24 @@ func writeEmptyTree(ctx context.Context, dir string) error {
 }
 
 // WriteEmptyTree stores the empty tree object (see writeEmptyTree); repos
-// created before InitBare did so get it this way.
-func (r *Repo) WriteEmptyTree(ctx context.Context) error { return writeEmptyTree(ctx, r.dir) }
+// created before InitBare did so get it this way. A caller may ignore a
+// failure: CommitTree and WriteCommit retry it before their first write.
+func (r *Repo) WriteEmptyTree(ctx context.Context) error {
+	if err := writeEmptyTree(ctx, r.dir); err != nil {
+		return err
+	}
+	r.emptyTreeStored.Store(true)
+	return nil
+}
+
+// ensureEmptyTree runs WriteEmptyTree once per Repo, before the first commit
+// it writes, until it succeeds.
+func (r *Repo) ensureEmptyTree(ctx context.Context) error {
+	if r.emptyTreeStored.Load() {
+		return nil
+	}
+	return r.WriteEmptyTree(ctx)
+}
 
 // Import creates a bare repo at dir holding remote's main and release/*
 // branches (no tags) and returns main. On error the caller removes dir.

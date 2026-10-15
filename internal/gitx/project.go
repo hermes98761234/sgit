@@ -368,6 +368,9 @@ func (r *Repo) WriteCommit(ctx context.Context, tree string, parents []string, a
 		fmt.Fprintf(&b, "parent %s\n", p)
 	}
 	fmt.Fprintf(&b, "author %s\ncommitter %s\n\n%s", author, committer, message)
+	if err := r.ensureEmptyTree(ctx); err != nil {
+		return "", err
+	}
 	out, err := r.run(ctx, strings.NewReader(b.String()), nil, "hash-object", "-t", "commit", "-w", "--stdin")
 	if err != nil {
 		return "", err
