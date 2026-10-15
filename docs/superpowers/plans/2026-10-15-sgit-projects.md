@@ -16,7 +16,7 @@
 
 ## Global Constraints
 
-- **Shell setup.** Every command assumes `cd /home/vkopytsia/Projects/new/sgit && export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin:$HOME/.local/protoc/bin`. If a build fails with ENOSPC, use `export GOCACHE=/dev/shm/gocache` and remove it afterwards.
+- **Shell setup.** Every command assumes `cd <repo checkout> && export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin:$HOME/.local/protoc/bin`. If a build fails with ENOSPC, use `export GOCACHE=/dev/shm/gocache` and remove it afterwards.
 - **Git checkout.** The project dir is a git checkout on `main`. Each task ends with `git add -A && git commit -m "<message from the task>"`. The commit identity `No name <hermes98761234@tutamail.com>` is already configured; do not change it. Do not push.
 - **No real names anywhere** (code, tests, docs, commit messages, LICENSE). Test users are `admin`, `alice`, `bob`, `carol`, `eve`; test signatures use `<name>@sgit.local`.
 - **Names.** Project names, aliases and repo names all match `^[a-z0-9][a-z0-9._-]{0,63}$`. Project names and aliases share one namespace.
