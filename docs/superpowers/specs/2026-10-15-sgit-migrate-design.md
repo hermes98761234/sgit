@@ -53,7 +53,7 @@ sg migrate out <project> --to <url> [--force]
 0. Before any fetch (both forms): validate the URL first, then the name where it is used; check that `--project` exists and that the mount fits it; or create the empty project `<name>`, which reserves the name against a concurrent migration and is deleted again if a later step fails.
 1. List the source branches (`ls-remote`) for the skipped list, then run the existing import flow, `repos.importRepo`: validate URLs, reserve the name, fetch into `.incoming/`, rename into place, create the store row, record the land, notify the mirror.
 2. Run the project step (section 3.3).
-3. If the project step fails, roll back: delete a project created in step 2, then remove the new repo with `rollbackNew`. Return the error.
+3. If the import or the project step fails, roll back: delete the project created in step 0 (if any), then remove a new repo with `rollbackNew`. Return the error.
 
 ### 3.2 `migrate in --into <repo>:<folder>`
 

@@ -489,6 +489,9 @@ func TestMonkeyMigrate(t *testing.T) {
 			return
 		}
 		stats[fmt.Sprintf("migrate in ok: into=%v project=%v", intoRepo != "", projArg != "")]++
+		if len(srcOther) > 0 {
+			stats["migrate in ok: source has non-release branches"]++
+		}
 		if src == nil {
 			fail("migrate in from bad url %q succeeded: %s", u, out)
 			return
@@ -667,7 +670,8 @@ func TestMonkeyMigrate(t *testing.T) {
 			main := testenv.Must(r.ReadRef(ctx, gitx.MainRef))
 			fps := testenv.Must(r.FirstParents(ctx, main, ""))
 			at := fps[rng.IntN(len(fps))].SHA
-			name := fmt.Sprintf("refs/heads/release/%d", rng.IntN(3))
+			// release/* is migrated by the plain form; feature/* never is
+			name := fmt.Sprintf("refs/heads/%s/%d", pick([]string{"release", "feature"}), rng.IntN(3))
 			old, _ := r.ReadRef(ctx, name)
 			if err := r.UpdateRef(ctx, name, at, old); err != nil {
 				t.Fatal(err)
