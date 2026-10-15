@@ -4,11 +4,11 @@
 
 ## Configuration
 
-The server listens on `:7419` (gRPC over TLS). The data directory (`/data` in Docker, held in the `sgdata` volume) holds the bare repos, `sg.db`, `admin-token` and `tls/`.
+The server listens on `:7419` (gRPC over TLS). The data directory (`/data` in Docker, held in the `sgdata` volume) holds the bare repos (`repos/`), the derived project repos (`projects/`), `sg.db`, `admin-token` and `tls/`.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `SG_DATA_DIR` | `/data` | repos, `sg.db`, `admin-token`, `tls/` |
+| `SG_DATA_DIR` | `/data` | repos, projects, `sg.db`, `admin-token`, `tls/` |
 | `SG_LISTEN` | `:7419` | listen address |
 | `SG_TLS_CERT` / `SG_TLS_KEY` | — | PEM certificate and key |
 | `SG_TLS_SELF_SIGNED` | `0` | `1` = generate a self-signed certificate on first start |
@@ -37,9 +37,19 @@ make build
 
 Admin commands need an admin token. They always talk to the server directly, never through `sgd`.
 
+Repos are admin-only. Users get access to **projects**, which mount folders of repos (see [Projects](#projects)). A typical onboarding:
+
 ```bash
+sg repo create web
+sg project create web
+sg project mount web . web:.                  # the whole repo at the project root
 sg token create bob --email bob@example.com   # prints the token once; give it to bob
-sg acl grant bob web write                    # or: read
+sg acl grant bob web write                    # web is the project; or: read
+```
+
+The other commands:
+
+```bash
 sg acl revoke bob web
 sg token revoke <id>                          # the id printed by token create
 sg repo create web
@@ -51,7 +61,7 @@ sg user promote bob                           # make bob a global admin
 sg user demote bob
 sg user delete bob
 sg token list [bob]                           # ID USER CREATED STATUS (active|revoked)
-sg acl list [--user bob] [--repo web]         # USER REPO LEVEL
+sg acl list [--user bob] [--project web]      # USER PROJECT LEVEL
 ```
 
 - `--admin` and `--email` take effect only when `token create` creates the user.
@@ -60,15 +70,84 @@ sg acl list [--user bob] [--repo web]         # USER REPO LEVEL
 
 - `sg user list` shows TOKENS as the number of active (not revoked) tokens. `ADMIN` is `yes` or `no`.
 - `sg token list` never prints token secrets; the server stores only their hashes. REVOKED timestamps appear in `--json` output as `revoked`.
-- `sg acl list` shows explicit grants only. Admins have implicit access to every repo and do not appear in it.
+- `sg acl grant` and `sg acl revoke` take a project (name, alias or `#<id>`). Access is one `read` or `write` level per user and project; `write` implies `read`. `sg acl list` shows the project's canonical name.
+- `sg acl list` shows explicit grants only. Admins have implicit access to every project and do not appear in it.
 - `sg user demote` and `sg user delete` fail (exit 1) if they would leave the server with no admin. You cannot delete yourself.
 - All of these accept `--json` and `--server`.
+
+### Projects
+
+A **project** is what users see. It has an id, a unique name, optional aliases, and its **mounts**. A new project has no mounts and no commits until the first `mount`. A mount maps a path in the project to `<repo>:<folder>`. Clients never learn repo names, source paths or source commit SHAs.
+
+```bash
+sg project create site                        # created project site (id 1)
+sg project mount site public web:public       # mounted web:public at public/ in site
+sg project mount site lib core:lib --read-only
+sg project unmount site lib                   # unmounted lib/ from site
+sg project alias add site www                 # added alias www for site
+sg project alias rm www                       # removed alias www (was site)
+sg project rename site portal                 # renamed site to portal (site is kept as an alias)
+sg project list                               # NAME ALIASES MOUNTS
+sg project show portal                        # id, aliases, head, mounts, grants
+sg project delete portal --yes                # deleted project portal (N drafts, M grants removed)
+```
+
+For a project `portal` (alias `site`) with the two mounts `lib` and `public`, `sg project list` prints one line per project. MOUNTS lists `path=repo:folder`, with `(ro)` for a read-only mount, and `-` stands for none:
+
+```
+NAME    ALIASES  MOUNTS
+portal  site     lib=core:lib(ro),public=web:public
+```
+
+`sg project show` prints:
+
+```
+project: portal (id 1)
+aliases: site
+head:    1856bd9
+mounts:
+  lib/  core:lib  read-only
+  public/  web:public
+grants:
+  bob  write
+```
+
+With `--json`, `create`, `mount`, `unmount`, `alias`, `rename` and `show` print `{"id", "name", "aliases", "head", "mounts": [{"path", "repo", "folder", "read_only"}], "grants": [{"user", "level"}]}`; `list` prints `{"projects": [...]}` of the same objects; `delete` prints `{"project", "drafts_removed", "acls_removed"}`.
+
+**References.** Every command that takes a project accepts its name, an alias, or `#<id>` (for example `#1`). A bare number is a name, never an id. Names and aliases share one namespace and follow the repo-name rule `^[a-z0-9][a-z0-9._-]{0,63}$`. An unknown project gives `project "<name>" not found or no access` (exit 2).
+
+**Mount rules.**
+- The mount path is a clean relative path (`src`, `tools/build`) or `.` for the project root. The folder is a clean repo-relative path, or `.` for the repo root.
+- Mount paths must not nest inside each other. `.` is allowed only as the project's single mount.
+- A mount may point at a folder that does not exist yet. It shows up empty until the folder is created.
+- Mounting an existing path again with the same `repo:folder` only sets the read-only flag (on with `--read-only`, off without it) and creates no commit. A different source for an existing path is refused; unmount it first.
+
+**History.**
+- The first mount of a project imports the history of that folder: every first-parent `main` commit that touched it becomes a project commit, with the same author, dates and message.
+- Later mounts and unmounts are **forward only**. Each one adds one layout commit on top of the project head, "Project layout: added `<path>/`" or "Project layout: removed `<path>/`", authored by the acting admin. Older history of a newly mounted folder is not imported. Changing `--read-only` creates no commit.
+- Commits landed in a mounted folder, through any project or directly in the repo, show up in the project on its next request. Commits from several repos are ordered by land order.
+
+**Read-only mounts** refuse writes from everyone, admins included (`read-only path: <path>`, exit 2).
+
+**Aliases and rename.** An alias is an extra name for the same project. `sg project rename <old> <new>` keeps the old name as an alias, so existing references keep working. Renaming to one of the project's own aliases swaps the two. Working copies store the project id, so renames and aliases never break them.
+
+**Drafts that predate a mount change.** A draft cannot land into a mount that was added or pointed at another folder after the draft's base. It fails with `draft <id> was made before mount <path>/ was added; sync and commit again` (or `… changed; …`). A draft that touches an unmounted path fails with `path outside project: <path>`.
+
+**Lands across repos.** A land that touches mounts of several repos lands one repo at a time, in repo-name order. On the first conflict or error it stops. Repos that already landed stay landed, and the client gets a partial-land conflict (exit 3) and retries only the rest.
+
+**The project repo is a cache.** Each project has its own bare repo at `<data>/projects/<id>.git`, with its own object store (no alternates, no shared packs). The repos in `<data>/repos/` stay the source of truth. To rebuild a project repo, stop the server, delete `<data>/projects/<id>.git` and start it again. The next request rebuilds it with identical commit SHAs, so working copies keep working. Open drafts of that project are abandoned, because their objects lived only in the deleted repo.
+
+**Accepted limits.**
+- Commit messages, authors and dates are copied as written. A commit that touched a mounted folder and another folder shows its full message to project users.
+- A land across several repos is not atomic (see above).
+- A GitHub mirror publishes its whole source repo, outside the project boundary. Mirrors are admin-only.
 
 ### Deleting
 
 - **`sg user delete <user>`** revokes all the user's tokens, removes their ACLs, abandons their open drafts and removes them from `sg user list`. It is a soft delete: the database row stays, because landed and abandoned drafts still refer to the owner. The name is freed by renaming the row to `<name>~deleted-<id>` (`~` is not a valid user name character), so a later `sg token create <name>` makes a brand-new user with no old access. Draft history shows the renamed owner. Landed git history is not touched.
-- **`sg repo delete <name> --yes`** refuses without `--yes` and does not contact the server. With it, the server removes the repo's ACLs, drafts and mirror state from the database and moves the bare repo to `<data>/deleted/<name>.<unixtime>.git` instead of erasing it. An operator can restore it by moving the directory back to `<data>/repos/<name>.git` and re-creating the repo row (or delete it for good with `rm -rf`). The name can be reused straight away. The delete runs under the repo's land lock, so it never interleaves with a land; lands and draft operations that lose the race fail. The GitHub (or other) mirror remote is never contacted, so its content stays.
-- Existing databases are upgraded automatically on start: the `users` table gains a nullable `deleted_at` column.
+- **`sg project delete <project> --yes`** refuses without `--yes`. With it, the server removes the project's aliases, mounts, grants and drafts, and deletes its derived repo `<data>/projects/<id>.git`. Repos are not touched. Project ids are never reused.
+- **`sg repo delete <name> --yes`** refuses without `--yes` and does not contact the server. It is also refused while any project mounts the repo (`repo "<name>" is mounted by project(s) …; unmount it first`) or has it in its history (`repo "<name>" is in the history of project(s) …; delete those projects first`), because a project rebuild replays that history. Delete those projects first. Otherwise the server removes the repo's mirror state from the database and moves the bare repo to `<data>/deleted/<name>.<unixtime>.git` instead of erasing it. An operator can restore it by moving the directory back to `<data>/repos/<name>.git` and re-creating the repo row (or delete it for good with `rm -rf`). The name can be reused straight away. The delete runs under the repo's land lock, so it never interleaves with a land; lands and draft operations that lose the race fail. The GitHub (or other) mirror remote is never contacted, so its content stays.
+- Existing databases are upgraded automatically on start: the `users` table gains a nullable `deleted_at` column. Databases from before projects lose their per-repo `acl` and `drafts` tables, which are re-created per project; grant access again with `sg acl grant <user> <project>`.
 
 The server image ships `sg` too, so you can administer from inside the container:
 

@@ -43,5 +43,8 @@ systemctl --user enable --now sgd
 ## Security
 
 - Every request still runs with your own token.
-- Before serving cached objects for a repo, sgd re-checks your read access at least every 60 seconds.
-- Objects cached for one repo can be served for another repo when they are requested by their hash. That is acceptable within a trusted team (spec §7).
+- **Access memo per (token, project).** Before serving cached objects for a project, sgd checks that your token can read that project, and re-checks it at least every 60 seconds.
+- **Every cache hit is confirmed.** The cache is keyed by object hash and shared across users and projects. Before sgd serves cached objects, it asks the server once, with one batched `HasObjects(project, shas)` call and your token, whether the project has them. Only the objects the server confirms are served; the rest are fetched from the server, which answers NotFound for objects outside the project. So the shared cache never crosses project boundaries.
+- **Fail closed.** If that confirmation fails (for example, the server is unreachable), sgd serves nothing from the cache and returns the error.
+- **In-flight fetches.** When several requests for the same project ask for the same object at once, sgd fetches it from the server once and hands it to all of them. A request that waits for another's fetch relies on its access memo, not on its own confirmation. So for up to 60 seconds after a revoke, a user can still receive an object of that project that another user's request is fetching at that moment. Objects of other projects are never handed over this way.
+- `sg projects` passes through to the server with your token; nothing is cached.

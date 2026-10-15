@@ -10,7 +10,8 @@ Scion-style source control on top of git. Git runs only on the server, and clien
 - **Drafts.** A commit without `--land` becomes a draft that you can update, show, land or abandon.
 - **Sparse checkouts** with `--path`, and history (`log`, `blame`, `cat`) without a checkout at all.
 - **Shared object cache.** The `sgd` daemon lets many working copies and agents on one machine share a single download. Every cached object is hash-verified.
-- **Auth.** Per-user tokens, TLS, per-repo `read`/`write` access, and global admins.
+- **Projects.** Per-folder views of one or more repos, with per-project `read`/`write` access, aliases and read-only mounts. Clients never see repos.
+- **Auth.** Per-user tokens, TLS and global admins.
 - **GitHub mirror.** The server pushes `main` to GitHub after every land. It never overwrites commits made on GitHub, and retries with backoff.
 - **Import** of a repo from any git URL. Only `main` and `release/*` are copied.
 - **Scriptable.** Every command accepts `--json` and returns stable exit codes.
@@ -27,15 +28,18 @@ flowchart LR
         SGD["sgd cache daemon<br/>~/.cache/sg/objects"]
         WC1 --- SG
         WC2 --- SG
-        SG -- "Repo RPCs<br/>(unix socket)" --> SGD
+        SG -- "Project RPCs<br/>(unix socket)" --> SGD
     end
 
     subgraph srv["sg-server (Docker)"]
-        API["gRPC API<br/>Repo + Admin<br/>auth / ACL"]
+        API["gRPC API<br/>Project + Admin<br/>auth / ACL"]
         GIT[("bare git repos")]
-        DB[("SQLite<br/>users, tokens, ACLs,<br/>drafts, mirror state")]
+        PGIT[("└─ #60;data-dir#62;/projects/#60;id#62;.git<br/>(derived per-project repos)")]
+        DB[("SQLite<br/>users, tokens, projects, ACLs,<br/>drafts, mirror state")]
         MW["mirror worker"]
         API --> GIT
+        GIT -- "mounted folders" --> PGIT
+        API --> PGIT
         API --> DB
         API -- "after each land" --> MW
         MW --> GIT
@@ -48,8 +52,9 @@ flowchart LR
     MW -- "git push --force-with-lease" --> GH
 ```
 
-- **`sg-server`** owns the git repos and is the source of truth.
-- **`sg`** sends file changes and asks the server to commit, rebase and land them.
+- **`sg-server`** owns the git repos and is the source of truth. Each project gets a derived repo in `<data-dir>/projects/<id>.git`, built from the folders it mounts.
+- **Auth:** tokens → user → per-project read/write, admin role.
+- **`sg`** works on a project. It sends file changes and asks the server to commit, rebase and land them.
 - **`sgd`** is optional. It serves objects from a local cache and passes every other call through with your token.
 - **GitHub** is a read-only copy of `main`, for CI, browsing and backup.
 
@@ -72,18 +77,20 @@ flowchart LR
    docker compose exec sg-server cat /data/admin-token
    docker compose cp sg-server:/data/tls/cert.pem ./cert.pem
    ```
-5. **Create a repo and a user:**
+5. **Create a repo, a project and a user.** Users never see repos; they get access to projects. A project mounts folders of one or more repos.
    ```bash
    docker compose exec sg-server sh -c 'sg login localhost:7419 --ca /data/tls/cert.pem --token "$(cat /data/admin-token)"'
    docker compose exec sg-server sg repo create web
+   docker compose exec sg-server sg project create web
+   docker compose exec sg-server sg project mount web . web:.       # the whole repo at the project root
    docker compose exec sg-server sg token create bob              # prints bob's token once
    docker compose exec sg-server sg acl grant bob web write
    ```
-   Manage them later with `sg user list|promote|demote|delete`, `sg token list|revoke`, `sg acl list|revoke` and `sg repo list|delete`.
+   Manage them later with `sg project list|show|mount|unmount|alias|rename|delete`, `sg user list|promote|demote|delete`, `sg token list|revoke`, `sg acl list|revoke` and `sg repo list|delete`.
 6. **Optional: mirror to GitHub.**
    1. Give the server credentials. See [Mirror credentials](docs/server.md#mirror-credentials).
    2. Create the repo with an empty GitHub mirror: `sg repo create web --mirror git@github.com:acme/web.git`.
-   3. Or import an existing project and mirror it back: `sg repo import web --from URL --mirror URL`.
+   3. Or import an existing git repo and mirror it back: `sg repo import web --from URL --mirror URL`. Mount it into a project to give users access.
 
 More in the **[server guide](docs/server.md)**: configuration, running without Docker, administration, import and mirroring, and releases.
 
@@ -97,9 +104,10 @@ More in the **[server guide](docs/server.md)**: configuration, running without D
    ```bash
    sg login sg.example.com:7419 --token "$TOKEN" --ca cert.pem
    ```
-3. **Check out** a repo (add `--path src` for a sparse checkout):
+3. **List your projects and check one out** (add `--path src` for a sparse checkout). Name a project by its name, an alias or `#<id>`:
    ```bash
-   sg checkout web && cd web
+   sg projects
+   sg checkout <project> && cd <project>
    ```
 4. **Work and land:**
    ```bash
@@ -131,8 +139,8 @@ Two [Agent Skills](https://agentskills.io) teach coding agents how to use sgit:
 
 | Skill | For | Covers |
 |---|---|---|
-| [`sgit-admin`](skills/sgit-admin/SKILL.md) | admins | `sg-server`, users (create, list, promote, demote, delete), tokens (create, list, rotate, revoke), access (`acl grant`/`list`/`revoke`), repos (create, import, delete), mirroring |
-| [`sgit-client`](skills/sgit-client/SKILL.md) | developers and agents | login, checkout, status/diff, `commit --land`, drafts, sync, conflicts, log/blame/cat, sparse, exit codes |
+| [`sgit-admin`](skills/sgit-admin/SKILL.md) | admins | `sg-server`, users (create, list, promote, demote, delete), tokens (create, list, rotate, revoke), projects (create, mount, unmount, alias, rename, delete), per-project access (`acl grant`/`list`/`revoke`), repos (create, import, delete), mirroring |
+| [`sgit-client`](skills/sgit-client/SKILL.md) | developers and agents | login, `sg projects`, checkout, status/diff, `commit --land`, drafts, sync, conflicts, log/blame/cat, sparse, exit codes |
 
 **In this repo** they work out of the box: `.claude/skills/`, `.agents/skills/` (Codex) and `.cursor/skills/` are symlinks to `skills/`.
 
@@ -159,7 +167,7 @@ Create the target directory first if it doesn't exist. Give developers only `sgi
 
 **Use them** by just asking: the agent loads the skill when the task matches.
 
-- Admin: "Create user bob with write access to web and give me the token", "Import github.com/acme/api as api and mirror it back", "Rotate alice's token".
+- Admin: "Create project site from web:public, give bob write access", "Create user bob with write access to web and give me the token", "Import github.com/acme/api as api and mirror it back", "Rotate alice's token".
 - Client: "Check out web, fix the failing test and land it", "Sync and resolve the conflicts", "Who last changed src/main.go?".
 
 You can also call them explicitly: `/sgit-admin` or `/sgit-client` in Claude Code, `$sgit-client` in Codex, `/sgit-client` in Cursor.
@@ -212,6 +220,7 @@ On this machine, 20 folder mounts cost no more than one `.` mount. A one-file la
 - [Client guide](docs/client.md)
 - [Cache daemon guide](docs/sgd.md)
 - [Design spec](docs/superpowers/specs/2026-10-14-sgit-design.md)
+- [Projects design spec](docs/superpowers/specs/2026-10-15-sgit-projects-design.md)
 
 ## License
 
