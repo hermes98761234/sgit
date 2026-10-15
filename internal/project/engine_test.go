@@ -806,3 +806,39 @@ func TestStopBeforeAnyCommitUndoesFirstMount(t *testing.T) {
 		t.Fatalf("cursors = %v, want none", cur)
 	}
 }
+
+func fsckStrict(t *testing.T, dir, when string) {
+	t.Helper()
+	out, err := exec.Command("git", "--git-dir="+dir, "fsck", "--strict", "--no-dangling").CombinedOutput()
+	if err != nil || strings.Contains(string(out), "missing") {
+		t.Fatalf("%s: fsck --strict: %v\n%s", when, err, out)
+	}
+}
+
+// A "." mount of a new repo copies its empty-tree initial commit; the
+// project repo must store the empty tree after the mount, after a rebuild,
+// and when an older repo without it is opened.
+func TestProjectRepoStoresEmptyTree(t *testing.T) {
+	e := newEnv(t)
+	e.repo("r9")
+	h := e.project("p9")
+	e.mount(h, ".", "r9", ".")
+	ctx := context.Background()
+	dir := e.eng.Path(h.ID)
+	fsckStrict(t, dir, "after mount")
+
+	e.eng.CloseAll()
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	must(e.eng.Get(ctx, h.ID))
+	fsckStrict(t, dir, "after rebuild")
+
+	e.eng.CloseAll()
+	loose := filepath.Join(dir, "objects", gitx.EmptyTree[:2], gitx.EmptyTree[2:])
+	if err := os.Remove(loose); err != nil {
+		t.Fatal(err)
+	}
+	must(e.eng.Get(ctx, h.ID))
+	fsckStrict(t, dir, "after reopening a repo without it")
+}

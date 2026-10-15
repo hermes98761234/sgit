@@ -141,6 +141,10 @@ func (e *Engine) Get(ctx context.Context, id int64) (*Handle, error) {
 		return nil, err
 	}
 	h = &Handle{ID: id, Git: gitx.Open(dir)}
+	if err := h.Git.WriteEmptyTree(ctx); err != nil {
+		h.Git.Close()
+		return nil, err
+	}
 	// The DB is the truth: repair a main ref left behind by a crash between
 	// recording commits and moving the ref (CatchUp's fast path never does).
 	head, _, err := e.cfg.Store.ProjectHead(ctx, id)

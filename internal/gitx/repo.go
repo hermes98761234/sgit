@@ -38,13 +38,6 @@ func Init(ctx context.Context, dir string, sig Signature) (*Repo, error) {
 		return nil, err
 	}
 	r := Open(dir)
-	out, err := r.run(ctx, strings.NewReader(""), nil, "hash-object", "-w", "-t", "tree", "--stdin")
-	if err != nil {
-		return nil, err
-	}
-	if got := strings.TrimSpace(string(out)); got != EmptyTree {
-		return nil, fmt.Errorf("gitx: unexpected empty tree id %q", got)
-	}
 	c, err := r.CommitTree(ctx, EmptyTree, nil, "Initial commit\n", sig, sig)
 	if err != nil {
 		return nil, err

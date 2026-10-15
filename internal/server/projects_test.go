@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -466,4 +467,22 @@ func TestLandRefusesRenameOutOfMounts(t *testing.T) {
 	if files["secret/a.go"] != "package a\n" || len(files) != 2 {
 		t.Fatalf("source files = %v", files)
 	}
+}
+
+// A repo made by CreateRepo starts with an empty-tree commit. A project that
+// mounts it at "." references that tree, so the project repo must store the
+// object (git only fakes it in memory) or fsck --strict and mirrors fail.
+func TestDotMountOfNewRepoPassesFsck(t *testing.T) {
+	e := testenv.Start(t)
+	e.CreateRepoProject("r9")
+	id := e.ProjectID("r9")
+	dir := filepath.Join(e.DataDir, "projects", strconv.FormatInt(id, 10)+".git")
+	fsck := func(when string) {
+		t.Helper()
+		out, err := exec.Command("git", "--git-dir="+dir, "fsck", "--strict", "--no-dangling").CombinedOutput()
+		if err != nil || strings.Contains(string(out), "missing") {
+			t.Fatalf("%s: fsck --strict: %v\n%s", when, err, out)
+		}
+	}
+	fsck("after mount")
 }

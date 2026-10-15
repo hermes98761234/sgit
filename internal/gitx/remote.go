@@ -102,9 +102,30 @@ func remoteEnv(allowLocal bool) []string {
 
 // InitBare creates an empty bare repo at dir whose HEAD names main.
 func InitBare(ctx context.Context, dir string) error {
-	_, err := runGit(ctx, nil, nil, "init", "--bare", "--quiet", "--initial-branch=main", dir)
-	return err
+	if _, err := runGit(ctx, nil, nil, "init", "--bare", "--quiet", "--initial-branch=main", dir); err != nil {
+		return err
+	}
+	return writeEmptyTree(ctx, dir)
 }
+
+// writeEmptyTree stores the empty tree object in the repo at dir. Git reads
+// it even when absent, but fsck --strict and mirrors need it stored, and a
+// project commit can reference it (a "." mount of a new repo, an empty
+// project) without any copy bringing it along.
+func writeEmptyTree(ctx context.Context, dir string) error {
+	out, err := runGit(ctx, strings.NewReader(""), nil, "--git-dir="+dir, "hash-object", "-w", "-t", "tree", "--stdin")
+	if err != nil {
+		return err
+	}
+	if got := strings.TrimSpace(string(out)); got != EmptyTree {
+		return fmt.Errorf("gitx: unexpected empty tree id %q", got)
+	}
+	return nil
+}
+
+// WriteEmptyTree stores the empty tree object (see writeEmptyTree); repos
+// created before InitBare did so get it this way.
+func (r *Repo) WriteEmptyTree(ctx context.Context) error { return writeEmptyTree(ctx, r.dir) }
 
 // Import creates a bare repo at dir holding remote's main and release/*
 // branches (no tags) and returns main. On error the caller removes dir.
