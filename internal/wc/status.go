@@ -193,7 +193,7 @@ func (w *WC) Status() ([]Change, error) {
 		}
 		p := filepath.ToSlash(rel)
 		if d.IsDir() {
-			if nestedMeta(d.Name()) || !TreeNeeded(w.Config.Sparse, p) || ign.ignored(p, true) || ValidPath(p) != nil {
+			if nestedMeta(d.Name()) || !TreeNeeded(w.Config.Sparse, p) || ign.ignored(p, true) {
 				return filepath.SkipDir
 			}
 			return ign.load(p)
@@ -207,10 +207,10 @@ func (w *WC) Status() ([]Change, error) {
 			return err
 		}
 		mode, ok := ModeOf(fi)
-		if !ok || ValidPath(p) != nil {
+		if !ok {
 			return nil
 		}
-		if !Committable(p) {
+		if !Committable(p, mode == "120000") {
 			w.Skipped = append(w.Skipped, p)
 			return nil
 		}

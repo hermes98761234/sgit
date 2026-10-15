@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/hermes98761234/sgit/internal/repopath"
 )
 
 // ChangeOp is the kind of a single path change.
@@ -60,6 +62,11 @@ func (r *Repo) BuildTree(ctx context.Context, baseCommit string, changes []Chang
 	var deletes []string
 	var info bytes.Buffer
 	for _, c := range changes {
+		// git update-index skips a path it refuses with only a warning;
+		// refuse it here so a file is never dropped from a tree.
+		if err := repopath.Check(c.Path, c.Mode == "120000"); err != nil {
+			return "", fmt.Errorf("%w: %v", ErrInvalid, err)
+		}
 		switch c.Op {
 		case OpAdd, OpModify:
 			mode := c.Mode

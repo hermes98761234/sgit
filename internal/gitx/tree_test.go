@@ -117,14 +117,20 @@ func TestBuildTreeLiteralQuotePath(t *testing.T) {
 	ctx := context.Background()
 	r := newRepo(t)
 	a := blob(t, r, "a\n")
-	for _, p := range []string{`"q".txt`, `"\056sg/config"`} {
+	for _, p := range []string{`"q".txt`, `"q"/x`} {
 		commitChanges(t, r, []Change{{Path: p, Op: OpAdd, BlobSHA: a}})
+	}
+	// A backslash is refused outright (repopath.Check), so an octal escape
+	// can never be C-unquoted into .sg/.
+	main, _ := r.ReadRef(ctx, MainRef)
+	if _, err := r.BuildTree(ctx, main, []Change{{Path: `"\056sg/config"`, Op: OpAdd, BlobSHA: a}}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("escaped path: want ErrInvalid, got %v", err)
 	}
 	files, err := r.ListFiles(ctx, "main")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range []string{`"q".txt`, `"\056sg/config"`} {
+	for _, p := range []string{`"q".txt`, `"q"/x`} {
 		if _, ok := files[p]; !ok {
 			t.Errorf("literal path %q missing: %v", p, files)
 		}

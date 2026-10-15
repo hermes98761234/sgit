@@ -4,38 +4,23 @@ import (
 	"context"
 	"errors"
 	"path"
-	"strings"
-	"unicode/utf8"
 
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
 	"github.com/hermes98761234/sgit/internal/gitx"
+	"github.com/hermes98761234/sgit/internal/repopath"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
+// validatePath applies repopath.Check, the rule the client uses to decide
+// which files it can send, so the two never disagree.
 func validatePath(p string) error {
-	bad := func(why string) error { return status.Errorf(codes.InvalidArgument, "invalid path %q: %s", p, why) }
-	switch {
-	case p == "":
-		return bad("empty")
-	case len(p) > 4096:
-		return bad("too long")
-	case !utf8.ValidString(p):
-		return bad("not UTF-8")
-	case strings.ContainsAny(p, "\x00\r\n"):
-		return bad("control character")
-	case strings.HasPrefix(p, "/"):
-		return bad("absolute")
-	case path.Clean(p) != p:
-		return bad("not normalized")
-	}
-	for _, seg := range strings.Split(p, "/") {
-		if seg == "." || seg == ".." {
-			return bad("dot segment")
-		}
-		if strings.EqualFold(seg, ".git") || strings.EqualFold(seg, ".sg") {
-			return bad("reserved name " + seg)
-		}
+	return pathStatus(repopath.Check(p, false))
+}
+
+func pathStatus(err error) error {
+	if err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
 	}
 	return nil
 }
@@ -73,6 +58,9 @@ func (s *Server) convertChanges(ctx context.Context, g *gitx.Repo, in []*sgitv1.
 		case sgitv1.ChangeOp_CHANGE_OP_ADD, sgitv1.ChangeOp_CHANGE_OP_MODIFY:
 			if !validMode(c.Mode) {
 				return nil, status.Errorf(codes.InvalidArgument, "invalid mode %q for %q", c.Mode, c.Path)
+			}
+			if err := pathStatus(repopath.Check(c.Path, c.Mode == "120000")); err != nil {
+				return nil, err
 			}
 			if !gitx.IsSHA(c.BlobSha) {
 				return nil, status.Errorf(codes.InvalidArgument, "invalid blob id %q for %q", c.BlobSha, c.Path)

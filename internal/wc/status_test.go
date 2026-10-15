@@ -3,6 +3,7 @@ package wc
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -363,5 +364,30 @@ func TestStatusSkipsNestedReposAndUncommittableNames(t *testing.T) {
 		if w.Skipped[i] != want[i] {
 			t.Fatalf("skipped = %q, want %q", w.Skipped, want)
 		}
+	}
+}
+
+// Names git treats as aliases of .git, and backslashes, are listed as skipped
+// like other names the server refuses (repopath.Check), never silently
+// dropped or sent.
+func TestStatusSkipsGitAliasNames(t *testing.T) {
+	w := newWC(t)
+	_ = WriteLocal(w.Root, "lib/GIT~1/a.txt", []byte("a"), "100644")
+	_ = WriteLocal(w.Root, "lib/.git./b.txt", []byte("b"), "100644")
+	_ = WriteLocal(w.Root, "lib/.git /c.txt", []byte("c"), "100644")
+	_ = os.WriteFile(filepath.Join(w.Root, "back\\slash"), []byte("d"), 0o644)
+	_ = WriteLocal(w.Root, "lib/.gitx", []byte("e"), "100644")
+	_ = os.Symlink("x", filepath.Join(w.Root, ".gitmodules"))
+	changes, err := w.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := kinds(changes)
+	if len(got) != 1 || got["lib/.gitx"] != Added {
+		t.Fatalf("changes = %v", got)
+	}
+	want := []string{".gitmodules", "back\\slash", "lib/.git /c.txt", "lib/.git./b.txt", "lib/GIT~1/a.txt"}
+	if strings.Join(w.Skipped, "|") != strings.Join(want, "|") {
+		t.Fatalf("skipped = %q, want %q", w.Skipped, want)
 	}
 }

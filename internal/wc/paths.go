@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"unicode/utf8"
+
+	"github.com/hermes98761234/sgit/internal/repopath"
 )
 
 // RepoPath converts a user-supplied path (relative to cwd, or absolute) into a
@@ -34,9 +35,9 @@ func nestedMeta(name string) bool {
 	return strings.EqualFold(name, ".git") || strings.EqualFold(name, metaDir)
 }
 
-// Committable reports whether the server accepts p as a file path (see
-// server.validatePath): valid UTF-8, at most 4096 bytes, no CR, LF or NUL.
-// ValidPath must hold too.
-func Committable(p string) bool {
-	return len(p) <= 4096 && utf8.ValidString(p) && !strings.ContainsAny(p, "\x00\r\n")
+// Committable reports whether the server can store p as a file (symlink for
+// mode 120000). It is repopath.Check, the same rule the server applies, so a
+// file is either sent or listed as skipped, never dropped on the way.
+func Committable(p string, symlink bool) bool {
+	return repopath.Check(p, symlink) == nil
 }

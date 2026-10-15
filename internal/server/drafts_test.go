@@ -2,6 +2,8 @@ package server_test
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"testing"
 
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
@@ -157,5 +159,35 @@ func TestCreateDraftQuotedPathCannotSmuggleSgDir(t *testing.T) {
 	}
 	if _, ok := files[p]; !ok {
 		t.Fatalf("literal name missing: %v", files)
+	}
+}
+
+// Git drops index entries named like an alias of .git (GIT~1, ".git.",
+// ".git ") with only a warning. The server must refuse them by name instead
+// of landing a commit that silently lacks the file.
+func TestGitAliasPathsRefusedNotDropped(t *testing.T) {
+	e := testenv.Start(t)
+	main := e.CreateRepoProject("web")
+	alice := e.NewUser("alice", "web", "write")
+	c := e.Project(alice)
+	ctx := context.Background()
+	sha := e.Upload(alice, "web", []byte("x\n"))[0]
+	for _, p := range []string{"lib/GIT~1/a.txt", "lib/.git./b.txt", "lib/.git /x", "git~1", ".git:x/y"} {
+		ch := []*sgitv1.Change{testenv.Add("ok.txt", sha), testenv.Add(p, sha)}
+		_, err := c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Project: "web", Base: main, Changes: ch, Message: "m"})
+		if status.Code(err) != codes.InvalidArgument || !strings.Contains(status.Convert(err).Message(), strconv.Quote(p)) {
+			t.Errorf("CreateDraft %q: want InvalidArgument naming the path, got %v", p, err)
+		}
+		_, err = c.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{Project: "web", Base: main, Changes: ch, Message: "m"})
+		if status.Code(err) != codes.InvalidArgument || !strings.Contains(status.Convert(err).Message(), strconv.Quote(p)) {
+			t.Errorf("CommitAndLand %q: want InvalidArgument naming the path, got %v", p, err)
+		}
+	}
+	link := &sgitv1.Change{Path: ".gitmodules", Op: sgitv1.ChangeOp_CHANGE_OP_ADD, BlobSha: sha, Mode: "120000"}
+	if _, err := c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Project: "web", Base: main, Changes: []*sgitv1.Change{link}, Message: "m"}); status.Code(err) != codes.InvalidArgument {
+		t.Errorf("symlink .gitmodules: want InvalidArgument, got %v", err)
+	}
+	if got := e.Files("web", "main"); len(got) != 0 {
+		t.Fatalf("main changed: %v", got)
 	}
 }
