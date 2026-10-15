@@ -8,6 +8,8 @@ import (
 
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
 	"github.com/hermes98761234/sgit/internal/wc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func cmdLand(ctx context.Context, a *app, args []string) error {
@@ -58,6 +60,12 @@ func (a *app) commitAndLand(ctx context.Context, s *session, changes []*sgitv1.C
 		if err == nil || !isStaleDraft(err) {
 			return a.finishLand(ctx, s, resp, err, true, changes)
 		}
+		if isLandedDraft(err) {
+			// It landed, but this working copy never heard (a lost answer,
+			// or `sg land` elsewhere): catch up first, so only edits made
+			// since are committed and no duplicate draft is opened.
+			return a.landAfterLandedDraft(ctx, s, title, msg)
+		}
 		w.Draft = ""
 	}
 	// Create the draft first and keep its id, so a failed landing (for
@@ -74,6 +82,70 @@ func (a *app) commitAndLand(ctx context.Context, s *session, changes []*sgitv1.C
 	return a.finishLand(ctx, s, resp, err, true, changes)
 }
 
+// isLandedDraft reports whether err says the draft has already landed.
+func isLandedDraft(err error) bool {
+	return status.Code(err) == codes.FailedPrecondition && strings.HasSuffix(status.Convert(err).Message(), " is landed")
+}
+
+// isAlreadyOnMain reports whether err says every change of the draft is
+// already on main (the server closed the draft as landed).
+func isAlreadyOnMain(err error) bool {
+	return status.Code(err) == codes.FailedPrecondition && strings.HasSuffix(status.Convert(err).Message(), " changes are already on main")
+}
+
+// landAfterLandedDraft syncs the working copy to main after its draft
+// landed without it noticing, then commits and lands whatever is left.
+func (a *app) landAfterLandedDraft(ctx context.Context, s *session, title, msg string) error {
+	w := s.wc
+	id := w.Draft
+	w.Draft = ""
+	res, main, err := syncToMain(ctx, s)
+	if err != nil {
+		return exitf(ExitError, "draft %s already landed; updating the working copy failed: %v; run `sg sync`", id, errorMessage(err))
+	}
+	if len(res.Conflicts) > 0 {
+		return a.reportAlreadyOnMain(id, main, res)
+	}
+	changes, err := w.Status()
+	if err != nil {
+		return err
+	}
+	if len(changes) == 0 {
+		return a.reportAlreadyOnMain(id, main, res)
+	}
+	pb, err := uploadChanges(ctx, s, changes)
+	if err != nil {
+		return err
+	}
+	return a.commitAndLand(ctx, s, pb, title, msg)
+}
+
+// syncToMain syncs the working copy to the project's current main.
+func syncToMain(ctx context.Context, s *session) (syncResult, string, error) {
+	rr, err := s.proj.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: s.project, Rev: "main"})
+	if err != nil {
+		return syncResult{}, "", err
+	}
+	s.wc.Config.Name = rr.ProjectName
+	res, err := syncTo(ctx, s, rr.Sha)
+	return res, rr.Sha, err
+}
+
+// reportAlreadyOnMain tells the user that draft id had nothing left to land
+// and that the working copy now matches main.
+func (a *app) reportAlreadyOnMain(id, main string, res syncResult) error {
+	if err := a.emit(map[string]any{"landed": true, "already_on_main": true, "commit": main, "draft": id, "sync": res}, func(out io.Writer) {
+		fmt.Fprintf(out, "draft %s: these changes are already on main %s (an earlier land went through); working copy synced\n", id, short(main))
+		printSync(out, res)
+	}); err != nil {
+		return err
+	}
+	if len(res.Conflicts) > 0 {
+		return exitf(ExitConflict, "%d file(s) have conflicts with main; edit them, then commit", len(res.Conflicts))
+	}
+	return nil
+}
+
 func nonNil(s []string) []string {
 	if s == nil {
 		return []string{}
@@ -86,6 +158,16 @@ func nonNil(s []string) []string {
 // the change set this command committed against w.Base, or nil.
 func (a *app) finishLand(ctx context.Context, s *session, resp *sgitv1.LandResponse, err error, touchWC bool, sent []*sgitv1.Change) error {
 	w := s.wc
+	if err != nil && isAlreadyOnMain(err) && w != nil && touchWC {
+		// Nothing left to land: the server closed the draft. Catch up.
+		id := w.Draft
+		w.Draft = ""
+		res, main, serr := syncToMain(ctx, s)
+		if serr != nil {
+			return exitf(ExitError, "%s; updating the working copy failed: %v; run `sg sync`", errorMessage(err), errorMessage(serr))
+		}
+		return a.reportAlreadyOnMain(id, main, res)
+	}
 	if err != nil {
 		det := conflictDetail(err)
 		if det != nil && det.Partial && (w == nil || !touchWC) {

@@ -226,3 +226,92 @@ func TestCommitSkipsNestedRepoAndBadNames(t *testing.T) {
 		t.Fatalf("v.txt = %q", got)
 	}
 }
+
+func (h *harness) openDrafts() []string {
+	h.t.Helper()
+	list := testenv.Must(h.env.Project(h.env.AdminToken).ListDrafts(context.Background(), &sgitv1.ListDraftsRequest{Project: "web", Status: "open"}))
+	var ids []string
+	for _, d := range list.Drafts {
+		ids = append(ids, d.Id)
+	}
+	return ids
+}
+
+// A land that went through while the client lost the answer leaves
+// .sg/draft pointing at a landed draft and the working copy on the old base.
+// Retrying `commit --land` must sync instead of failing with "already on
+// main", and must leave no open draft behind.
+func TestCommitLandRetryAfterLostAnswer(t *testing.T) {
+	h := newHarness(t)
+	h.seed(seedFiles)
+	w := h.checkout(t.TempDir())
+	writeFile(t, filepath.Join(w, "a.txt"), "landed\n")
+	h.ok(w, "commit", "-m", "lost answer")
+	id := h.draftOf(w)
+	testenv.Must(h.env.Project(h.env.AdminToken).Land(context.Background(), &sgitv1.LandRequest{Project: "web", Id: id}))
+	main := h.env.ProjectFiles("web", "main")
+
+	code, out, errs := h.run(w, "commit", "-m", "lost answer", "--land")
+	if code != 0 || !strings.Contains(out, "already on main") {
+		t.Fatalf("retry: exit %d\nstdout: %s\nstderr: %s", code, out, errs)
+	}
+	if d := h.draftOf(w); d != "" {
+		t.Fatalf("retry: .sg/draft = %q", d)
+	}
+	if open := h.openDrafts(); len(open) != 0 {
+		t.Fatalf("retry: open drafts %v", open)
+	}
+	// The working copy is now on main: another retry has nothing to commit.
+	if code, _, errs := h.run(w, "commit", "-m", "lost answer", "--land"); code != 1 || !strings.Contains(errs, "nothing to commit") {
+		t.Fatalf("second retry: exit %d: %s", code, errs)
+	}
+	if out := h.ok(w, "status"); !strings.Contains(out, "nothing changed") {
+		t.Fatalf("status = %q", out)
+	}
+	if got := h.env.ProjectFiles("web", "main"); len(got) != len(main) || got["a.txt"] != "landed\n" {
+		t.Fatalf("main changed: %v", got)
+	}
+
+	// Edits made after the lost land still land on the retry.
+	writeFile(t, filepath.Join(w, "a.txt"), "landed again\n")
+	h.ok(w, "commit", "-m", "second")
+	id = h.draftOf(w)
+	testenv.Must(h.env.Project(h.env.AdminToken).Land(context.Background(), &sgitv1.LandRequest{Project: "web", Id: id}))
+	writeFile(t, filepath.Join(w, "b.txt"), "more\n")
+	h.ok(w, "commit", "-m", "more", "--land")
+	if got := h.env.ProjectFiles("web", "main"); got["a.txt"] != "landed again\n" || got["b.txt"] != "more\n" {
+		t.Fatalf("main = %v", got)
+	}
+	if open := h.openDrafts(); len(open) != 0 || h.draftOf(w) != "" {
+		t.Fatalf("open drafts %v, .sg/draft %q", open, h.draftOf(w))
+	}
+}
+
+// An open draft whose changes reached main another way lands as a no-op:
+// it is closed, not left open, and the working copy syncs.
+func TestCommitLandOpenDraftAlreadyOnMain(t *testing.T) {
+	h := newHarness(t)
+	h.seed(seedFiles)
+	w1 := h.checkout(t.TempDir())
+	w2 := h.checkout(t.TempDir())
+	writeFile(t, filepath.Join(w1, "a.txt"), "same\n")
+	h.ok(w1, "commit", "-m", "one")
+	id := h.draftOf(w1)
+	writeFile(t, filepath.Join(w2, "a.txt"), "same\n")
+	h.ok(w2, "commit", "-m", "two", "--land")
+	code, out, errs := h.run(w1, "commit", "-m", "one", "--land", "--json")
+	var res struct {
+		Landed        bool   `json:"landed"`
+		AlreadyOnMain bool   `json:"already_on_main"`
+		Draft         string `json:"draft"`
+	}
+	if err := json.Unmarshal([]byte(out), &res); code != 0 || err != nil || !res.Landed || !res.AlreadyOnMain || res.Draft != id {
+		t.Fatalf("exit %d (%v)\nstdout: %s\nstderr: %s", code, err, out, errs)
+	}
+	if st := h.getDraft(id).Status; st == "open" {
+		t.Fatalf("draft %s left %s", id, st)
+	}
+	if open := h.openDrafts(); len(open) != 0 || h.draftOf(w1) != "" {
+		t.Fatalf("open drafts %v, .sg/draft %q", open, h.draftOf(w1))
+	}
+}
