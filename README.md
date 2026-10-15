@@ -10,10 +10,10 @@ Scion-style source control on top of git. Git runs only on the server, and clien
 - **Drafts.** A commit without `--land` becomes a draft that you can update, show, land or abandon.
 - **Sparse checkouts** with `--path`, and history (`log`, `blame`, `cat`) without a checkout at all.
 - **Shared object cache.** The `sgd` daemon lets many working copies and agents on one machine share a single download. Every cached object is hash-verified.
-- **Projects.** Per-folder views of one or more repos, with per-project `read`/`write` access, aliases and read-only mounts. Clients never see repos.
+- **Projects.** Per-folder views of one or more repos, with per-project `read`/`write` access, aliases and read-only mounts. Clients never see repo names or source paths (a project that mounts a whole repo at `.` keeps that repo's commit SHAs; see the [server guide](docs/server.md#projects)).
 - **Auth.** Per-user tokens, TLS and global admins.
 - **GitHub mirror.** The server pushes `main` to GitHub after every land. It never overwrites commits made on GitHub, and retries with backoff.
-- **Import** of a repo from any git URL. Only `main` and `release/*` are copied.
+- **Import** of a repo from an `https://`, `ssh://` or `user@host:path` URL (local paths and `file://` are refused). Only `main` and `release/*` are copied.
 - **Scriptable.** Every command accepts `--json` and returns stable exit codes.
 - **Docker.** Multi-arch server images are published at `ghcr.io/hermes98761234/sgit-server`.
 
@@ -104,10 +104,10 @@ More in the **[server guide](docs/server.md)**: configuration, running without D
    ```bash
    sg login sg.example.com:7419 --token "$TOKEN" --ca cert.pem
    ```
-3. **List your projects and check one out** (add `--path src` for a sparse checkout). Name a project by its name, an alias or `#<id>`:
+3. **List your projects and check one out** (add `--path src` for a sparse checkout). Name a project by its name, an alias or `#<id>`. The directory defaults to the project's canonical name, so name it yourself to `cd` into it reliably:
    ```bash
    sg projects
-   sg checkout <project> && cd <project>
+   sg checkout <project> <dir> && cd <dir>
    ```
 4. **Work and land:**
    ```bash
@@ -129,7 +129,7 @@ More in the **[client guide](docs/client.md)**: all commands, drafts, conflicts 
    ```bash
    sgd --upstream sg.example.com:7419 --ca cert.pem
    ```
-3. **Done.** `sg` uses it automatically. Set `SG_NO_DAEMON=1` to bypass it.
+3. **Done.** `sg` uses it automatically. Set `SG_NO_DAEMON=1` to bypass it. Without `--ca`, sgd refuses to start against a server with a self-signed certificate.
 
 More in the **[sgd guide](docs/sgd.md)**: the systemd user service, socket and cache settings, and security.
 

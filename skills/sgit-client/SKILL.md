@@ -20,7 +20,7 @@ Get the token, server address and `cert.pem` from your sgit admin. The token can
 
 ```bash
 sg projects                        # NAME ALIASES LEVEL: the projects you can access
-sg checkout <project> [dir]        # dir defaults to the project's name
+sg checkout <project> [dir]        # dir defaults to the project's canonical name (also for an alias or #id)
 ```
 
 Name a project by its name, an alias, or `#<id>` (e.g. `#4`). A bare number is a name, not an id. `.sg/config` stores the project id, so a rename or a new alias never breaks a working copy.
@@ -30,7 +30,7 @@ An unknown project and one you cannot access give the same error: `project "<nam
 ## Everyday workflow
 
 ```bash
-sg checkout site && cd site        # full checkout of main of project site
+sg checkout site && cd site        # full checkout of main of project site (the dir is the canonical name)
 sg checkout site --path src        # sparse: only src/
 sg sync                            # update to latest main before starting
 # ... edit files ...
@@ -71,23 +71,30 @@ sg sparse add docs tools
 sg sparse rm tools
 ```
 
+Files outside the sparse paths are ignored by `sg status` and `sg commit`, even new ones: they are never listed or landed. `sg sparse add <path>` first, then commit.
+
+## Undoing local changes
+
+There is no revert command. Restore a file from `main` with `sg cat main:<path> > <path>` (delete a file you added); this also clears a conflicted file's markers. `sg abandon` drops the draft on the server but does not touch your files.
+
 ## Exit codes - handle them
 
 | Code | Meaning | What to do |
 |---|---|---|
 | 0 | ok | |
-| 1 | error | read the message |
+| 1 | error | read the message. If it says `landed <sha> (draft <id>), but the working copy was not updated`, the change is on `main`: run `sg sync`, do not commit it again |
 | 2 | not logged in, bad token, no access, `project "<name>" not found or no access`, or `read-only path` | `sg login`; check the name with `sg projects`; or ask the admin for `read`/`write` on the project |
 | 3 | conflict | conflict markers are written; `sg status` lists the files. Edit them to remove all markers, then rerun `sg commit -m "..." --land` |
-| 3 | partial land: `partially landed: <path>/ landed; the rest stays in draft <id>` (`--json`: `"partial": true`, `"landed_mounts": [...]`) | a project can span several sources, and a land is not atomic across them. The listed folders landed and stay landed; the working copy is already synced to the new `main`. Fix the conflicts, then rerun `sg commit -m "..." --land`: it lands only the rest. Do not just rerun `sg land <id>` on the old draft |
+| 3 | partial land: `partially landed: <path>/ landed; the rest stays in draft <id>` (outside a working copy, `sg land <id> --project P` prints `partially landed: <path>/ landed on main <sha>; …` and `sg: landed <path>; the rest did not land: conflict in N file(s)`; `--json`: `"partial": true`, `"landed_mounts": [...]`) | a project can span several sources, and a land is not atomic across them. The listed folders landed and stay landed; the working copy is already synced to the new `main`. Fix the conflicts, then rerun `sg commit -m "..." --land`: it lands only the rest. Do not just rerun `sg land <id>` on the old draft |
 | 4 | `main` kept moving | just retry the same command |
 
 ## Tips for agents
 
-- Use `--json` on any command for machine-readable output; errors become `{"error": ..., "exit_code": ...}`.
+- Use `--json` on any command for machine-readable output; errors become `{"error": ..., "exit_code": ...}`. Lists are wrapped in objects: `log` → `commits`, `blame` → `lines`, `drafts` → `drafts`, `sparse list` → `sparse`. `sync` lists `updated`, `deleted`, `merged` and `conflicts`.
+- Rerunning `sg commit -m ... --land` after a land whose answer was lost is safe: it syncs, lands only newer edits, and with none prints `these changes are already on main` (exit 0, `--json` `"already_on_main": true`).
 - Run `sg sync` before editing and `sg status` + `sg diff` before landing, so you only land what you intended.
-- Check `sg status` for `skipped:` files: names with newlines, CR or invalid UTF-8 cannot be stored.
+- Check `sg status` for `skipped:` files: names with newlines, CR, backslashes or invalid UTF-8, and names git reads as `.git` (`GIT~1`, `.git.`, `.git ` folders; a symlink named `.gitmodules`) cannot be stored and are never committed.
 - Max file size is set by the server (100 MB by default).
-- If `sgd` (local cache daemon) runs, `sg` uses it automatically; `SG_NO_DAEMON=1` bypasses it.
+- If `sgd` (local cache daemon) runs, `sg` uses it automatically; `SG_NO_DAEMON=1` bypasses it. An error that says `through sgd at <socket>` means sgd cannot reach the server: retry with `SG_NO_DAEMON=1` and tell the human.
 - Confirm with the human before landing on `main` unless they already asked you to land.
 - Admin work (users, tokens, access, projects) is covered by the `sgit-admin` skill.

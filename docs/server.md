@@ -4,20 +4,21 @@
 
 ## Configuration
 
-The server listens on `:7419` (gRPC over TLS). The data directory (`/data` in Docker, held in the `sgdata` volume) holds the bare repos (`repos/`), the derived project repos (`projects/`), `sg.db`, `admin-token` and `tls/`.
+The server listens on `:7419` (gRPC over TLS). The data directory (`/data` in Docker, held in the `sgdata` volume) holds the bare repos (`repos/`), the derived project repos (`projects/`), `sg.db` (mode 0600: it holds token hashes and the user list), `admin-token`, `tls/` and `sg.lock`. A running server holds a lock on `sg.lock`, so a second `sg-server serve` on the same data directory exits with `another sg-server is already using data dir …`.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `SG_DATA_DIR` | `/data` | repos, projects, `sg.db`, `admin-token`, `tls/` |
+| `SG_DATA_DIR` | `/data` in Docker, `./sgdata` otherwise | repos, projects, `sg.db`, `admin-token`, `tls/` |
 | `SG_LISTEN` | `:7419` | listen address |
 | `SG_TLS_CERT` / `SG_TLS_KEY` | — | PEM certificate and key |
-| `SG_TLS_SELF_SIGNED` | `0` | `1` = generate a self-signed certificate on first start |
-| `SG_TLS_HOSTS` | `localhost,127.0.0.1` | SANs for the self-signed certificate |
+| `SG_TLS_SELF_SIGNED` | `0` | Docker image only: `1` = generate a self-signed certificate on first start |
+| `SG_TLS_HOSTS` | `localhost,127.0.0.1` | SANs for the self-signed certificate (Docker image, and the default of `gen-cert --hosts`) |
+| `SG_DEV_INSECURE` | `0` | `1` = plaintext, like `serve --dev-insecure` (loopback listen address only); also read by `health` |
 | `SG_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
 | `SG_MAX_BLOB_MB` | `100` | max size of one file |
 
 TLS options:
-- With `SG_TLS_SELF_SIGNED=1`, a certificate for `SG_TLS_HOSTS` is generated into `/data/tls/cert.pem`. Clients pin it with `sg login --ca cert.pem`.
+- In the Docker image, `SG_TLS_SELF_SIGNED=1` generates a certificate for `SG_TLS_HOSTS` into `/data/tls/cert.pem` (the image's entrypoint does this, not `sg-server` itself). Clients pin it with `sg login --ca cert.pem`. Without Docker, make one with `sg-server gen-cert` (see below).
 - To use your own certificate instead, set `SG_TLS_CERT` and `SG_TLS_KEY` and mount the files.
 
 ## Run without Docker
@@ -70,14 +71,14 @@ sg acl list [--user bob] [--project web]      # USER PROJECT LEVEL
 
 - `sg user list` shows TOKENS as the number of active (not revoked) tokens. `ADMIN` is `yes` or `no`.
 - `sg token list` never prints token secrets; the server stores only their hashes. REVOKED timestamps appear in `--json` output as `revoked`.
-- `sg acl grant` and `sg acl revoke` take a project (name, alias or `#<id>`). Access is one `read` or `write` level per user and project; `write` implies `read`. `sg acl list` shows the project's canonical name.
+- `sg acl grant` and `sg acl revoke` take a project (name, alias or `#<id>`) and print its canonical name. Access is one `read` or `write` level per user and project; `write` implies `read`. `sg acl list` shows the project's canonical name. `sg acl revoke` for a user without a grant says `<user> had no explicit access to <project>; nothing revoked` (exit 0; `--json` has `"revoked": false`).
 - `sg acl list` shows explicit grants only. Admins have implicit access to every project and do not appear in it.
 - `sg user demote` and `sg user delete` fail (exit 1) if they would leave the server with no admin. You cannot delete yourself.
-- All of these accept `--json` and `--server`.
+- All of these accept `--json` and `--server`, before or after the command (`sg --server host:port repo list` or `sg repo list --server host:port`).
 
 ### Projects
 
-A **project** is what users see. It has an id, a unique name, optional aliases, and its **mounts**. A new project has no mounts and no commits until the first `mount`. A mount maps a path in the project to `<repo>:<folder>`. Clients never learn repo names, source paths or source commit SHAs.
+A **project** is what users see. It has an id, a unique name, optional aliases, and its **mounts**. A new project has no mounts and no commits until the first `mount`. A mount maps a path in the project to `<repo>:<folder>`. Clients never learn repo names or source paths. They do not learn source commit SHAs either, with one exception: when a project's first mount is a whole repo at `.`, its project commits are byte-identical copies of the source commits, so they keep the source SHAs. That holds from the start of the history up to the first commit with a signature (`gpgsig`, `mergetag`), an `encoding` header or a second parent; that commit and every later one get new SHAs, because each commit names its parent. Repos made and landed through sgit have none of these, so all their SHAs match. Such a project shows the whole repo anyway; use folder mounts when the source SHAs must stay private.
 
 ```bash
 sg project create site                        # created project site (id 1)
@@ -127,12 +128,13 @@ With `--json`, `create`, `mount`, `unmount`, `alias`, `rename` and `show` print 
 - The first mount of a project imports the history of that folder: every first-parent `main` commit that touched it becomes a project commit, with the same author, dates and message. Signatures (`gpgsig`, `mergetag`), the `encoding` header and second parents are not kept, so even a `.` mount gives signed and merge commits new SHAs. A long history takes a while: `sg project mount` waits up to 30 minutes, and the server finishes the import even if the client gives up (bounded at one hour). If the import fails, the project is left as it was before the mount. A server shutdown stops a running import after the usual 5 s grace period; the part already imported is kept and the import resumes on the project's next request.
 - Later mounts and unmounts are **forward only**. Each one adds one layout commit on top of the project head, "Project layout: added `<path>/`" or "Project layout: removed `<path>/`", authored by the acting admin. Older history of a newly mounted folder is not imported. Changing `--read-only` creates no commit.
 - Commits landed in a mounted folder, through any project or directly in the repo, show up in the project on its next request. Commits from several repos are ordered by land order.
+- A land that touches mounts of several repos makes one project commit per repo, in land order, each with the land's message, so `sg log` shows it once per repo.
 
 **Read-only mounts** refuse writes from everyone, admins included (`read-only path: <path>`, exit 2).
 
 **Aliases and rename.** An alias is an extra name for the same project. `sg project rename <old> <new>` keeps the old name as an alias, so existing references keep working. Renaming to one of the project's own aliases swaps the two. Working copies store the project id, so renames and aliases never break them.
 
-**Drafts that predate a mount change.** A draft cannot land into a mount that was added or pointed at another folder after the draft's base. It fails with `draft <id> was made before mount <path>/ was added; sync and commit again` (or `… changed; …`). A draft that touches an unmounted path fails with `path outside project: <path>`.
+**Drafts that predate a mount change.** A draft cannot land into a mount that did not exist at the draft's base, or that now points at a different repo or folder than it did then. The check compares the mount's source at the base with its source now, so a mount removed and added again with the same `repo:folder` does not block the draft. It fails with `draft <id> was made before mount <path>/ was added; sync and commit again` (or `… changed; …`). A draft that touches an unmounted path fails with `path outside project: <path>`.
 
 **Lands across repos.** A land that touches mounts of several repos lands one repo at a time, in repo-name order. On the first conflict or error it stops. Repos that already landed stay landed, and the client gets a partial-land conflict (exit 3) and retries only the rest.
 
@@ -159,7 +161,7 @@ docker compose exec sg-server sg repo list
 
 ## Importing and mirroring
 
-`sg repo import web --from https://github.com/acme/web.git` creates `web` from the source's `main` and `release/*` branches. Other branches and tags are not copied, and the source must have a `main` branch. An interrupted import leaves nothing behind, so the name can be reused.
+`sg repo import web --from https://github.com/acme/web.git` creates `web` from the source's `main` and `release/*` branches. The source must be an `https://`, `ssh://` or `user@host:path` URL; local paths, `file://`, `http://` and `git://` are refused. To import a repo from the server's own disk, reach it over ssh (for example `ssh://localhost/srv/git/web.git`, with an SSH key the server can use). Other branches and tags are not copied, and the source must have a `main` branch. An interrupted import leaves nothing behind, so the name can be reused.
 
 `--mirror URL` on `repo create` or `repo import` makes the server push `main` to that URL after every land, in the background. Each push uses `--force-with-lease=main:<last mirrored commit>`:
 

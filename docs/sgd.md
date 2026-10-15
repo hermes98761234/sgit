@@ -10,6 +10,8 @@ sgd --upstream sg.example.com:7419 --ca cert.pem
 
 `--upstream` and `--ca` default to `$SGD_UPSTREAM` and `$SGD_CA`.
 
+At startup sgd checks the upstream once. If it cannot verify the server's TLS certificate (no `--ca` for a self-signed server, or the wrong one), it exits with `cannot verify the TLS certificate of upstream …; pass --ca …`. If the server is merely unreachable, it logs a warning and starts anyway; it connects when the server comes up.
+
 ## Run as a systemd user service
 
 ```bash
@@ -24,12 +26,14 @@ systemctl --user enable --now sgd
 
 - **When `sg` uses it.** `sg` uses `sgd` automatically when the daemon fronts the server you are logged in to. If there is no socket, or sgd fronts a different server, `sg` connects directly without saying anything.
 - **Unusable socket.** If a socket path exists but cannot be used, `sg` prints one warning and connects directly. This covers sgd not answering, a path that is not a socket, and unsafe ownership or permissions.
+- **Working sgd, failing upstream.** If sgd answers but cannot reach the server (it is down, or sgd's `--ca` is wrong), `sg` does not fall back: the command fails (exit 1) with an error that ends in `(through sgd at <socket>: … or set SG_NO_DAEMON=1 to connect directly)`. Check sgd's log, or bypass it with `SG_NO_DAEMON=1`.
 - **Bypass.** Set `SG_NO_DAEMON=1` to skip the daemon.
 - **Admin commands** always go to the server directly.
 
 ## Socket
 
-- The socket is `$XDG_RUNTIME_DIR/sg/sgd.sock` with mode 0600, one daemon per user. Change it with `--socket` (sgd only) or `$SG_SOCKET` (both sg and sgd).
+- The socket is `$XDG_RUNTIME_DIR/sg/sgd.sock` (without `XDG_RUNTIME_DIR`: `<tmp>/sg-<uid>/sgd.sock`) with mode 0600, one daemon per user. Change it with `--socket` (sgd only) or `$SG_SOCKET` (both sg and sgd). A relative `$SG_SOCKET` or `--socket` is resolved against the current directory, so it only works if sg and sgd run from the same directory.
+- Unix socket paths are limited to 107 bytes on Linux (103 on macOS). sgd refuses a longer path with `socket path … is too long`; pick a shorter `--socket` / `$SG_SOCKET`.
 - `sg` refuses a socket or socket directory that you do not own, or that others can write to.
 - `sgd` refuses to start if something other than a socket already exists at the socket path.
 - `sgd` creates the socket directory with mode 0700 if it does not exist. It never changes an existing directory, and refuses to start if that directory is group- or world-writable or not yours.
