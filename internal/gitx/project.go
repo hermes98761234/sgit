@@ -356,7 +356,12 @@ func FormatIdent(s Signature) string {
 // WriteCommit writes a commit object from raw parts (ident lines as stored
 // after "author "/"committer "), so a copy of a commit is byte-identical.
 func (r *Repo) WriteCommit(ctx context.Context, tree string, parents []string, author, committer, message string) (string, error) {
-	if !IsSHA(tree) || strings.ContainsAny(author+committer, "\n\x00") || author == "" || committer == "" {
+	return r.writeCommit(ctx, tree, parents, author, committer, "", message)
+}
+
+// writeCommit is WriteCommit with an optional encoding header ("" omits it).
+func (r *Repo) writeCommit(ctx context.Context, tree string, parents []string, author, committer, encoding, message string) (string, error) {
+	if !IsSHA(tree) || strings.ContainsAny(author+committer+encoding, "\n\x00") || author == "" || committer == "" {
 		return "", fmt.Errorf("%w: commit header", ErrInvalid)
 	}
 	var b strings.Builder
@@ -367,7 +372,12 @@ func (r *Repo) WriteCommit(ctx context.Context, tree string, parents []string, a
 		}
 		fmt.Fprintf(&b, "parent %s\n", p)
 	}
-	fmt.Fprintf(&b, "author %s\ncommitter %s\n\n%s", author, committer, message)
+	fmt.Fprintf(&b, "author %s\ncommitter %s\n", author, committer)
+	if encoding != "" {
+		fmt.Fprintf(&b, "encoding %s\n", encoding)
+	}
+	b.WriteString("\n")
+	b.WriteString(message)
 	if err := r.ensureEmptyTree(ctx); err != nil {
 		return "", err
 	}

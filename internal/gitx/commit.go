@@ -25,6 +25,7 @@ type Commit struct {
 	Committer    Signature
 	AuthorRaw    string // header value after "author ", byte for byte
 	CommitterRaw string // header value after "committer ", byte for byte
+	Encoding     string // value of the "encoding" header, "" when absent
 	Message      string
 }
 
@@ -83,6 +84,8 @@ func parseCommit(sha string, data []byte) (Commit, error) {
 		case "committer":
 			c.CommitterRaw = v
 			c.Committer, err = parseSig(v)
+		case "encoding":
+			c.Encoding = v
 		}
 		if err != nil {
 			return Commit{}, fmt.Errorf("gitx: commit %s: %w", sha, err)
