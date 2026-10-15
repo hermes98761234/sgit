@@ -460,6 +460,16 @@ func overlaps(a, b string) bool {
 	return a == "." || b == "." || a == b || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
 }
 
+// MountExistsError means a mount path is taken by another source. It is a
+// store.ErrExists whose message is complete for clients.
+type MountExistsError struct{ Path string }
+
+func (e *MountExistsError) Error() string {
+	return fmt.Sprintf("mount %q already exists; unmount it first", e.Path)
+}
+
+func (e *MountExistsError) Is(target error) bool { return target == store.ErrExists }
+
 // CheckMount reports whether m fits next to a project's mounts: its path
 // must not exist (remount is true when the same path already mounts the
 // same repo and folder) and must not overlap another mount path, so a "."
@@ -471,7 +481,7 @@ func CheckMount(mounts []store.Mount, m store.Mount) (remount bool, err error) {
 			if old.Repo == m.Repo && old.Folder == m.Folder {
 				return true, nil
 			}
-			return false, fmt.Errorf("%w: mount %q already exists; unmount it first", store.ErrExists, m.Path)
+			return false, &MountExistsError{Path: m.Path}
 		}
 		if overlaps(old.Path, m.Path) {
 			return false, fmt.Errorf("%w: mount path %q overlaps %q", gitx.ErrInvalid, m.Path, old.Path)
