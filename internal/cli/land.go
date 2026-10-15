@@ -74,6 +74,13 @@ func (a *app) commitAndLand(ctx context.Context, s *session, changes []*sgitv1.C
 	return a.finishLand(ctx, s, resp, err, true, changes)
 }
 
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
 // finishLand updates the working copy after Land/CommitAndLand. touchWC is
 // false when the landed draft does not belong to this working copy. sent is
 // the change set this command committed against w.Base, or nil.
@@ -81,6 +88,15 @@ func (a *app) finishLand(ctx context.Context, s *session, resp *sgitv1.LandRespo
 	w := s.wc
 	if err != nil {
 		det := conflictDetail(err)
+		if det != nil && det.Partial && (w == nil || !touchWC) {
+			// No working copy to rebase, but some mounts did land.
+			if eerr := a.emit(map[string]any{"landed": false, "partial": true, "landed_mounts": nonNil(det.Landed), "draft": det.DraftId, "main": det.Main}, func(out io.Writer) {
+				fmt.Fprintf(out, "partially landed: %s/ landed on main %s; the rest stays in draft %s\n", strings.Join(det.Landed, "/, "), short(det.Main), det.DraftId)
+			}); eerr != nil {
+				return eerr
+			}
+			return exitf(ExitConflict, "%s", errorMessage(err))
+		}
 		if det == nil || w == nil || !touchWC {
 			return err
 		}
@@ -92,18 +108,21 @@ func (a *app) finishLand(ctx context.Context, s *session, resp *sgitv1.LandRespo
 		if serr != nil {
 			return exitf(ExitConflict, "landing conflicted on main %s (draft %s kept); could not rebase the working copy: %v", short(det.Main), det.DraftId, serr)
 		}
-		landed := det.Landed
-		if landed == nil {
-			landed = []string{}
-		}
-		if err := a.emit(map[string]any{"landed": false, "partial": det.Partial, "landed_mounts": landed, "draft": det.DraftId, "main": det.Main, "sync": res}, func(out io.Writer) {
+		if eerr := a.emit(map[string]any{"landed": false, "partial": det.Partial, "landed_mounts": nonNil(det.Landed), "draft": det.DraftId, "main": det.Main, "sync": res}, func(out io.Writer) {
 			if det.Partial {
 				fmt.Fprintf(out, "partially landed: %s/ landed; the rest stays in draft %s\n", strings.Join(det.Landed, "/, "), det.DraftId)
 			}
-			fmt.Fprintf(out, "conflict: draft %s does not apply cleanly to main %s; working copy rebased onto it\n", det.DraftId, short(det.Main))
+			if len(det.Files) > 0 || !det.Partial {
+				fmt.Fprintf(out, "conflict: draft %s does not apply cleanly to main %s; working copy rebased onto it\n", det.DraftId, short(det.Main))
+			} else {
+				fmt.Fprintf(out, "working copy rebased onto main %s\n", short(det.Main))
+			}
 			printSync(out, res)
-		}); err != nil {
-			return err
+		}); eerr != nil {
+			return eerr
+		}
+		if det.Partial && len(det.Files) == 0 { // the rest failed for another reason
+			return exitf(ExitConflict, "%s; run `sg land` again", errorMessage(err))
 		}
 		return exitf(ExitConflict, "landing conflicted: fix the conflicted files, then run `sg commit -m MSG --land` again")
 	}

@@ -2,14 +2,17 @@ package cli_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
 	"github.com/hermes98761234/sgit/internal/cli"
+	"github.com/hermes98761234/sgit/internal/server"
 	"github.com/hermes98761234/sgit/internal/testenv"
 )
 
@@ -140,6 +143,95 @@ func TestPartialLandCLI(t *testing.T) {
 	}
 }
 
+// partialDraft sets up projects web (mounts a and b from two repos) with a
+// committed, unlanded draft touching both, where b conflicts with upstream.
+func partialDraft(t *testing.T) (*harness, string) {
+	h := newHarness(t)
+	for _, r := range []string{"a", "b"} {
+		h.env.CreateRepo(r)
+		h.env.CommitDirect(r, map[string]string{"f.txt": "base\n"}, "seed")
+	}
+	h.env.CreateProject("web")
+	h.env.Mount("web", "a", "a", ".", false)
+	h.env.Mount("web", "b", "b", ".", false)
+	root := t.TempDir()
+	h.ok(root, "checkout", "web")
+	w := filepath.Join(root, "web")
+	h.env.CommitDirect("b", map[string]string{"f.txt": "theirs\n"}, "upstream")
+	writeFile(t, filepath.Join(w, "a", "f.txt"), "ours a\n")
+	writeFile(t, filepath.Join(w, "b", "f.txt"), "ours b\n")
+	var d map[string]any
+	if err := json.Unmarshal([]byte(h.ok(w, "commit", "-m", "both", "--json")), &d); err != nil {
+		t.Fatal(err)
+	}
+	return h, d["draft"].(string)
+}
+
+// Outside the owning working copy a partial land must still say what landed.
+func TestPartialLandOutsideWorkingCopy(t *testing.T) {
+	h, id := partialDraft(t)
+	code, out, errs := h.run(t.TempDir(), "land", id, "--project", "web", "--json")
+	if code != cli.ExitConflict {
+		t.Fatalf("land --json: exit %d: %s %s", code, out, errs)
+	}
+	var res map[string]any
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("land --json output %q: %v", out, err)
+	}
+	if res["partial"] != true || res["landed"] != false || res["draft"] != id || res["main"] == "" {
+		t.Fatalf("partial json = %v", res)
+	}
+	if lm, _ := res["landed_mounts"].([]any); len(lm) != 1 || lm[0] != "a" {
+		t.Fatalf("landed_mounts = %v", res["landed_mounts"])
+	}
+	if !strings.Contains(errs, "landed a") {
+		t.Fatalf("stderr does not name the landed mount: %q", errs)
+	}
+
+	h, id = partialDraft(t)
+	code, out, errs = h.run(t.TempDir(), "land", id, "--project", "web")
+	if code != cli.ExitConflict || !strings.Contains(out, "partially landed: a/") || !strings.Contains(out, id) {
+		t.Fatalf("land: exit %d\nstdout: %s\nstderr: %s", code, out, errs)
+	}
+}
+
+// A partial land whose rest failed without conflicted files must not claim
+// the draft does not apply cleanly.
+func TestPartialLandWithoutConflictedFiles(t *testing.T) {
+	var h *harness
+	var n atomic.Int32
+	h = newHarness(t, func(c *server.Config) {
+		c.LandRetries = 2
+		c.BeforeCAS = func(repo string) {
+			if repo == "b" {
+				h.env.CommitDirect(repo, map[string]string{fmt.Sprintf("ext%d.txt", n.Add(1)): "x"}, "external")
+			}
+		}
+	})
+	for _, r := range []string{"a", "b"} {
+		h.env.CreateRepo(r)
+		h.env.CommitDirect(r, map[string]string{"f.txt": "base\n"}, "seed")
+	}
+	h.env.CreateProject("web")
+	h.env.Mount("web", "a", "a", ".", false)
+	h.env.Mount("web", "b", "b", ".", false)
+	root := t.TempDir()
+	h.ok(root, "checkout", "web")
+	w := filepath.Join(root, "web")
+	writeFile(t, filepath.Join(w, "a", "f.txt"), "ours a\n")
+	writeFile(t, filepath.Join(w, "b", "f.txt"), "ours b\n")
+	code, out, errs := h.run(w, "commit", "-m", "both", "--land")
+	if code != cli.ExitConflict || !strings.Contains(out, "partially landed: a/") {
+		t.Fatalf("exit %d\nstdout: %s\nstderr: %s", code, out, errs)
+	}
+	if strings.Contains(out+errs, "does not apply cleanly") || strings.Contains(out+errs, "conflicted files") {
+		t.Fatalf("no file conflicted, but the output says so:\nstdout: %s\nstderr: %s", out, errs)
+	}
+	if !strings.Contains(errs, "main kept moving") {
+		t.Fatalf("stderr does not give the reason: %q", errs)
+	}
+}
+
 func TestPreProjectWorkingCopyIsRejected(t *testing.T) {
 	h, _ := coreProject(t)
 	w := t.TempDir()
@@ -148,8 +240,10 @@ func TestPreProjectWorkingCopyIsRejected(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(w, ".sg", "config"), "server = \""+h.env.Addr+"\"\nrepo = \"web\"\n")
 	writeFile(t, filepath.Join(w, ".sg", "base"), strings.Repeat("a", 40)+"\n")
-	code, _, errs := h.runAs("bob", w, "sync")
-	if code != cli.ExitError || !strings.Contains(errs, "predates projects") {
-		t.Fatalf("old working copy: exit %d, %q", code, errs)
+	for _, cmd := range []string{"sync", "status"} {
+		code, _, errs := h.runAs("bob", w, cmd)
+		if code != cli.ExitError || !strings.Contains(errs, "predates projects") {
+			t.Errorf("%s in an old working copy: exit %d, %q", cmd, code, errs)
+		}
 	}
 }

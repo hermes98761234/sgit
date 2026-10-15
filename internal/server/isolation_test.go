@@ -3,13 +3,16 @@ package server_test
 import (
 	"context"
 	"io"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
 	"github.com/hermes98761234/sgit/internal/daemontest"
+	"github.com/hermes98761234/sgit/internal/gitx"
 	"github.com/hermes98761234/sgit/internal/objfmt"
 	"github.com/hermes98761234/sgit/internal/testenv"
 	"github.com/klauspost/compress/zstd"
@@ -577,5 +580,111 @@ func TestFetchedCommitsNeverNameSources(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// A conflict that merge-tree finds by following an upstream rename into the
+// mount must not hand the writer the stage blob that only existed outside it.
+func TestConflictStagesNeverNameForeignBlobs(t *testing.T) {
+	ctx := context.Background()
+	e, bob, _ := isoEnv(t)
+	c := e.Project(bob)
+	orig := "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n"
+	e.CommitDirect(hiddenRepo, map[string]string{"secret/moved.txt": orig}, "secret file")
+	base := testenv.Must(c.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web"})).Sha
+	// The draft adds app/moved.txt while upstream renames secret/moved.txt
+	// to pub/moved.txt with an edit.
+	mine := e.Upload(bob, "web", []byte("one\ntwo\nthree\nfour\nfive\nsix\nseven\nMINE\n"))[0]
+	g := e.Git(hiddenRepo)
+	defer g.Close()
+	main := testenv.Must(g.ReadRef(ctx, "refs/heads/main"))
+	edited := testenv.Must(g.WriteBlob(ctx, []byte("one\ntwo\nthree\nfour\nfive\nsix\nseven\nTHEIRS\n")))
+	tree := testenv.Must(g.BuildTree(ctx, main, []gitx.Change{
+		{Path: "secret/moved.txt", Op: gitx.OpDelete},
+		{Path: "pub/moved.txt", Op: gitx.OpAdd, BlobSHA: edited},
+	}))
+	sig := gitx.Signature{Name: "direct", Email: "direct@sgit.local", When: time.Now()}
+	mv := testenv.Must(g.CommitTree(ctx, tree, []string{main}, "move", sig, sig))
+	if err := g.UpdateRef(ctx, "refs/heads/main", mv, main); err != nil {
+		t.Fatal(err)
+	}
+	_, err := c.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{Project: "web", Base: base, Message: "mine",
+		Changes: []*sgitv1.Change{testenv.Add("app/moved.txt", mine)}})
+	st := status.Convert(err)
+	if st.Code() == codes.FailedPrecondition {
+		return // refused without details: nothing leaks
+	}
+	if st.Code() != codes.Aborted {
+		t.Fatalf("CommitAndLand = %v, want a conflict", err)
+	}
+	foreign := objfmt.BlobSHA([]byte(orig))
+	for _, d := range st.Details() {
+		det, ok := d.(*sgitv1.ConflictDetail)
+		if !ok {
+			continue
+		}
+		if len(det.Files) == 0 {
+			t.Fatalf("detail without files: %+v", det)
+		}
+		for _, f := range det.Files {
+			for _, sha := range []string{f.BaseSha, f.OursSha, f.TheirsSha} {
+				if sha == "" {
+					continue
+				}
+				if sha == foreign {
+					t.Fatalf("conflict %+v names the blob that only existed outside the mount", f)
+				}
+				has := testenv.Must(c.HasObjects(ctx, &sgitv1.HasObjectsRequest{Project: "web", Shas: []string{sha}}))
+				if !has.Present[0] {
+					t.Fatalf("conflict %+v names %s, which the project does not hold", f, sha)
+				}
+			}
+		}
+	}
+}
+
+// A first mount that fails part way must not leave the folder's objects in
+// the project repo, where readers could probe them by SHA.
+func TestFailedFirstMountLeavesNoObjects(t *testing.T) {
+	ctx := context.Background()
+	e := testenv.Start(t)
+	e.CreateRepo(hiddenRepo)
+	e.CreateRepo("docs")
+	e.CommitDirect("docs", map[string]string{"d/readme": "docs\n"}, "docs")
+	e.CommitDirect(hiddenRepo, map[string]string{"pub/a.txt": "first secret\n"}, "one")
+	// Project ref imports only the first commit; its translated SHA is what
+	// a failed import into web would have written as well.
+	e.CreateProject("ref")
+	first := e.Mount("ref", "app", hiddenRepo, "pub", false)
+	e.CommitDirect(hiddenRepo, map[string]string{"pub/b.txt": "second secret\n"}, "two")
+	// Break the second commit's blob, so web's import copies the first
+	// commit and then fails.
+	broken := objfmt.BlobSHA([]byte("second secret\n"))
+	if err := os.Remove(filepath.Join(e.DataDir, "repos", hiddenRepo+".git", "objects", broken[:2], broken[2:])); err != nil {
+		t.Fatal(err)
+	}
+	e.CreateProject("web")
+	adm := e.Admin(e.AdminToken)
+	if _, err := adm.MountProject(ctx, &sgitv1.MountProjectRequest{Project: "web", Path: "app", Repo: hiddenRepo, Folder: "pub"}); err == nil {
+		t.Fatal("mount with a broken source succeeded")
+	}
+	e.Mount("web", "docs", "docs", "d", false)
+	bob := e.NewUser("bob", "web", "read")
+	c := e.Project(bob)
+	g := e.Git(hiddenRepo)
+	defer g.Close()
+	appTree := testenv.Must(g.Subtrees(ctx, []string{testenv.Must(g.ResolveRev(ctx, "main~1"))}, "pub"))[0]
+	leaked := []string{objfmt.BlobSHA([]byte("first secret\n")), appTree, first}
+	has := testenv.Must(c.HasObjects(ctx, &sgitv1.HasObjectsRequest{Project: "web", Shas: leaked}))
+	for i, sha := range leaked {
+		if has.Present[i] {
+			t.Errorf("HasObjects(%s) = true after the failed mount", sha)
+		}
+		if _, err := fetch(t, c, "web", sha); status.Code(err) != codes.NotFound {
+			t.Errorf("GetObjects(%s) = %v", sha, err)
+		}
+	}
+	if _, err := c.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web", Rev: first}); status.Code(err) != codes.NotFound {
+		t.Errorf("ResolveRev(%s) = %v", first, err)
 	}
 }

@@ -44,10 +44,12 @@ var shaRe = regexp.MustCompile(`^[0-9a-f]{40}$`)
 // IsSHA reports whether s is a full lowercase hex SHA-1.
 func IsSHA(s string) bool { return shaRe.MatchString(s) }
 
-// baseEnv isolates git from host system/global config (hooks, signing, helpers).
+// baseEnv isolates git from host system/global config (hooks, signing,
+// helpers) and from refs/replace, so objects always read as stored.
 func baseEnv() []string {
 	return append(os.Environ(),
 		"GIT_TERMINAL_PROMPT=0",
+		"GIT_NO_REPLACE_OBJECTS=1",
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"LC_ALL=C",

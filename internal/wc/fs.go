@@ -42,7 +42,7 @@ func ValidPath(p string) error {
 		}
 	}
 	if bad {
-		return fmt.Errorf("invalid repo path %q", p)
+		return fmt.Errorf("invalid path %q", p)
 	}
 	return nil
 }

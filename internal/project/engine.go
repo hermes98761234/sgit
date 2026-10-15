@@ -31,7 +31,13 @@ type Config struct {
 	Sources      Sources
 	Now          func() time.Time
 	AfterRebuild func(ctx context.Context, id int64) error // optional
+	// MountTimeout bounds a mount, which runs detached from the caller's
+	// context because a first mount imports the folder's whole history
+	// (default DefaultMountTimeout).
+	MountTimeout time.Duration
 }
+
+const DefaultMountTimeout = time.Hour
 
 // Handle is an open project repo.
 type Handle struct {
@@ -49,9 +55,16 @@ type Engine struct {
 	opening map[int64]*sync.Mutex // per-project lock held while opening or deleting a repo
 }
 
+// catchUpChunk is how many translated commits a catch-up records at once, so
+// a cancelled or failed run keeps its progress (a variable for tests).
+var catchUpChunk = 500
+
 func New(cfg Config) *Engine {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
+	}
+	if cfg.MountTimeout <= 0 {
+		cfg.MountTimeout = DefaultMountTimeout
 	}
 	return &Engine{cfg: cfg, open: map[int64]*Handle{}, opening: map[int64]*sync.Mutex{}}
 }
@@ -116,6 +129,16 @@ func (e *Engine) Get(ctx context.Context, id int64) (*Handle, error) {
 		return nil, err
 	}
 	h = &Handle{ID: id, Git: gitx.Open(dir)}
+	// The DB is the truth: repair a main ref left behind by a crash between
+	// recording commits and moving the ref (CatchUp's fast path never does).
+	head, _, err := e.cfg.Store.ProjectHead(ctx, id)
+	if err == nil {
+		err = e.moveRef(ctx, h, head)
+	}
+	if err != nil {
+		h.Git.Close()
+		return nil, err
+	}
 	e.mu.Lock()
 	e.open[id] = h
 	e.mu.Unlock()
@@ -278,14 +301,27 @@ func (e *Engine) catchUpLocked(ctx context.Context, h *Handle) (string, error) {
 		out = append(out, store.ProjectCommit{SHA: sha, Seq: seq, Kind: store.KindSource, Repo: q.repo,
 			SourceSHA: c.SHA, Layout: layout, Sources: maps.Clone(sources)})
 		parent = sha
+		if len(out) >= catchUpChunk { // keep progress if a later step fails
+			if err := e.record(ctx, h, out, sources, parent); err != nil {
+				return "", err
+			}
+			out = nil
+		}
 	}
-	if err := st.RecordProjectCommits(ctx, h.ID, out, sources, nil); err != nil {
-		return "", err
-	}
-	if err := e.moveRef(ctx, h, parent); err != nil {
+	if err := e.record(ctx, h, out, sources, parent); err != nil {
 		return "", err
 	}
 	return parent, nil
+}
+
+// record stores translated commits with the cursors reached so far and
+// points the project's main at head.
+func (e *Engine) record(ctx context.Context, h *Handle, out []store.ProjectCommit, cursors map[string]string, head string) error {
+	if err := e.cfg.Store.RecordProjectCommits(ctx, h.ID, out, maps.Clone(cursors), nil); err != nil {
+		return err
+	}
+	// Once recorded, the ref follows even if the caller has gone.
+	return e.moveRef(context.WithoutCancel(ctx), h, head)
 }
 
 // moveRef points the project's main at sha (no-op when sha is "" or current).
@@ -375,6 +411,9 @@ func overlaps(a, b string) bool {
 func (e *Engine) Mount(ctx context.Context, h *Handle, m store.Mount, actor gitx.Signature) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	// A first mount can take long; a client giving up must not undo it.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), e.cfg.MountTimeout)
+	defer cancel()
 	head, err := e.catchUpLocked(ctx, h)
 	if err != nil {
 		return "", err
@@ -422,8 +461,10 @@ func (e *Engine) firstMountLocked(ctx context.Context, h *Handle, m store.Mount,
 }
 
 // resetLocked undoes a failed first mount: the project returns to having no
-// mounts, commits or cursors, and its main ref is removed, so a retry starts
-// clean. Objects already copied stay unreachable in the project repo.
+// mounts, commits or cursors, so a retry starts clean. The project repo is
+// replaced by an empty one, because the objects already copied belong to a
+// folder that is not part of the project and must not be found by SHA. With
+// no commits there are no drafts, so nothing else lives in the repo.
 func (e *Engine) resetLocked(ctx context.Context, h *Handle) error {
 	cur, err := h.Git.ReadRef(ctx, gitx.MainRef)
 	switch {
@@ -435,7 +476,27 @@ func (e *Engine) resetLocked(ctx context.Context, h *Handle) error {
 			return err
 		}
 	}
-	return e.cfg.Store.ResetProject(ctx, h.ID)
+	if err := e.cfg.Store.ResetProject(ctx, h.ID); err != nil {
+		return err
+	}
+	dir := h.Git.Dir()
+	fresh, old := dir+".reset", dir+".old"
+	for _, d := range []string{fresh, old} {
+		if err := os.RemoveAll(d); err != nil {
+			return err
+		}
+	}
+	if err := gitx.InitBare(ctx, fresh); err != nil {
+		return err
+	}
+	if err := os.Rename(dir, old); err != nil {
+		return err
+	}
+	if err := os.Rename(fresh, dir); err != nil {
+		return errors.Join(err, os.Rename(old, dir))
+	}
+	h.Git.Recycle() // cat-file processes may still hold the old packs
+	return os.RemoveAll(old)
 }
 
 func (e *Engine) Unmount(ctx context.Context, h *Handle, path string, actor gitx.Signature) (string, error) {

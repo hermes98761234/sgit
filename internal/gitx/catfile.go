@@ -23,6 +23,7 @@ type catFile struct {
 	cmd  *exec.Cmd
 	in   io.WriteCloser
 	out  *bufio.Reader
+	gen  int // Repo.gen when started
 	once sync.Once
 }
 
@@ -107,6 +108,7 @@ func (r *Repo) acquire(ctx context.Context) (*catFile, error) {
 		r.slots <- struct{}{}
 		return nil, err
 	}
+	c.gen = r.gen
 	r.procs = append(r.procs, c)
 	r.mu.Unlock()
 	return c, nil
@@ -117,7 +119,7 @@ func (r *Repo) acquire(ctx context.Context) (*catFile, error) {
 // back, so a waiter blocked in acquire wakes up.
 func (r *Repo) release(c *catFile, healthy bool) {
 	r.mu.Lock()
-	if healthy && !r.closed {
+	if healthy && !r.closed && c.gen == r.gen {
 		r.idle = append(r.idle, c)
 		r.mu.Unlock()
 	} else {

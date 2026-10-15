@@ -19,6 +19,7 @@ type Repo struct {
 	mu     sync.Mutex
 	procs  []*catFile // every live cat-file process
 	idle   []*catFile // live processes not currently checked out
+	gen    int        // processes from an older generation are not reused
 	closed bool
 }
 
@@ -68,6 +69,28 @@ func (r *Repo) Close() error {
 		p.close()
 	}
 	return nil
+}
+
+// Recycle stops the idle cat-file processes and retires the busy ones when
+// they are released, so later reads see the repo as it is on disk now (a
+// running cat-file may still hold packs that were deleted).
+func (r *Repo) Recycle() {
+	r.mu.Lock()
+	r.gen++
+	idle := r.idle
+	r.idle = nil
+	for _, c := range idle {
+		for i, p := range r.procs {
+			if p == c {
+				r.procs = append(r.procs[:i], r.procs[i+1:]...)
+				break
+			}
+		}
+	}
+	r.mu.Unlock()
+	for _, c := range idle {
+		c.close()
+	}
 }
 
 func (r *Repo) run(ctx context.Context, stdin io.Reader, extraEnv []string, args ...string) ([]byte, error) {

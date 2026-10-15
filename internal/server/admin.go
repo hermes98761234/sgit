@@ -356,7 +356,7 @@ func (a *adminService) refuseInUse(ctx context.Context, repo string) error {
 	}
 	if len(names) > 0 {
 		sort.Strings(names)
-		return status.Errorf(codes.FailedPrecondition, "repo %q is mounted by project(s) %s; unmount it first", repo, strings.Join(names, ", "))
+		return status.Errorf(codes.FailedPrecondition, "repo %q is mounted by project(s) %s; delete those projects first (unmounting keeps the repo in their history)", repo, strings.Join(names, ", "))
 	}
 	names, err = a.s.store.ProjectsUsing(ctx, repo)
 	if err != nil {

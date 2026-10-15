@@ -571,3 +571,113 @@ func TestDeleteThenStaleHandle(t *testing.T) {
 		}
 	}
 }
+
+// history commits n changes to src/ of repo, each touching one file.
+func (e *env) history(repo string, from, n int) {
+	e.t.Helper()
+	for i := from; i < from+n; i++ {
+		e.commit(repo, fmt.Sprintf("c%d", i), map[string]string{fmt.Sprintf("src/f%d", i%7): fmt.Sprint(i)}, false)
+	}
+}
+
+// The first mount imports the folder's whole history and must not depend on
+// the caller's context: a client giving up must not undo a long import.
+func TestFirstMountOfLongHistoryIgnoresCallerCancel(t *testing.T) {
+	e := newEnv(t)
+	e.repo("core")
+	e.history("core", 0, 200)
+	h := e.project("web")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	head, err := e.eng.Mount(ctx, h, store.Mount{Path: "lib", Repo: "core", Folder: "src"}, admin)
+	if err != nil {
+		t.Fatalf("Mount with a cancelled caller context = %v", err)
+	}
+	if got := len(e.subjects(h)); got != 200 {
+		t.Fatalf("imported %d commits, want 200", got)
+	}
+	if now, _ := must2(e.st.ProjectHead(context.Background(), h.ID)); now != head {
+		t.Fatalf("head %s, Mount answered %s", now, head)
+	}
+}
+
+// A catch-up records its progress in chunks, so one that is cancelled part
+// way keeps what it translated and the next run resumes from there.
+func TestInterruptedCatchUpResumes(t *testing.T) {
+	defer func(n int) { catchUpChunk = n }(catchUpChunk)
+	catchUpChunk = 5
+	e := newEnv(t)
+	e.repo("core")
+	e.history("core", 0, 1)
+	h := e.project("web")
+	e.mount(h, "lib", "core", "src")
+	ref := e.project("ref")
+	e.mount(ref, "lib", "core", "src")
+	bg := context.Background()
+	_, seq0 := must2(e.st.ProjectHead(bg, h.ID))
+	e.history("core", 1, 60)
+
+	ctx, cancel := context.WithCancel(bg)
+	defer cancel()
+	done := make(chan struct{})
+	go func() { // cancel once the first chunk is recorded
+		defer close(done)
+		for ctx.Err() == nil {
+			if _, seq, err := e.st.ProjectHead(bg, h.ID); err == nil && seq > seq0 {
+				cancel()
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	_, err := e.eng.CatchUp(ctx, h)
+	cancel()
+	<-done
+	if err == nil {
+		t.Fatal("CatchUp finished before it was cancelled")
+	}
+	head1, seq1 := must2(e.st.ProjectHead(bg, h.ID))
+	if seq1 <= seq0 || seq1 >= seq0+60 {
+		t.Fatalf("after the interruption seq = %d, want progress between %d and %d", seq1, seq0, seq0+60)
+	}
+	if ref := must(h.Git.ReadRef(bg, gitx.MainRef)); ref != head1 {
+		t.Fatalf("project main %s, recorded head %s", ref, head1)
+	}
+	if _, err := e.eng.CatchUp(bg, h); err != nil {
+		t.Fatal(err)
+	}
+	_, seq2 := must2(e.st.ProjectHead(bg, h.ID))
+	if seq2 != seq0+60 {
+		t.Fatalf("after resuming seq = %d, want %d", seq2, seq0+60)
+	}
+	got := must(h.Git.Log(bg, "main", "", 1000))
+	if _, err := e.eng.CatchUp(bg, ref); err != nil {
+		t.Fatal(err)
+	}
+	want := must(ref.Git.Log(bg, "main", "", 1000))
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("resumed history differs from an uninterrupted one (%d vs %d commits)", len(got), len(want))
+	}
+}
+
+// A crash between recording commits and moving the ref leaves main behind
+// the DB; opening the project repairs it even when no source moved.
+func TestGetRepairsLaggingMainRef(t *testing.T) {
+	e := newEnv(t)
+	e.repo("core")
+	e.commit("core", "one", map[string]string{"src/a": "1"}, true)
+	h := e.project("web")
+	e.mount(h, "lib", "core", "src")
+	e.commit("core", "two", map[string]string{"src/a": "2"}, true)
+	ctx := context.Background()
+	head := must(e.eng.CatchUp(ctx, h))
+	old := must(h.Git.ResolveRev(ctx, "main~1"))
+	if err := h.Git.UpdateRef(ctx, gitx.MainRef, old, head); err != nil {
+		t.Fatal(err)
+	}
+	e.eng.CloseAll()
+	h2 := must(e.eng.Get(ctx, h.ID))
+	if got := must(h2.Git.ReadRef(ctx, gitx.MainRef)); got != head {
+		t.Fatalf("main after Get = %s, want the recorded head %s", got, head)
+	}
+}

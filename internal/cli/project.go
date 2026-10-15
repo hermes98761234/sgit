@@ -129,7 +129,8 @@ func projectMount(ctx context.Context, a *app, args []string) error {
 		return usageErr(projectUsage)
 	}
 	var info *sgitv1.ProjectInfo
-	err = a.admin(ctx, *srv, adminTimeout, func(ctx context.Context, ac sgitv1.AdminClient) (err error) {
+	// The first mount imports the folder's whole history.
+	err = a.admin(ctx, *srv, importTimeout, func(ctx context.Context, ac sgitv1.AdminClient) (err error) {
 		info, err = ac.MountProject(ctx, &sgitv1.MountProjectRequest{Project: pos[0], Path: pos[1], Repo: repo, Folder: folder, ReadOnly: *ro})
 		return err
 	})

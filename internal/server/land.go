@@ -232,6 +232,8 @@ func (r *projectService) landDraft(ctx context.Context, pr *proj, u store.User, 
 		if cerr != nil {
 			return nil, r.s.hide(ctx, cerr)
 		}
+		// After the catch-up every stage inside the mounts is in the project.
+		conflicts = projectStages(ctx, pr.h.Git, conflicts)
 		if !landedAny {
 			return nil, conflictStatus(d.ID, head, conflicts, false, nil)
 		}
@@ -406,7 +408,11 @@ func (s *Server) safeMessage(ctx context.Context, err error) string {
 }
 
 func conflictStatus(draftID, main string, files []gitx.ConflictFile, partial bool, landed []string) error {
-	st := status.New(codes.Aborted, fmt.Sprintf("conflict in %d file(s)", len(files)))
+	msg := fmt.Sprintf("conflict in %d file(s)", len(files))
+	if partial { // also for callers that do not read the details
+		msg = fmt.Sprintf("landed %s; the rest did not land: %s", strings.Join(landed, ", "), msg)
+	}
+	st := status.New(codes.Aborted, msg)
 	det := &sgitv1.ConflictDetail{DraftId: draftID, Main: main, Partial: partial, Landed: landed}
 	for _, f := range files {
 		det.Files = append(det.Files, &sgitv1.ConflictFile{
@@ -418,4 +424,24 @@ func conflictStatus(draftID, main string, files []gitx.ConflictFile, partial boo
 		return st.Err()
 	}
 	return withDet.Err()
+}
+
+// projectStages blanks every conflict stage SHA the project repo does not
+// hold: merge-tree follows renames, so a stage may come from outside the
+// mounts, and such a SHA must never reach the client.
+func projectStages(ctx context.Context, g *gitx.Repo, files []gitx.ConflictFile) []gitx.ConflictFile {
+	held := func(sha string) string {
+		if sha == "" {
+			return ""
+		}
+		if _, _, err := g.ObjectInfo(ctx, sha); err != nil {
+			return "" // missing, or unknown: never echo it
+		}
+		return sha
+	}
+	out := make([]gitx.ConflictFile, len(files))
+	for i, f := range files {
+		out[i] = gitx.ConflictFile{Path: f.Path, Base: held(f.Base), Ours: held(f.Ours), Theirs: held(f.Theirs)}
+	}
+	return out
 }

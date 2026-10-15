@@ -132,7 +132,7 @@ func TestRepoDeleteRefusedWhileMounted(t *testing.T) {
 	e.Mount("web", "lib", "core", "src", false)
 	ac := e.Admin(e.AdminToken)
 	_, err := ac.DeleteRepo(ctx, &sgitv1.DeleteRepoRequest{Name: "core"})
-	if status.Code(err) != codes.FailedPrecondition || status.Convert(err).Message() != `repo "core" is mounted by project(s) web; unmount it first` {
+	if status.Code(err) != codes.FailedPrecondition || status.Convert(err).Message() != `repo "core" is mounted by project(s) web; delete those projects first (unmounting keeps the repo in their history)` {
 		t.Fatalf("DeleteRepo while mounted = %v", err)
 	}
 	testenv.Must(ac.UnmountProject(ctx, &sgitv1.UnmountProjectRequest{Project: "web", Path: "lib"}))

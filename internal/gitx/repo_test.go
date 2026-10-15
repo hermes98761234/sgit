@@ -217,3 +217,23 @@ func TestCloseWakesWaiterWithError(t *testing.T) {
 		t.Fatal("waiter hung after Close")
 	}
 }
+
+// Source repos may carry refs/replace; translation must read the real
+// objects, or a later change to those refs breaks rebuilds.
+func TestReplaceRefsAreIgnored(t *testing.T) {
+	ctx := context.Background()
+	r := newRepo(t)
+	real := must(r.WriteBlob(ctx, []byte("real\n")))
+	fake := must(r.WriteBlob(ctx, []byte("fake\n")))
+	if err := r.UpdateRef(ctx, "refs/replace/"+real, fake, ""); err != nil {
+		t.Fatal(err)
+	}
+	obj, err := r.ReadObject(ctx, real)
+	if err != nil || string(obj.Data) != "real\n" {
+		t.Fatalf("ReadObject = %q, %v; want the real content", obj.Data, err)
+	}
+	out, err := r.run(ctx, nil, nil, "cat-file", "-p", real)
+	if err != nil || string(out) != "real\n" {
+		t.Fatalf("git cat-file = %q, %v; want the real content", out, err)
+	}
+}

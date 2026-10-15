@@ -57,7 +57,14 @@ func openWC(a *app) (*wc.WC, error) {
 	if errors.Is(err, wc.ErrNotWorkingCopy) {
 		return nil, exitf(ExitError, "%v", err)
 	}
+	if err == nil && w.Config.Project == 0 {
+		return nil, errPredates(w)
+	}
 	return w, err
+}
+
+func errPredates(w *wc.WC) error {
+	return exitf(ExitError, "%s: this working copy predates projects; check it out again with `sg checkout <project>`", w.Root)
 }
 
 // lockWC takes the working-copy lock and reloads the metadata, so the
@@ -113,7 +120,7 @@ func (a *app) connect(t target) (*session, error) {
 		case w.Config.Project != 0:
 			ref = wcRef(w.Config.Project)
 		case t.needWC || t.needProject:
-			return nil, exitf(ExitError, "%s: this working copy predates projects; check it out again with `sg checkout <project>`", w.Root)
+			return nil, errPredates(w)
 		}
 	}
 	f, err := creds.Load()

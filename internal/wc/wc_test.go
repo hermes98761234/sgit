@@ -161,3 +161,11 @@ func TestSaveIndexWritesOnlyIndex(t *testing.T) {
 		t.Fatalf("after SaveIndex: base %q draft %q index %v", got.Base, got.Draft, got.Index)
 	}
 }
+
+// Users only see projects and folders, never repos.
+func TestValidPathErrorSaysPath(t *testing.T) {
+	err := ValidPath("../x")
+	if err == nil || err.Error() != `invalid path "../x"` {
+		t.Fatalf("ValidPath(../x) = %v", err)
+	}
+}
