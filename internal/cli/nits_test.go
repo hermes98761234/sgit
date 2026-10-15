@@ -36,6 +36,17 @@ func TestGlobalFlagsBeforeCommand(t *testing.T) {
 	if code, _, errs := h.run(dir, "--bogus", "repo", "list"); code != 1 || !strings.Contains(errs, "--bogus") {
 		t.Fatalf("unknown global flag: exit %d %q", code, errs)
 	}
+	for _, help := range []string{"help", "--help", "-h"} {
+		if code, out, errs := h.run(dir, "--json", help); code != 0 || !strings.Contains(out, "usage") {
+			t.Errorf("--json %s: exit %d, stdout %q, stderr %q", help, code, out, errs)
+		}
+	}
+	// A flag missing its value must not take a hoisted flag as the value.
+	w := h.checkout(t.TempDir())
+	writeFile(t, filepath.Join(w, "a.txt"), "x\n")
+	if code, _, errs := h.run(w, "--json", "commit", "-m"); code == 0 || strings.Contains(h.ok(w, "status"), "draft") {
+		t.Fatalf("--json commit -m: exit %d %q; a draft was created", code, errs)
+	}
 }
 
 // A token piped on stdin is read without printing a prompt.

@@ -159,7 +159,7 @@ func TestBuildTreeOnReservedNamesInBase(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := strings.TrimSpace(string(sub))
-	root, err := r.run(ctx, strings.NewReader("040000 tree "+s+"\tGIT~1\n040000 tree "+s+"\t.g‌it\n100644 blob "+a+"\tok.txt\n"), nil, "mktree")
+	root, err := r.run(ctx, strings.NewReader("040000 tree "+s+"\tGIT~1\n040000 tree "+s+"\t.g\u200cit\n100644 blob "+a+"\tok.txt\n"), nil, "mktree")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,12 +177,12 @@ func TestBuildTreeOnReservedNamesInBase(t *testing.T) {
 		t.Fatalf("unrelated add: files = %v", files)
 	}
 	main, _ = r.ReadRef(ctx, MainRef)
-	for _, p := range []string{"GIT~1/a", ".g‌it/a"} {
+	for _, p := range []string{"GIT~1/a", ".g\u200cit/a"} {
 		if _, err := r.BuildTree(ctx, main, []Change{{Path: p, Op: OpModify, BlobSHA: a}}); !errors.Is(err, ErrInvalid) {
 			t.Errorf("modify %q: want ErrInvalid, got %v", p, err)
 		}
 	}
-	commitChanges(t, r, []Change{{Path: "GIT~1/a", Op: OpDelete}, {Path: ".g‌it/a", Op: OpDelete}})
+	commitChanges(t, r, []Change{{Path: "GIT~1/a", Op: OpDelete}, {Path: ".g\u200cit/a", Op: OpDelete}})
 	files, _ = r.ListFiles(ctx, "main")
 	if len(files) != 2 || files["ok.txt"].SHA != a || files["new.txt"].SHA != a {
 		t.Fatalf("after delete: files = %v", files)

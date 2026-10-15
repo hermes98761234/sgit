@@ -75,8 +75,11 @@ func commandTable() []command {
 var groupCommands = map[string]bool{"repo": true, "project": true, "user": true, "token": true, "acl": true, "sparse": true}
 
 // hoistGlobalFlags moves --server and --json given before the command to
-// the end of the arguments, where the command's own flag parsing reads them:
-// `sg --server S repo list` is `sg repo list --server S`.
+// just after it (after the subcommand of a group), where the command's own
+// flag parsing reads them: `sg --server S repo list` is
+// `sg repo list --server S`. Placing them before the command's own
+// arguments keeps a flag missing its value (`sg --json commit -m`) from
+// taking them as that value.
 func hoistGlobalFlags(args []string) ([]string, error) {
 	var flags []string
 	i := 0
@@ -100,7 +103,13 @@ func hoistGlobalFlags(args []string) ([]string, error) {
 	if i == len(args) {
 		return nil, fmt.Errorf("no command after %s", strings.Join(flags, " "))
 	}
-	return append(append([]string{}, args[i:]...), flags...), nil
+	n := 1
+	if groupCommands[args[i]] && i+1 < len(args) {
+		n = 2
+	}
+	out := append([]string{}, args[i:i+n]...)
+	out = append(out, flags...)
+	return append(out, args[i+n:]...), nil
 }
 
 // Run executes one sg command and returns the process exit code.
@@ -118,15 +127,15 @@ func Run(ctx context.Context, args []string, stdio IO) int {
 		usage(stdio.Stderr)
 		return ExitError
 	}
-	if args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
-		usage(stdio.Stdout)
-		return ExitOK
-	}
 	args, err := hoistGlobalFlags(args)
 	if err != nil {
 		fmt.Fprintf(stdio.Stderr, "sg: %v\n\n", err)
 		usage(stdio.Stderr)
 		return ExitError
+	}
+	if args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
+		usage(stdio.Stdout)
+		return ExitOK
 	}
 	table := commandTable()
 	idx := -1
