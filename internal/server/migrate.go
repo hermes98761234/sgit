@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"slices"
 	"strconv"
 
@@ -187,7 +188,7 @@ func (a *adminService) replayInto(ctx context.Context, h *repoHandle, tip, folde
 	// first, as in landSource.
 	bg := context.WithoutCancel(ctx)
 	if err := a.s.store.RecordLand(bg, h.name, main, a.s.cfg.Now()); err != nil {
-		return "", 0, status.Error(codes.Internal, "recording the land sequence failed")
+		return "", 0, a.s.toStatus(ctx, fmt.Errorf("recording the land sequence: %w", err))
 	}
 	if err := h.git.UpdateRef(bg, gitx.MainRef, main, base); err != nil {
 		if errors.Is(err, gitx.ErrRefMoved) {

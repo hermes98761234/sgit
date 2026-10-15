@@ -314,3 +314,25 @@ func TestMigrateIntoErrors(t *testing.T) {
 		t.Fatalf("project x created: %v", err)
 	}
 }
+
+func TestMigrateIntoMountFailureKeepsCommits(t *testing.T) {
+	ctx := context.Background()
+	e := testenv.Start(t, allowLocal)
+	e.CreateRepo("mono")
+	e.CreateRepoProject("core")
+	src, _ := srcRepo(t, map[string]string{"a.txt": "a"})
+	_, err := e.Admin(e.AdminToken).MigrateIn(ctx, &sgitv1.MigrateInRequest{
+		FromUrl: "file://" + src, Name: "app", IntoRepo: "mono", IntoFolder: "svc/app", Project: "core", Path: "lib"})
+	if err == nil || !strings.Contains(status.Convert(err).Message(), "the code landed at mono:svc/app") {
+		t.Fatalf("err = %v, want the code landed at mono:svc/app", err)
+	}
+	if files := e.Files("mono", "main"); files["svc/app/a.txt"] != "a" {
+		t.Fatalf("mono files = %v", files)
+	}
+	if _, err := e.Store.ResolveProject(ctx, "app"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("project app exists: %v", err)
+	}
+	if refs := tempRefs(t, e, "mono"); refs != "" {
+		t.Fatalf("temporary refs left: %s", refs)
+	}
+}
