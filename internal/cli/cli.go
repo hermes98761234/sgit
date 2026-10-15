@@ -68,11 +68,12 @@ func commandTable() []command {
 		{"user", userUsage, cmdUser},
 		{"token", tokenUsage, cmdToken},
 		{"acl", aclUsage, cmdACL},
+		{"migrate", migrateUsage, cmdMigrate},
 	}
 }
 
 // groupCommands take a subcommand as their first argument.
-var groupCommands = map[string]bool{"repo": true, "project": true, "user": true, "token": true, "acl": true, "sparse": true}
+var groupCommands = map[string]bool{"repo": true, "project": true, "user": true, "token": true, "acl": true, "migrate": true, "sparse": true}
 
 // hoistGlobalFlags moves --server and --json given before the command to
 // just after it (after the subcommand of a group), where the command's own
