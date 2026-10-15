@@ -184,6 +184,18 @@ Measured with v0.2.0 in Docker on one machine (8 CPUs, 31 GB RAM, git 2.45): `sg
 | `sg log -n 100`, `sg log <path>`, `sg blame` | 50–70 ms |
 | `sg cat` of a 20 MB file | 0.23 s |
 
+### Projects (in-process, same 20,000-file layout)
+
+Measured with `go test -run '^$' -bench BenchmarkProject -benchtime 5x ./internal/cli/` on one machine (8 CPUs, Intel i7-4790). Server and client run in one test process over loopback, without TLS or Docker, so the numbers are not directly comparable with the table above. The project `big` mounts the 20 folders `d0`..`d19` of repo `big` as 20 folder mounts; the repo has one commit with all 20,000 files. Ranges cover two runs.
+
+| Operation (project over the 20,000-file repo) | Time | v0.2.0 row it corresponds to |
+|---|---|---|
+| `sg checkout`, full | 2.3 s | `sg checkout`, full, direct to server: 3.7 s |
+| `sg commit --land`, 1 file | 0.81–0.92 s | `sg commit --land`, 1 file: 0.48 s |
+| `sg log -n 100` | 8–9 ms | `sg log -n 100`, `sg log <path>`, `sg blame`: 50–70 ms |
+
+Mounting the whole repo at `.` instead of 20 folders gives the same times within noise (2.4 s, 0.83 s, 7 ms), so projecting folders adds no measurable cost.
+
 - **Small repos.** A one-file land takes about 60 ms. In large repos, landing still costs time proportional to the repo size: the client scans the working copy, and the server rebuilds the tree.
 - **Many users.** 30 users, each with their own token, landed 10 rounds each on one repo at the same time. All 300 lands succeeded in 17 s, about 18 lands/s, with a p50 of 1.3 s and a p95 of 1.7 s per land. Lands that touch different files never conflict; the server rebases them. When many users edit the same file at the same moment, most of their lands conflict and have to be fixed by hand, as with git.
 - **Robustness.** A randomized "monkey" run made about 6,300 sg calls while killing the server, restarting `sgd` and sending junk to the port. The calls included random edits, garbage arguments and `kill -9` mid-command. No call crashed or broke a working copy. At the end, every working copy matched `main` and `git fsck` was clean.

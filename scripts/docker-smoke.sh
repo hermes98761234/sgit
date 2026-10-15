@@ -8,7 +8,7 @@ NAME=sgit-smoke-$$
 
 docker build -t "$IMAGE" .
 docker run -d --name "$NAME" -e SG_TLS_SELF_SIGNED=1 -p 127.0.0.1::7419 "$IMAGE" >/dev/null
-cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
+cleanup() { docker rm -f -v "$NAME" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 status=starting
@@ -27,7 +27,8 @@ PORT=$(docker port "$NAME" 7419/tcp | head -1 | sed 's/.*://')
 TOKEN=$(docker exec "$NAME" cat /data/admin-token)
 # The image ships sg for admin work inside the container.
 LIST=$(docker exec "$NAME" sh -c 'sg login localhost:7419 --ca /data/tls/cert.pem --token "$(cat /data/admin-token)" >/dev/null \
-  && sg repo create smoke-admin >/dev/null && sg repo list')
+  && sg repo create smoke-admin >/dev/null && sg project create smoke-admin >/dev/null \
+  && sg project mount smoke-admin . smoke-admin:. >/dev/null && sg project list')
 grep -q '^smoke-admin ' <<<"$LIST"
 # sg-git-askpass answers git's https prompts from the environment.
 [ "$(docker exec "$NAME" sg-git-askpass "Username for 'https://github.com': ")" = x-access-token ]

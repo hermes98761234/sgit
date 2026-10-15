@@ -14,12 +14,18 @@ import (
 )
 
 type harness struct {
-	t   *testing.T
+	t   testing.TB
 	env *testenv.Env
 	cfg map[string]string
 }
 
 func newHarness(t *testing.T, opts ...func(*server.Config)) *harness {
+	t.Helper()
+	return newHarnessTB(t, opts...)
+}
+
+// newHarnessTB is newHarness for any testing.TB (benchmarks included).
+func newHarnessTB(t testing.TB, opts ...func(*server.Config)) *harness {
 	t.Helper()
 	t.Setenv("SG_TOKEN", "")
 	t.Setenv("SG_SOCKET", filepath.Join(t.TempDir(), "no-sgd.sock")) // never use a developer's real sgd
@@ -73,7 +79,7 @@ func (h *harness) seed(files map[string]string) string {
 	return h.env.CommitDirect("web", files, "seed")
 }
 
-func readFile(t *testing.T, p string) string {
+func readFile(t testing.TB, p string) string {
 	t.Helper()
 	b, err := os.ReadFile(p)
 	if err != nil {
@@ -82,7 +88,7 @@ func readFile(t *testing.T, p string) string {
 	return string(b)
 }
 
-func writeFile(t *testing.T, p, content string) {
+func writeFile(t testing.TB, p, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)

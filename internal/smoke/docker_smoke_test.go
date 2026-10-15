@@ -28,18 +28,22 @@ func TestDockerSmoke(t *testing.T) {
 	conn := testenv.Must(grpc.NewClient(addr, rpc.DialOptions(tok, &tls.Config{InsecureSkipVerify: true})...))
 	defer conn.Close()
 	admin := sgitv1.NewAdminClient(conn)
-	repo := sgitv1.NewProjectClient(conn)
 
 	who := testenv.Must(admin.WhoAmI(ctx, &sgitv1.WhoAmIRequest{}))
 	if !who.Admin {
 		t.Fatalf("WhoAmI = %+v", who)
 	}
-	main := testenv.Must(admin.CreateRepo(ctx, &sgitv1.CreateRepoRequest{Name: "smoke"})).Main
-	shas := testenv.Must(rpc.UploadBlobs(ctx, repo, "smoke", [][]byte{[]byte("hello from docker\n")}))
-	landed := testenv.Must(repo.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{
-		Project: "smoke", Base: main, Changes: []*sgitv1.Change{testenv.Add("hello.txt", shas[0])}, Message: "smoke commit",
+	testenv.Must(admin.CreateRepo(ctx, &sgitv1.CreateRepoRequest{Name: "smoke"}))
+	testenv.Must(admin.CreateProject(ctx, &sgitv1.CreateProjectRequest{Name: "smoke"}))
+	testenv.Must(admin.MountProject(ctx, &sgitv1.MountProjectRequest{Project: "smoke", Path: "app", Repo: "smoke", Folder: "app"}))
+	pc := sgitv1.NewProjectClient(conn)
+	head := testenv.Must(pc.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "smoke"})).Sha
+	shas := testenv.Must(rpc.UploadBlobs(ctx, pc, "smoke", [][]byte{[]byte("hello from docker\n")}))
+	landed := testenv.Must(pc.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{
+		Project: "smoke", Base: head, Changes: []*sgitv1.Change{testenv.Add("app/hello.txt", shas[0])}, Message: "smoke commit",
 	}))
-	lg := testenv.Must(repo.Log(ctx, &sgitv1.LogRequest{Project: "smoke", N: 5}))
+	// The second entry is the layout commit "Project layout: added `app/`".
+	lg := testenv.Must(pc.Log(ctx, &sgitv1.LogRequest{Project: "smoke", N: 5}))
 	if len(lg.Entries) != 2 || lg.Entries[0].Sha != landed.Commit || lg.Entries[0].Subject != "smoke commit" {
 		t.Fatalf("log = %+v", lg.Entries)
 	}
