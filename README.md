@@ -212,7 +212,7 @@ The repo `big` has the same 20,000 files in `d0`..`d19`, a seed commit and 119 o
 | `sg commit --land`, 1 file | 0.88–0.90 s | 0.98–1.05 s |
 | `sg log -n 100` (100 entries) | 16–17 ms | 14–17 ms |
 
-On this machine, 20 folder mounts cost no more than one `.` mount. A one-file land takes about 0.9 s here. That is longer than the 0.48 s in the v0.2.0 table, but the setups differ: here the client and server share one process and its CPUs, on different hardware. The same land on a `.` mount, which reproduces the source repo exactly, is no faster. A CPU profile puts most of the time in git subprocesses and the client's scan of the 20,000-file working copy, not in the project layer.
+On this machine, 20 folder mounts cost no more than one `.` mount. A one-file land takes about 0.9 s here. That is longer than the 0.48 s in the v0.2.0 table, but the setups differ: here the client and server share one process and its CPUs, on different hardware. The same land on a `.` mount, which mirrors the source repo's trees and history, is no faster.
 
 ## Docs
 
