@@ -25,6 +25,7 @@ type syncResult struct {
 	From      string   `json:"from"`
 	To        string   `json:"to"`
 	Updated   []string `json:"updated"`
+	Deleted   []string `json:"deleted"`
 	Merged    []string `json:"merged"`
 	Conflicts []string `json:"conflicts"`
 	Warnings  []string `json:"warnings"`
@@ -74,6 +75,9 @@ func printSync(out io.Writer, r syncResult) {
 	for _, p := range r.Updated {
 		fmt.Fprintf(out, "  updated:  %s\n", p)
 	}
+	for _, p := range r.Deleted {
+		fmt.Fprintf(out, "  deleted:  %s\n", p)
+	}
 	for _, p := range r.Merged {
 		fmt.Fprintf(out, "  merged:   %s\n", p)
 	}
@@ -86,7 +90,7 @@ func printSync(out io.Writer, r syncResult) {
 }
 
 func newSyncResult(from, to string) syncResult {
-	return syncResult{From: from, To: to, Updated: []string{}, Merged: []string{}, Conflicts: []string{}, Warnings: []string{}}
+	return syncResult{From: from, To: to, Updated: []string{}, Deleted: []string{}, Merged: []string{}, Conflicts: []string{}, Warnings: []string{}}
 }
 
 // syncTo rebases the working copy from its base onto target, merging local
@@ -368,8 +372,10 @@ func syncTo(ctx context.Context, s *session, target string) (syncResult, error) 
 		}
 		w.Index[p] = e
 	}
-	res.Updated = append(append(res.Updated, removes...), writes...)
+	res.Updated = append(res.Updated, writes...)
 	sort.Strings(res.Updated)
+	res.Deleted = append(res.Deleted, removes...)
+	sort.Strings(res.Deleted)
 	for _, m := range merges {
 		n := newT[m.path]
 		if err := wc.WriteLocal(w.Root, m.path, m.content, m.mode); err != nil {

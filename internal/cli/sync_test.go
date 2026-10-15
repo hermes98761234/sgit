@@ -37,6 +37,7 @@ type syncJSON struct {
 	From      string   `json:"from"`
 	To        string   `json:"to"`
 	Updated   []string `json:"updated"`
+	Deleted   []string `json:"deleted"`
 	Merged    []string `json:"merged"`
 	Conflicts []string `json:"conflicts"`
 	Warnings  []string `json:"warnings"`
@@ -67,7 +68,7 @@ func TestSyncUpstreamOnly(t *testing.T) {
 	w := h.checkout(t.TempDir())
 	head := h.upstream(map[string]string{"a.txt": "A2\n", "new.txt": "N\n"}, "docs/d.md")
 	code, s := h.sync(w)
-	if code != 0 || s.To != head || !contains(s.Updated, "a.txt") || !contains(s.Updated, "new.txt") || !contains(s.Updated, "docs/d.md") {
+	if code != 0 || s.To != head || !contains(s.Updated, "a.txt") || !contains(s.Updated, "new.txt") || contains(s.Updated, "docs/d.md") || !contains(s.Deleted, "docs/d.md") || len(s.Deleted) != 1 {
 		t.Fatalf("sync = %d %+v", code, s)
 	}
 	if readFile(t, filepath.Join(w, "a.txt")) != "A2\n" || readFile(t, filepath.Join(w, "new.txt")) != "N\n" {
@@ -402,5 +403,17 @@ func TestCommitAllowsMarkerLinesInUnlistedFiles(t *testing.T) {
 	h.ok(w, "commit", "-m", "document conflict markers", "--land")
 	if h.env.Files("web", "main")["docs/conflicts.md"] != doc {
 		t.Fatal("file with intentional marker lines was not committed")
+	}
+}
+
+// Files that sync removes are labelled deleted:, not updated:.
+func TestSyncLabelsDeletions(t *testing.T) {
+	h := newHarness(t)
+	h.seed(seedFiles)
+	w := h.checkout(t.TempDir())
+	h.upstream(map[string]string{"a.txt": "A2\n"}, "docs/d.md")
+	out := h.ok(w, "sync")
+	if !strings.Contains(out, "deleted:  docs/d.md") || strings.Contains(out, "updated:  docs/d.md") || !strings.Contains(out, "updated:  a.txt") {
+		t.Fatalf("sync output = %q", out)
 	}
 }
