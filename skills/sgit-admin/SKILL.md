@@ -90,7 +90,7 @@ sg user delete bob                # revoke everything (or: sg acl revoke bob sit
 | Grant access | `sg acl grant <user> <project> read\|write` |
 | Change access | `sg acl grant` again with the new level |
 | Remove access | `sg acl revoke <user> <project>` |
-| List access | `sg acl list [--user U] [--project P]` (USER PROJECT LEVEL; explicit grants only; admins see everything) |
+| List access | `sg acl list [--user U] [--project P]` (USER PROJECT LEVEL; explicit grants only: admins are not listed, but can access every project) |
 | Create repo | `sg repo create <name> [--mirror URL]` |
 | Import from git | `sg repo import <name> --from URL [--mirror URL]` |
 | List repos | `sg repo list` |

@@ -350,7 +350,7 @@ func repoDelete(ctx context.Context, a *app, args []string) error {
 		return usageErr(repoUsage)
 	}
 	if !*yes {
-		return exitf(ExitError, "refusing to delete repo %q without --yes (this removes its drafts; the git data is moved to <data>/deleted/ on the server)", pos[0])
+		return exitf(ExitError, "refusing to delete repo %q without --yes (this removes its mirror state; the git data is moved to <data>/deleted/ on the server)", pos[0])
 	}
 	var resp *sgitv1.DeleteRepoResponse
 	err = a.admin(ctx, *srv, adminTimeout, func(ctx context.Context, ac sgitv1.AdminClient) (err error) {
