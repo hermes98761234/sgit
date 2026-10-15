@@ -154,3 +154,22 @@ func TestProjectsThroughDaemon(t *testing.T) {
 		t.Fatalf("sg projects did not go through sgd: %+v", d.SeenCalls())
 	}
 }
+
+// When sgd answers but cannot reach its upstream (no or wrong --ca, server
+// down), the error must say it came through sgd and how to bypass it.
+func TestUpstreamErrorThroughDaemonNamesSgd(t *testing.T) {
+	h := newHarness(t)
+	h.seed(seedFiles)
+	w := h.checkout(t.TempDir())
+	l := testenv.Must(net.Listen("tcp", "127.0.0.1:0"))
+	deadAddr := l.Addr().String()
+	l.Close()
+	deadConn, _ := daemontest.CountingConn(t, deadAddr)
+	d := h.startDaemon(func(c *daemon.Config) { c.Conn = deadConn })
+	code, _, errs := h.run(w, "log", "-n", "1")
+	if code != 1 || !strings.Contains(errs, "sgd") || !strings.Contains(errs, d.Socket) || !strings.Contains(errs, "SG_NO_DAEMON=1") {
+		t.Fatalf("exit %d, stderr %q", code, errs)
+	}
+	t.Setenv("SG_NO_DAEMON", "1")
+	h.ok(w, "log", "-n", "1")
+}

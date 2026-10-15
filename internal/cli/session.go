@@ -149,6 +149,7 @@ func (a *app) connect(t target) (*session, error) {
 		switch {
 		case err == nil && dc != nil:
 			cached, projConn = dc, dc
+			a.daemon = sock
 		case err != nil && !errors.Is(err, client.ErrOtherUpstream):
 			fmt.Fprintf(a.io.Stderr, "sg: warning: sgd at %s is not usable (%v); connecting directly\n", sock, err)
 		}

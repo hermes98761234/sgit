@@ -3,6 +3,7 @@ package daemoncmd
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"net"
 	"os"
 	"path/filepath"
@@ -14,7 +15,11 @@ import (
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
 	"github.com/hermes98761234/sgit/internal/rpc"
 	"github.com/hermes98761234/sgit/internal/testenv"
+	"github.com/hermes98761234/sgit/internal/tlsutil"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/health"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
 type syncBuf struct {
@@ -168,5 +173,74 @@ func TestParseSize(t *testing.T) {
 		if _, err := ParseSize(bad); err == nil {
 			t.Errorf("ParseSize(%q) must fail", bad)
 		}
+	}
+}
+
+// A socket path longer than sun_path fails in bind with EINVAL; sgd must say
+// what is wrong instead.
+func TestSocketPathTooLong(t *testing.T) {
+	e := testenv.Start(t)
+	dir := testenv.Must(os.MkdirTemp("", "sgdl"))
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	sock := filepath.Join(dir, strings.Repeat("d", 60), strings.Repeat("s", 60)+".sock")
+	var errb syncBuf
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	code := Run(ctx, baseArgs(e, sock, t), &syncBuf{}, &errb)
+	if code != 1 || !strings.Contains(errb.String(), "too long") || !strings.Contains(errb.String(), sock) || !strings.Contains(errb.String(), "--socket") {
+		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+}
+
+// tlsUpstream serves the health service over TLS with a fresh self-signed
+// certificate and returns its address and the certificate file.
+func tlsUpstream(t *testing.T) (string, string) {
+	t.Helper()
+	certPEM, keyPEM, err := tlsutil.GenerateSelfSigned([]string{"127.0.0.1", "localhost"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert := testenv.Must(tls.X509KeyPair(certPEM, keyPEM))
+	g := grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{Certificates: []tls.Certificate{cert}})))
+	healthpb.RegisterHealthServer(g, health.NewServer())
+	lis := testenv.Must(net.Listen("tcp", "127.0.0.1:0"))
+	go g.Serve(lis)
+	t.Cleanup(g.Stop)
+	caFile := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caFile, certPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return lis.Addr().String(), caFile
+}
+
+// Without --ca, sgd cannot verify a self-signed upstream. It must say so at
+// startup instead of failing every sg call later.
+func TestRefusesUnverifiableTLSUpstream(t *testing.T) {
+	addr, ca := tlsUpstream(t)
+	sock := shortSocket(t)
+	var errb syncBuf
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) // without the probe sgd would serve until then
+	defer cancel()
+	code := Run(ctx, []string{"--upstream", addr, "--socket", sock, "--cache-dir", t.TempDir()}, &syncBuf{}, &errb)
+	if code != 2 || !strings.Contains(errb.String(), "--ca") || !strings.Contains(errb.String(), "certificate") {
+		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+	if _, err := os.Stat(sock); !os.IsNotExist(err) {
+		t.Fatal("no socket may be left behind")
+	}
+	start(t, "--upstream", addr, "--ca", ca, "--socket", sock, "--cache-dir", t.TempDir())
+	waitInfo(t, sock)
+}
+
+// An upstream that is down at startup is not fatal: sgd keeps retrying.
+func TestStartsWhileUpstreamDown(t *testing.T) {
+	l := testenv.Must(net.Listen("tcp", "127.0.0.1:0"))
+	addr := l.Addr().String()
+	l.Close()
+	sock := shortSocket(t)
+	_, _, out := start(t, "--upstream", addr, "--dev-insecure", "--socket", sock, "--cache-dir", t.TempDir())
+	waitInfo(t, sock)
+	if !strings.Contains(out.String(), "not reachable") {
+		t.Fatalf("expected a warning about the upstream: %s", out.String())
 	}
 }

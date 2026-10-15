@@ -37,6 +37,7 @@ type app struct {
 	io      IO
 	json    bool
 	emitted bool
+	daemon  string // sgd socket the command talks through, if any
 }
 
 type command struct {
@@ -107,6 +108,9 @@ func Run(ctx context.Context, args []string, stdio IO) int {
 	}
 	code := exitCode(err)
 	msg := errorMessage(err)
+	if a.daemon != "" && status.Code(err) == codes.Unavailable {
+		msg += fmt.Sprintf(" (through sgd at %s: check that sgd reaches the server, with --ca for a self-signed certificate, or set SG_NO_DAEMON=1 to connect directly)", a.daemon)
+	}
 	if a.json && !a.emitted {
 		_ = json.NewEncoder(stdio.Stdout).Encode(map[string]any{"error": msg, "exit_code": code})
 	}

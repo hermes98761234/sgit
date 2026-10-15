@@ -22,6 +22,9 @@ import (
 	"github.com/hermes98761234/sgit/internal/client"
 	"github.com/hermes98761234/sgit/internal/creds"
 	"github.com/hermes98761234/sgit/internal/daemon"
+	"google.golang.org/grpc"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/status"
 )
 
 // ParseSize parses "1024", "512M", "10G", ... (powers of 1024).
@@ -55,10 +58,37 @@ func defaultCacheDir() string {
 	return filepath.Join(os.TempDir(), fmt.Sprintf("sg-cache-%d", os.Getuid()))
 }
 
+// maxSocketPath is the longest unix socket path bind accepts (sun_path
+// minus its terminating NUL: 107 bytes on Linux, 103 on macOS).
+var maxSocketPath = len(syscall.RawSockaddrUnix{}.Path) - 1
+
+// probeUpstream checks once that the upstream answers. A TLS failure (no or
+// wrong --ca) is fatal: every sg call through sgd would fail with it. An
+// upstream that is merely down is not: sgd keeps retrying.
+func probeUpstream(ctx context.Context, conn *grpc.ClientConn, upstream string, log *slog.Logger) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_, err := healthpb.NewHealthClient(conn).Check(ctx, &healthpb.HealthCheckRequest{})
+	if err == nil {
+		return nil
+	}
+	msg := status.Convert(err).Message()
+	for _, s := range []string{"x509:", "tls:", "handshake"} {
+		if strings.Contains(msg, s) {
+			return fmt.Errorf("cannot verify the TLS certificate of upstream %s: %s; pass --ca with the server's certificate (PEM), or set SGD_CA", upstream, msg)
+		}
+	}
+	log.Warn("upstream not reachable at startup; sgd keeps trying", "upstream", upstream, "err", msg)
+	return nil
+}
+
 // listen prepares the socket directory (created 0700 if missing, never
 // chmod-ed, must be ours and not group/world-writable), refuses to start when
 // a daemon already answers on path, removes a stale socket and listens (0600).
 func listen(path string) (net.Listener, error) {
+	if len(path) > maxSocketPath {
+		return nil, fmt.Errorf("socket path %s is too long (%d bytes; unix socket paths are limited to %d bytes): pass a shorter --socket, or set SG_SOCKET for both sgd and sg", path, len(path), maxSocketPath)
+	}
 	dir := filepath.Dir(path)
 	if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -140,6 +170,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	defer conn.Close()
+	if err := probeUpstream(ctx, conn, *upstream, log); err != nil {
+		fmt.Fprintln(stderr, "sgd:", err)
+		return 2
+	}
 	c, err := cache.Open(*cacheDir, max)
 	if err != nil {
 		fmt.Fprintln(stderr, "sgd: cache:", err)
