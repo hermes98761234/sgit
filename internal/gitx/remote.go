@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -178,11 +179,82 @@ func (r *Repo) Push(ctx context.Context, remote, sha, expect string, allowLocal 
 	}
 	out, err := r.run(ctx, nil, remoteEnv(allowLocal), "push", "--porcelain", "--no-verify",
 		"--force-with-lease="+MainRef+":"+expect, remote, sha+":"+MainRef)
+	return pushErr(out, err)
+}
+
+// PushFF sets remote's main to sha without forcing: it creates main or
+// fast-forwards it. A remote main that is not an ancestor of sha returns an
+// error wrapping ErrRejected and leaves the remote untouched.
+func (r *Repo) PushFF(ctx context.Context, remote, sha string, allowLocal bool) error {
+	if err := ValidateRemote(remote, allowLocal); err != nil {
+		return err
+	}
+	if !IsSHA(sha) {
+		return fmt.Errorf("%w: push %q", ErrInvalid, sha)
+	}
+	out, err := r.run(ctx, nil, remoteEnv(allowLocal), "push", "--porcelain", "--no-verify", remote, sha+":"+MainRef)
+	return pushErr(out, err)
+}
+
+// pushErr turns a "[rejected]" push into ErrRejected.
+func pushErr(out []byte, err error) error {
 	var ge *GitError
 	if errors.As(err, &ge) && (strings.Contains(string(out), "[rejected]") || strings.Contains(ge.Stderr, "[rejected]")) {
 		return fmt.Errorf("%w: %s", ErrRejected, strings.Join(strings.Fields(string(out)), " "))
 	}
 	return err
+}
+
+// FetchMain fetches remote's main (no tags) into ref, a full ref name that
+// is overwritten, and returns the fetched SHA.
+func (r *Repo) FetchMain(ctx context.Context, remote, ref string, allowLocal bool) (string, error) {
+	if err := ValidateRemote(remote, allowLocal); err != nil {
+		return "", err
+	}
+	if !strings.HasPrefix(ref, "refs/") || strings.ContainsAny(ref, " :\x00\n") {
+		return "", fmt.Errorf("%w: fetch into %q", ErrInvalid, ref)
+	}
+	_, err := r.run(ctx, nil, remoteEnv(allowLocal), "fetch", "--quiet", "--no-tags", "--no-write-fetch-head", remote,
+		"+"+MainRef+":"+ref)
+	if err != nil {
+		var ge *GitError
+		if errors.As(err, &ge) && strings.Contains(ge.Stderr, "couldn't find remote ref "+MainRef) {
+			return "", fmt.Errorf("%w: %s has no main branch", ErrInvalid, remote)
+		}
+		return "", err
+	}
+	return r.ReadRef(ctx, ref)
+}
+
+// DeleteRef removes ref. A missing ref is not an error.
+func (r *Repo) DeleteRef(ctx context.Context, ref string) error {
+	if !strings.HasPrefix(ref, "refs/") {
+		return fmt.Errorf("%w: delete %q", ErrInvalid, ref)
+	}
+	_, err := r.run(ctx, nil, nil, "update-ref", "-d", ref)
+	return err
+}
+
+// RemoteBranches lists remote's branches whose name (without refs/heads/)
+// starts with prefix, sorted.
+func RemoteBranches(ctx context.Context, remote, prefix string, allowLocal bool) ([]string, error) {
+	if err := ValidateRemote(remote, allowLocal); err != nil {
+		return nil, err
+	}
+	out, err := runGit(ctx, nil, append(remoteEnv(allowLocal), "GIT_DIR="+os.DevNull), "ls-remote", "--refs", remote)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, line := range strings.Split(string(out), "\n") {
+		_, ref, ok := strings.Cut(strings.TrimSpace(line), "\t")
+		name, isHead := strings.CutPrefix(ref, "refs/heads/")
+		if ok && isHead && strings.HasPrefix(name, prefix) {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 // RemoteRef returns the SHA that ref (a full ref name) points to on remote,

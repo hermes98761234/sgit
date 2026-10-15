@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -214,5 +215,90 @@ func TestRemoteEnvSSH(t *testing.T) {
 	t.Setenv("GIT_SSH", "/usr/local/bin/my-ssh")
 	if has(remoteEnv(false), "GIT_SSH_COMMAND=") {
 		t.Error("GIT_SSH_COMMAND set although the operator set GIT_SSH")
+	}
+}
+
+func TestFetchMainAndDeleteRef(t *testing.T) {
+	ctx := context.Background()
+	src := newRepo(t)
+	main := commitChanges(t, src, []Change{{Path: "a", Op: OpAdd, BlobSHA: blob(t, src, "a")}})
+	dst := newRepo(t)
+	got, err := dst.FetchMain(ctx, src.Dir(), "refs/sgit/migrate/t1", true)
+	if err != nil || got != main {
+		t.Fatalf("FetchMain = %q, %v; want %s", got, err, main)
+	}
+	if _, err := dst.ReadCommit(ctx, main); err != nil {
+		t.Fatalf("objects not fetched: %v", err)
+	}
+	if err := dst.DeleteRef(ctx, "refs/sgit/migrate/t1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dst.ReadRef(ctx, "refs/sgit/migrate/t1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("ref after delete: %v", err)
+	}
+	if err := dst.DeleteRef(ctx, "refs/sgit/migrate/t1"); err != nil {
+		t.Fatalf("deleting a missing ref: %v", err)
+	}
+	if _, err := dst.FetchMain(ctx, src.Dir(), "refs/sgit/migrate/t2", false); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("local remote not allowed: %v", err)
+	}
+	if _, err := dst.FetchMain(ctx, src.Dir(), "main", true); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("short ref name: %v", err)
+	}
+	// a repo whose only branch is master
+	noMain := filepath.Join(t.TempDir(), "m.git")
+	if _, err := runGit(ctx, nil, nil, "init", "--bare", "--quiet", "--initial-branch=master", noMain); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(ctx, nil, nil, "--git-dir", src.Dir(), "push", "--quiet", noMain, main+":refs/heads/master"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dst.FetchMain(ctx, noMain, "refs/sgit/migrate/t3", true); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "no main branch") {
+		t.Fatalf("no main: %v", err)
+	}
+}
+
+func TestRemoteBranches(t *testing.T) {
+	ctx := context.Background()
+	src := newRepo(t)
+	main, _ := src.ReadRef(ctx, MainRef)
+	for _, ref := range []string{"refs/heads/release/2.0", "refs/heads/release/1.0", "refs/heads/feature/x", "refs/tags/release/9"} {
+		if err := src.UpdateRef(ctx, ref, main, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := RemoteBranches(ctx, src.Dir(), "release/", true)
+	if err != nil || !reflect.DeepEqual(got, []string{"release/1.0", "release/2.0"}) {
+		t.Fatalf("RemoteBranches = %v, %v", got, err)
+	}
+	if _, err := RemoteBranches(ctx, src.Dir(), "release/", false); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("local not allowed: %v", err)
+	}
+}
+
+func TestPushFF(t *testing.T) {
+	ctx := context.Background()
+	src := newRepo(t)
+	c1 := commitChanges(t, src, []Change{{Path: "a", Op: OpAdd, BlobSHA: blob(t, src, "1")}})
+	dir := filepath.Join(t.TempDir(), "dst.git")
+	if err := InitBare(ctx, dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := src.PushFF(ctx, dir, c1, true); err != nil {
+		t.Fatalf("PushFF new: %v", err)
+	}
+	c2 := commitChanges(t, src, []Change{{Path: "a", Op: OpModify, BlobSHA: blob(t, src, "2")}})
+	if err := src.PushFF(ctx, dir, c2, true); err != nil {
+		t.Fatalf("PushFF fast-forward: %v", err)
+	}
+	other := sideCommit(t, src, c1, []Change{{Path: "b", Op: OpAdd, BlobSHA: blob(t, src, "b")}}, "b\n", testSig)
+	if err := src.PushFF(ctx, dir, other, true); !errors.Is(err, ErrRejected) {
+		t.Fatalf("PushFF diverged: %v, want ErrRejected", err)
+	}
+	if got, _ := RemoteRef(ctx, dir, MainRef, true); got != c2 {
+		t.Fatalf("remote main = %s, want %s", got, c2)
+	}
+	if err := src.PushFF(ctx, "https://user:pw@example.com/x", c2, false); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("credentials in URL: %v", err)
 	}
 }
