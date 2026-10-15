@@ -120,7 +120,10 @@ sg migrate in https://github.com/acme/api.git --into mono:services/api  # into t
 sg migrate out api --to git@github.com:acme/api-export.git
 ```
 
-- `--into` replays the history of `main` under the folder with new SHAs (signatures dropped, merges flattened); the folder must be absent or empty. Other branches are skipped. `--mirror` cannot be combined with `--into`; set the mirror on the target repo.
+- `--into` replays the history of `main` under the folder with new SHAs (signatures dropped, merges flattened); the folder must not exist in the repo yet (a file there or above it is refused). Only `main` is migrated; other branches, `release/*` included, are listed as skipped. `--mirror` cannot be combined with `--into`; set the mirror on the target repo.
+- Without `--into`, `main` and `release/*` are imported with their SHAs; other branches are listed as skipped. Tags are never migrated.
+- `name` defaults to the URL's last segment without `.git` and must match `^[a-z0-9][a-z0-9._-]{0,63}$` (`Hello-World.git` needs an explicit name). It is not used with both `--into` and `--project`.
+- The mount (`--project P --path DIR`) is checked against `P`'s mounts before anything is fetched; the new project is created first and removed if a later step fails.
 - Project SHAs equal the source SHAs only for linear, unsigned history; a merge or signed commit and everything after it get new SHAs.
 - `migrate out` pushes the project's `main`, fast-forward only; `--force` overwrites a diverged target (to the original repo it rewrites that repo's history when merges or signatures were dropped). The project is not changed.
 

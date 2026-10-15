@@ -222,18 +222,20 @@ Then use `--mirror https://github.com/acme/web.git`.
 sg migrate in <url> [name] [--into <repo>:<folder>] [--project P --path DIR] [--mirror URL]
 ```
 
-- Without `--into`, the repo is imported as a new repo `name` (its `main` and `release/*` keep their SHAs), like `sg repo import`. The new project's commits keep the SHAs only while the history is linear and unsigned: the project engine drops signatures and extra headers and flattens merges, so a merge or signed commit and everything after it get new project SHAs.
-- With `--into mono:services/api`, the history of `main` is replayed under `services/api/` of the existing repo `mono`: one new commit per original first-parent commit, with the original author, committer, date and message. Commit SHAs change. Signatures are dropped and merges are flattened. `--mirror` cannot be combined with `--into`; set the mirror on the target repo. The folder must be absent or empty. Lands into `mono` wait while the replay runs. Other branches are not migrated and are listed as skipped.
-- `name` defaults to the last segment of the URL without `.git`.
+- Without `--into`, the repo is imported as a new repo `name` (its `main` and `release/*` keep their SHAs), like `sg repo import`. Other branches are not migrated and are listed as skipped. The new project's commits keep the SHAs only while the history is linear and unsigned: the project engine drops signatures and extra headers and flattens merges, so a merge or signed commit and everything after it get new project SHAs.
+- With `--into mono:services/api`, the history of `main` is replayed under `services/api/` of the existing repo `mono`: one new commit per original first-parent commit, with the original author, committer, date and message. Commit SHAs change. Signatures are dropped and merges are flattened. `--mirror` cannot be combined with `--into`; set the mirror on the target repo. The folder must not exist in `mono` yet (git has no empty folders); a file at that path, or above it, is refused. A trailing `/` on the folder is ignored. Lands into `mono` wait while the replay runs. Only `main` is migrated; every other branch, `release/*` included, is listed as skipped.
+- Tags are never migrated, in either form.
+- `name` names the new repo (plain form) and the new project (without `--project`). It defaults to the last segment of the URL without `.git`, which must match `^[a-z0-9][a-z0-9._-]{0,63}$`; otherwise pass a name (GitHub's `Hello-World.git` needs one, for example `hello-world`). With both `--into` and `--project` no name is used.
 - The code is then mounted at the root of a new project `name`, or with `--project P --path DIR` at `DIR` in the existing project `P`.
-- If the project step fails, a plain import is rolled back. After `--into` the replayed commits stay; mount them with `sg project mount`.
+- Everything that can be checked is checked before anything is fetched: the URL, the name, that the project `name` is free, and that `DIR` fits `P`'s mounts (the rules of `sg project mount`: it must not already be mounted or overlap another mount, and a `.` mount must be the only one). The new project is created first, so two migrations cannot take the same name.
+- If a later step fails, a plain import and the new project are rolled back. After `--into` the replayed commits stay; mount them with `sg project mount`.
 
 The command prints what it did:
 
 ```
 migrated https://github.com/acme/api.git into mono:services/api: 42 commits, main 1a2b3c4
 mounted at the project root of project api
-warning: branches not migrated: dev, feature/x
+warning: branches not migrated: dev, feature/x, release/1.2
 ```
 
 ### Out

@@ -195,6 +195,7 @@ The repo has 20,000 files of about 2.7 KB in `d0`..`d19`, plus 120 commits. Two 
 - **Cost of projects.** On the same machine and harness, the code before projects landed one file in 0.48–0.57 s, so projects add about 0.05–0.15 s per land. The extra time goes to updating the project's derived repo after the land and one more fsynced database write. Checkout and log cost the same with or without projects.
 - **Where a land's time goes.** About 0.3 s of a one-file land is the client scanning 20,000 files and saving its index; that part is the same without projects. The number of folders mounted makes no measurable difference.
 - **Robustness.** A randomized run of 10,000 steps (`go test -tags monkey`) by several users across two repos and their projects had 566 successful lands. Every acknowledged land was still on `main` at the end, every working copy matched its project, every project folder matched its source folder, and `git fsck --strict` was clean on every repo.
+- **Robustness of migrate.** A randomized run of 1,000 steps (`go test -tags monkey -run TestMonkeyMigrate`) made 1,024 sg calls, among them 283 `sg migrate in` (49 succeeded) and 166 `sg migrate out` (47 succeeded), mixed with 178 lands, source commits, deletes and 33 `--into` migrations running alongside a land. Every failed `migrate in` left no repo, project or temporary ref behind, every successful one held the source's `main` at the reported place, no acknowledged land was lost, and `git fsck --strict` was clean on every repo.
 
 ### v0.2.0: repos, in Docker
 

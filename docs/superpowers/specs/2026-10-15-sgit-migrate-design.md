@@ -16,7 +16,7 @@ Move code between plain git repos and an sgit server in one admin command each w
 ### Accepted limits
 
 - `--into` gives the imported commits new SHAs, because their paths move. Merge commits are flattened to their first-parent line, as sgit does everywhere.
-- `--into` migrates `main` only. `release/*` branches are skipped with a warning.
+- `--into` migrates `main` only; the plain form migrates `main` and `release/*`. Every other branch is listed as skipped with a warning. Tags are never migrated.
 - `--into` holds the target repo's land lock for the whole replay. Lands into that repo wait until it finishes.
 - `migrate out` publishes the project's derived history. A project that mounts a whole repo at `.` keeps the source SHAs only for linear, unsigned history; merges are flattened, signatures dropped, and later commits get new SHAs, so `--force` to the original repo rewrites its history. Other projects get their translated SHAs, with only the mounted paths.
 - `migrate out` pushes `main` only.
@@ -32,12 +32,12 @@ sg migrate out <project> --to <url> [--force]
 
 ### 2.1 `migrate in`
 
-- `<name>` defaults to the last path segment of `<url>`, with a trailing `.git` stripped. If that is not a valid name (`^[a-z0-9][a-z0-9._-]{0,63}$`), the command fails and asks for `<name>`.
+- `<name>` defaults to the last path segment of `<url>`, with a trailing `.git` stripped. If that is not a valid name (`^[a-z0-9][a-z0-9._-]{0,63}$`), the command fails and asks for `<name>`. With both `--into` and `--project` the name is unused, so none is derived or checked.
 - **Plain form:** imports `<url>` as a new repo `<name>`, exactly like `repo import`. `main` and `release/*` keep their SHAs. `--mirror` works as in `repo import`.
-- **`--into <repo>:<folder>`:** replays the imported `main` into the existing `<repo>` under `<folder>/` (section 3.2). No repo is created, and `<name>` is used only as the project name. `--mirror` is a usage error in this form. `<folder>` is a clean repo-relative path and must not be `.`.
+- **`--into <repo>:<folder>`:** replays the imported `main` into the existing `<repo>` under `<folder>/` (section 3.2). No repo is created, and `<name>` is used only as the project name. `--mirror` is a usage error in this form. `<folder>` is a clean repo-relative path and must not be `.`; the CLI drops trailing `/`.
 - **Project step:**
   - Default: create project `<name>` and mount the imported code at `.`. The mounted source is `<name>:.` in the plain form and `<repo>:<folder>` with `--into`.
-  - `--project <p> --path <dir>`: mount into the existing project `<p>` at `<dir>` instead. Both flags are required together. Mount rules (no nesting, `.` only as a single mount) are checked by the existing mount validation.
+  - `--project <p> --path <dir>`: mount into the existing project `<p>` at `<dir>` instead. Both flags are required together. Mount rules (path not mounted yet, no nesting, `.` only as a single mount) are checked before anything is fetched, with the same function (`project.CheckMount`) that `engine.Mount` applies again under the project lock.
 - **Output:** repo, project, mount path and source, number of commits migrated, skipped branches.
 
 ### 2.2 `migrate out`
@@ -50,7 +50,8 @@ sg migrate out <project> --to <url> [--force]
 
 ### 3.1 `migrate in`, plain form
 
-1. Run the existing import flow, `repos.importRepo`: validate URLs, reserve the name, fetch into `.incoming/`, rename into place, create the store row, record the land, notify the mirror.
+0. Before any fetch (both forms): validate the URL first, then the name where it is used; check that `--project` exists and that the mount fits it; or create the empty project `<name>`, which reserves the name against a concurrent migration and is deleted again if a later step fails.
+1. List the source branches (`ls-remote`) for the skipped list, then run the existing import flow, `repos.importRepo`: validate URLs, reserve the name, fetch into `.incoming/`, rename into place, create the store row, record the land, notify the mirror.
 2. Run the project step (section 3.3).
 3. If the project step fails, roll back: delete a project created in step 2, then remove the new repo with `rollbackNew`. Return the error.
 
@@ -59,7 +60,7 @@ sg migrate out <project> --to <url> [--force]
 1. Validate the URL with `ValidateRemote`, check that the target repo exists, and check `<folder>` with the path rules (git-reserved names refused).
 2. Fetch the URL's `main` into a staging bare repo under `.incoming/`.
 3. Fetch the staged `main` into the target repo as `refs/sgit/migrate/<rand>`, so its objects are present.
-4. Take the target's `repoHandle.landMu`. Read `main` as `base`. Refuse if `<folder>` exists in `base`'s tree and is not empty.
+4. Take the target's `repoHandle.landMu`. Read `main` as `base`. Refuse if `<folder>` exists in `base`'s tree and is not empty, or if it or a parent is a file (reported as a file, not as "not empty").
 5. List the imported commits with `FirstParents`, oldest first. For each commit `c`:
    - tree = `base`'s tree with `<folder>` replaced by `c`'s root tree (`SpliceTree`);
    - parent = the previous rewritten commit, or `base` for the first one;
@@ -71,12 +72,12 @@ sg migrate out <project> --to <url> [--force]
 Failure handling:
 
 - Before step 6 nothing is visible.
-- After step 6 the commits stay in the target repo, because other lands may already be on top. If the project step fails, the error says that the code landed at `<repo>:<folder>` and can be mounted by hand. A project created in this run is deleted.
+- After step 6 the commits stay in the target repo, because other lands may already be on top. Since the mount is checked and the project created before step 2, the project step fails here only on a race (for example a concurrent mount at the same path). If it fails, the error says that the code landed at `<repo>:<folder>` and can be mounted by hand. A project created in this run is deleted.
 - An imported repo with no `main`, or no commits, is refused at step 2.
 
 ### 3.3 Project step
 
-- Default: `CreateProject(<name>)`, then mount at `.`.
+- Default: `CreateProject(<name>)` (done before any fetch, section 3), then mount at `.`.
 - With `--project`: mount into `<p>` at `<dir>`.
 - The mount goes through the existing `MountProject` path (`lockProject`, then `engine.Mount`). The first mount of a project imports the whole folder history, and later mounts write one layout commit, as today.
 
@@ -97,7 +98,7 @@ Failure handling:
 - Errors follow the current style (no internal `store:` or `gitx:` prefixes). Distinct messages cover:
   - name already taken;
   - unknown repo or project;
-  - folder not empty;
+  - folder not empty, or a file at or above the folder;
   - target diverged;
   - empty project;
   - imported repo has no `main`;
@@ -139,5 +140,6 @@ Everything runs under `go test -race -count=1 ./...`, plus `go vet` and staticch
 
 - `--into` fetches the source `main` straight into the target repo under a temporary `refs/sgit/migrate/<rand>` ref instead of a staging repo under `.incoming/`; the ref is deleted on every path. Unreferenced objects from a failed fetch are left for git's gc.
 - `migrate out` does not fetch the target to test ancestry. It pushes without force, and git refuses a non-fast-forward; `--force` pushes with a lease on the `main` read by `ls-remote`.
-- The default name is derived by the CLI; the server validates it like any repo or project name.
+- The default name is derived by the CLI; the server validates it like any repo or project name, and only when it is used.
+- Skipped branches come from one `ls-remote` of the source before the import or fetch.
 - A rolled-back import also drops the server's cached handle for the repo, so a retry with the same name starts clean.
