@@ -51,12 +51,32 @@ func TestMigrateCommands(t *testing.T) {
 		t.Fatalf("migrate in --project printed %q", out)
 	}
 
+	// a trailing "/" on the --into folder is dropped
+	decode(t, h.ok(dir, "migrate", "in", "file://"+src, "web2", "--into", "mono:svc/api2/", "--json"), &in)
+	if in.Folder != "svc/api2" || in.Project != "web2" {
+		t.Fatalf("migrate in --into mono:svc/api2/ = %+v", in)
+	}
+	// --into with --project uses no name, so none is derived from the URL
+	upper := filepath.Join(t.TempDir(), "MyApp.git")
+	if err := gitx.InitBare(ctx, upper); err != nil {
+		t.Fatal(err)
+	}
+	pr := gitx.Open(src)
+	if err := pr.Push(ctx, upper, main, "", true); err != nil {
+		t.Fatal(err)
+	}
+	pr.Close()
+	if out := h.ok(dir, "migrate", "in", "file://"+upper, "--into", "mono:svc/myapp", "--project", "shelf", "--path", "myapp"); !strings.Contains(out, "mounted at myapp/ of project shelf\n") {
+		t.Fatalf("migrate in --into --project without a name printed %q", out)
+	}
+
 	// usage errors
 	for _, args := range [][]string{
 		{"migrate"},
 		{"migrate", "in"},
 		{"migrate", "in", "file://" + src, "x", "--project", "web"},
 		{"migrate", "in", "file://" + src, "x", "--into", "mono"},
+		{"migrate", "in", "file://" + src, "x", "--into", "mono:/"},
 		{"migrate", "out", "api"},
 	} {
 		if code, _, errs := h.run(dir, args...); code != cli.ExitError || !strings.Contains(errs, "usage: sg migrate") {

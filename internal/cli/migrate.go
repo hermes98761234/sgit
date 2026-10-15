@@ -44,13 +44,17 @@ func migrateIn(ctx context.Context, a *app, args []string) error {
 		return usageErr(migrateUsage)
 	}
 	req := &sgitv1.MigrateInRequest{FromUrl: pos[0], Project: *project, Path: *path, MirrorUrl: *mirror}
+	// The name is unused (none is derived) with both --into and --project.
 	if len(pos) == 2 {
 		req.Name = pos[1]
-	} else if req.Name = nameFromURL(pos[0]); !repoNameRE.MatchString(req.Name) {
-		return exitf(ExitError, "cannot derive a name from %s; pass one: sg migrate in <url> <name>", pos[0])
+	} else if *into == "" || *project == "" {
+		if req.Name = nameFromURL(pos[0]); !repoNameRE.MatchString(req.Name) {
+			return exitf(ExitError, "cannot derive a name from %s; pass one: sg migrate in <url> <name>", pos[0])
+		}
 	}
 	if *into != "" {
 		repo, folder, ok := strings.Cut(*into, ":")
+		folder = strings.TrimRight(folder, "/") // mono:svc/ means mono:svc
 		if !ok || repo == "" || folder == "" {
 			return usageErr(migrateUsage)
 		}
