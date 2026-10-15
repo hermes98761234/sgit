@@ -3,6 +3,7 @@ package gitx
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/hermes98761234/sgit/internal/objfmt"
@@ -143,5 +144,47 @@ func TestBuildTreeLiteralQuotePath(t *testing.T) {
 	files, _ = r.ListFiles(ctx, "main")
 	if _, ok := files[`"q".txt`]; ok {
 		t.Fatal("quoted path not deleted")
+	}
+}
+
+// TestBuildTreeOnReservedNamesInBase covers history imported with names git
+// refuses in an index (GIT~1, an HFS+ alias): other changes still build,
+// keeping those files, and deleting them works; modifying them is refused.
+func TestBuildTreeOnReservedNamesInBase(t *testing.T) {
+	ctx := context.Background()
+	r := newRepo(t)
+	a := blob(t, r, "a\n")
+	sub, err := r.run(ctx, strings.NewReader("100644 blob "+a+"\ta\n"), nil, "mktree")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := strings.TrimSpace(string(sub))
+	root, err := r.run(ctx, strings.NewReader("040000 tree "+s+"\tGIT~1\n040000 tree "+s+"\t.g‌it\n100644 blob "+a+"\tok.txt\n"), nil, "mktree")
+	if err != nil {
+		t.Fatal(err)
+	}
+	main, _ := r.ReadRef(ctx, MainRef)
+	c, err := r.CommitTree(ctx, strings.TrimSpace(string(root)), []string{main}, "import", testSig, testSig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.UpdateRef(ctx, MainRef, c, main); err != nil {
+		t.Fatal(err)
+	}
+	commitChanges(t, r, []Change{{Path: "new.txt", Op: OpAdd, BlobSHA: a}})
+	files, _ := r.ListFiles(ctx, "main")
+	if _, ok := files["GIT~1/a"]; !ok || len(files) != 4 {
+		t.Fatalf("unrelated add: files = %v", files)
+	}
+	main, _ = r.ReadRef(ctx, MainRef)
+	for _, p := range []string{"GIT~1/a", ".g‌it/a"} {
+		if _, err := r.BuildTree(ctx, main, []Change{{Path: p, Op: OpModify, BlobSHA: a}}); !errors.Is(err, ErrInvalid) {
+			t.Errorf("modify %q: want ErrInvalid, got %v", p, err)
+		}
+	}
+	commitChanges(t, r, []Change{{Path: "GIT~1/a", Op: OpDelete}, {Path: ".g‌it/a", Op: OpDelete}})
+	files, _ = r.ListFiles(ctx, "main")
+	if len(files) != 2 || files["ok.txt"].SHA != a || files["new.txt"].SHA != a {
+		t.Fatalf("after delete: files = %v", files)
 	}
 }

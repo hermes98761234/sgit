@@ -45,7 +45,13 @@ func (s *Server) convertChanges(ctx context.Context, g *gitx.Repo, in []*sgitv1.
 	upserts := map[string]bool{}
 	out := make([]gitx.Change, 0, len(in))
 	for _, c := range in {
-		if err := validatePath(c.Path); err != nil {
+		// A delete may name a reserved path that is already stored (imported
+		// history); only adds and modifies are held to the full rule.
+		check := repopath.Check(c.Path, false)
+		if c.Op == sgitv1.ChangeOp_CHANGE_OP_DELETE {
+			check = repopath.CheckDelete(c.Path)
+		}
+		if err := pathStatus(check); err != nil {
 			return nil, err
 		}
 		if seen[c.Path] {

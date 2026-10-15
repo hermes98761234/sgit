@@ -391,3 +391,24 @@ func TestStatusSkipsGitAliasNames(t *testing.T) {
 		t.Fatalf("skipped = %q, want %q", w.Skipped, want)
 	}
 }
+
+// TestStatusTrackedReservedNames: a tracked file with a name the server cannot
+// store (imported history) is skipped when modified, sent when deleted.
+func TestStatusTrackedReservedNames(t *testing.T) {
+	w := newWC(t)
+	track(t, w, "GIT~1/mod.txt", "old\n", "100644")
+	track(t, w, "GIT~1/gone.txt", "bye\n", "100644")
+	track(t, w, "GIT~1/same.txt", "same\n", "100644")
+	_ = WriteLocal(w.Root, "GIT~1/mod.txt", []byte("new\n"), "100644")
+	_ = os.Remove(w.Abs("GIT~1/gone.txt"))
+	changes, err := w.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := kinds(changes); len(got) != 1 || got["GIT~1/gone.txt"] != Deleted {
+		t.Fatalf("changes = %v", got)
+	}
+	if strings.Join(w.Skipped, "|") != "GIT~1/mod.txt" {
+		t.Fatalf("skipped = %q", w.Skipped)
+	}
+}

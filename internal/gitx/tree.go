@@ -63,8 +63,13 @@ func (r *Repo) BuildTree(ctx context.Context, baseCommit string, changes []Chang
 	var info bytes.Buffer
 	for _, c := range changes {
 		// git update-index skips a path it refuses with only a warning;
-		// refuse it here so a file is never dropped from a tree.
-		if err := repopath.Check(c.Path, c.Mode == "120000"); err != nil {
+		// refuse it here so a file is never dropped from a tree. A delete
+		// may name a reserved path the base already holds.
+		check := repopath.Check(c.Path, c.Mode == "120000")
+		if c.Op == OpDelete {
+			check = repopath.CheckDelete(c.Path)
+		}
+		if err := check; err != nil {
 			return "", fmt.Errorf("%w: %v", ErrInvalid, err)
 		}
 		switch c.Op {
@@ -97,11 +102,15 @@ func (r *Repo) BuildTree(ctx context.Context, baseCommit string, changes []Chang
 		return "", err
 	}
 	defer os.RemoveAll(tmp)
+	// The base may hold names git's NTFS/HFS+ protection refuses (imported
+	// history); read-tree would fail on them and update-index would skip
+	// their deletes. Every added or modified path passed repopath.Check
+	// above, so turning the protection off here admits no new such name.
 	env := []string{"GIT_INDEX_FILE=" + filepath.Join(tmp, "index")}
-	if _, err := r.run(ctx, nil, env, "read-tree", baseCommit); err != nil {
+	if _, err := r.run(ctx, nil, env, "-c", "core.protectNTFS=false", "-c", "core.protectHFS=false", "read-tree", baseCommit); err != nil {
 		return "", err
 	}
-	if _, err := r.run(ctx, &info, env, "update-index", "-z", "--replace", "--index-info"); err != nil {
+	if _, err := r.run(ctx, &info, env, "-c", "core.protectNTFS=false", "-c", "core.protectHFS=false", "update-index", "-z", "--replace", "--index-info"); err != nil {
 		return "", err
 	}
 	out, err := r.run(ctx, nil, env, "write-tree")

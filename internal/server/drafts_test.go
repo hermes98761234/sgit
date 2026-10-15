@@ -191,3 +191,31 @@ func TestGitAliasPathsRefusedNotDropped(t *testing.T) {
 		t.Fatalf("main changed: %v", got)
 	}
 }
+
+// TestReservedNameInHistoryDeletableNotWritable: a file whose name the
+// server refuses to add, already on main from imported history, can be
+// deleted but not modified, and does not block unrelated lands.
+func TestReservedNameInHistoryDeletableNotWritable(t *testing.T) {
+	e := testenv.Start(t)
+	e.CreateRepoProject("web")
+	e.CommitReservedName("web")
+	alice := e.NewUser("alice", "web", "write")
+	c := e.Project(alice)
+	ctx := context.Background()
+	head := func() string {
+		return testenv.Must(c.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web", Rev: "main"})).Sha
+	}
+	sha := e.Upload(alice, "web", []byte("x\n"))[0]
+	if _, err := c.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{Project: "web", Base: head(), Changes: []*sgitv1.Change{testenv.Modify("GIT~1/a.txt", sha)}, Message: "m"}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("modify: want InvalidArgument, got %v", err)
+	}
+	if _, err := c.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{Project: "web", Base: head(), Changes: []*sgitv1.Change{testenv.Add("new.txt", sha)}, Message: "m"}); err != nil {
+		t.Fatalf("unrelated add: %v", err)
+	}
+	if _, err := c.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{Project: "web", Base: head(), Changes: []*sgitv1.Change{testenv.Delete("GIT~1/a.txt")}, Message: "m"}); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if got := e.Files("web", "main"); len(got) != 2 || got["new.txt"] != "x\n" || got["ok.txt"] != "a\n" {
+		t.Fatalf("main = %v", got)
+	}
+}

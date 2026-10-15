@@ -29,6 +29,36 @@ func (e *Error) Error() string { return fmt.Sprintf("invalid path %q: %s", e.Pat
 // ".git." or ".git "), because git would silently leave such entries out of
 // a tree. ".sg" components are refused as the working copy's metadata.
 func Check(p string, symlink bool) error {
+	if err := wellFormed(p); err != nil {
+		return err
+	}
+	bad := func(why string) error { return &Error{Path: p, Reason: why} }
+	segs := strings.Split(p, "/")
+	for _, seg := range segs {
+		if strings.EqualFold(seg, ".git") || strings.EqualFold(seg, ".sg") {
+			return bad("reserved name " + seg)
+		}
+		if ntfsDotGeneric(seg, "git", "") || hfsDotGeneric(seg, "git") || ntfsShortGit(seg) {
+			return bad("reserved name " + seg + " (an alias of .git)")
+		}
+	}
+	if last := segs[len(segs)-1]; symlink && (ntfsDotGeneric(last, "gitmodules", "gi7eba") || hfsDotGeneric(last, "gitmodules")) {
+		return bad("a symlink cannot be named " + last)
+	}
+	return nil
+}
+
+// CheckDelete reports whether p may be named in a delete. It applies only the
+// shape rules of Check, not the reserved names: a file with such a name can
+// still sit in imported history, and deleting it must stay possible.
+func CheckDelete(p string) error {
+	return wellFormed(p)
+}
+
+// wellFormed is the part of Check that does not depend on names: a
+// normalized, relative UTF-8 path without control characters, backslashes
+// or dot segments.
+func wellFormed(p string) error {
 	bad := func(why string) error { return &Error{Path: p, Reason: why} }
 	switch {
 	case p == "":
@@ -46,20 +76,10 @@ func Check(p string, symlink bool) error {
 	case path.Clean(p) != p:
 		return bad("not normalized")
 	}
-	segs := strings.Split(p, "/")
-	for _, seg := range segs {
+	for _, seg := range strings.Split(p, "/") {
 		if seg == "." || seg == ".." {
 			return bad("dot segment")
 		}
-		if strings.EqualFold(seg, ".git") || strings.EqualFold(seg, ".sg") {
-			return bad("reserved name " + seg)
-		}
-		if ntfsDotGeneric(seg, "git", "") || hfsDotGeneric(seg, "git") || ntfsShortGit(seg) {
-			return bad("reserved name " + seg + " (an alias of .git)")
-		}
-	}
-	if last := segs[len(segs)-1]; symlink && (ntfsDotGeneric(last, "gitmodules", "gi7eba") || hfsDotGeneric(last, "gitmodules")) {
-		return bad("a symlink cannot be named " + last)
 	}
 	return nil
 }

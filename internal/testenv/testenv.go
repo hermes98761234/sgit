@@ -7,8 +7,11 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -184,6 +187,33 @@ func (e *Env) CommitDirect(repo string, files map[string]string, msg string) str
 	if err := r.UpdateRef(ctx, gitx.MainRef, c, main); err != nil {
 		e.t.Fatalf("CommitDirect: %v", err)
 	}
+	return c
+}
+
+// CommitReservedName puts GIT~1/a.txt ("a\n"), a name git and the server
+// refuse to add, and ok.txt ("a\n") on repo's main through plain git, as
+// imported history would. It returns the new main.
+func (e *Env) CommitReservedName(repo string) string {
+	e.t.Helper()
+	dir := filepath.Join(e.DataDir, "repos", repo+".git")
+	git := func(stdin string, args ...string) string {
+		e.t.Helper()
+		cmd := exec.Command("git", append([]string{"--git-dir=" + dir}, args...)...)
+		cmd.Stdin = strings.NewReader(stdin)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",
+			"GIT_AUTHOR_NAME=i", "GIT_AUTHOR_EMAIL=i@x", "GIT_COMMITTER_NAME=i", "GIT_COMMITTER_EMAIL=i@x")
+		out, err := cmd.Output()
+		if err != nil {
+			e.t.Fatalf("git %v: %v", args, err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	b := git("a\n", "hash-object", "-w", "--stdin")
+	sub := git("100644 blob "+b+"\ta.txt\n", "mktree")
+	root := git("040000 tree "+sub+"\tGIT~1\n100644 blob "+b+"\tok.txt\n", "mktree")
+	main := git("", "rev-parse", "refs/heads/main")
+	c := git("", "commit-tree", "-m", "import", "-p", main, root)
+	git("", "update-ref", "refs/heads/main", c, main)
 	return c
 }
 

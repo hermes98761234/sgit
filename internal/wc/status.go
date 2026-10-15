@@ -135,6 +135,7 @@ func (w *WC) Status() ([]Change, error) {
 	ign := newIgnorer(w.Root)
 	now := time.Now()
 	var out []Change
+	w.Skipped = nil
 	for _, p := range w.SortedPaths() {
 		if !InSparse(w.Config.Sparse, p) {
 			continue
@@ -177,9 +178,14 @@ func (w *WC) Status() ([]Change, error) {
 			}
 			continue
 		}
+		// A tracked file the server cannot store (imported history) can be
+		// deleted but not changed: list the change as skipped.
+		if !Committable(p, mode == "120000") {
+			w.Skipped = append(w.Skipped, p)
+			continue
+		}
 		out = append(out, Change{Path: p, Kind: Modified, Mode: mode, SHA: sha})
 	}
-	w.Skipped = nil
 	if err := ign.load(""); err != nil {
 		return nil, err
 	}
