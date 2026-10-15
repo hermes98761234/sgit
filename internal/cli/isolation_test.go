@@ -24,9 +24,17 @@ func TestCLINotFoundIsByteIdentical(t *testing.T) {
 		{"checkout", "api"}, {"checkout", "api", "--json"},
 		{"log", "--project", nextID}, {"checkout", nextID, "--json"},
 	}
+	// Control: bob's credentials work, so exit 2 below is the project lookup.
+	if r := run("log", "--project", "web"); r.code != 0 || !strings.Contains(r.out, "seed") {
+		t.Fatalf("control: bob log --project web = %+v", r)
+	}
 	before := map[string]res{}
 	for _, c := range cmds {
-		before[strings.Join(c, " ")] = run(c...)
+		r := run(c...)
+		before[strings.Join(c, " ")] = r
+		if !strings.Contains(r.out+r.err, " not found or no access") {
+			t.Errorf("%v: %+v, want the not-found-or-no-access error", c, r)
+		}
 	}
 	h.env.CreateProject("api")
 	h.env.Mount("api", "lib", "zz-src", "private", false)
@@ -59,6 +67,26 @@ func TestCLIOutputNeverNamesTheRepo(t *testing.T) {
 	for _, o := range outs {
 		if strings.Contains(o, "zz-src") || strings.Contains(o, "private") || strings.Contains(o, "src/") {
 			t.Fatalf("CLI output names a source: %s", o)
+		}
+	}
+}
+
+func TestCLICatCannotReachOutsideTheMounts(t *testing.T) {
+	h, _ := coreProject(t)
+	dir := t.TempDir()
+	if got := h.okAs("bob", dir, "cat", "main:lib/a.txt", "--project", "web"); got != "a\n" {
+		t.Fatalf("control: cat main:lib/a.txt = %q", got)
+	}
+	for _, spec := range []string{
+		"main:private/p.txt", "main:src/a.txt", "main:lib/../private/p.txt", "main:../private/p.txt",
+		"main:/private/p.txt", ":private/p.txt", "main:lib/../../zz-src.git/HEAD",
+	} {
+		code, out, errs := h.runAs("bob", dir, "cat", spec, "--project", "web")
+		if code != 1 || out != "" || !strings.Contains(errs, "no such file at main") {
+			t.Errorf("cat %s: exit %d, stdout %q", spec, code, out)
+		}
+		if strings.Contains(errs, "zz-src") && !strings.Contains(spec, "zz-src") {
+			t.Errorf("cat %s: error names the repo: %s", spec, errs)
 		}
 	}
 }
