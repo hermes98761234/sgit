@@ -42,7 +42,7 @@ type Access struct {
 // refused with ErrNotFound, so no grant outlives its project.
 func (s *Store) SetACL(ctx context.Context, userID, projectID int64, l Level) error {
 	if l == LevelNone {
-		_, err := s.db.ExecContext(ctx, `DELETE FROM acl WHERE user_id=? AND project_id=?`, userID, projectID)
+		_, err := s.RevokeACL(ctx, userID, projectID)
 		return err
 	}
 	res, err := s.db.ExecContext(ctx, `INSERT INTO acl(user_id,project_id,level)
@@ -55,6 +55,17 @@ func (s *Store) SetACL(ctx context.Context, userID, projectID int64, l Level) er
 		return fmt.Errorf("%w: project %d", ErrNotFound, projectID)
 	}
 	return nil
+}
+
+// RevokeACL removes userID's explicit grant on a project and reports whether
+// there was one.
+func (s *Store) RevokeACL(ctx context.Context, userID, projectID int64) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM acl WHERE user_id=? AND project_id=?`, userID, projectID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 // ACL returns userID's level on a project (LevelNone without a grant).

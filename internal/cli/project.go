@@ -269,6 +269,9 @@ func projectShow(ctx context.Context, a *app, args []string) error {
 			}
 			fmt.Fprintf(w, "  %s/  %s:%s%s\n", m.Path, m.Repo, m.Folder, ro)
 		}
+		if len(p.Mounts) == 0 {
+			fmt.Fprintln(w, "  -")
+		}
 		fmt.Fprintln(w, "grants:")
 		for _, g := range p.Grants {
 			fmt.Fprintf(w, "  %s  %s\n", g.User, g.Level)

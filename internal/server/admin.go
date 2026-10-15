@@ -173,23 +173,33 @@ func (a *adminService) RevokeToken(ctx context.Context, req *sgitv1.RevokeTokenR
 	return &sgitv1.RevokeTokenResponse{}, nil
 }
 
-func (a *adminService) setACL(ctx context.Context, user, ref string, lvl store.Level) error {
+// setACL sets or (LevelNone) revokes a grant. It returns the project's
+// canonical name and, for a revoke, whether a grant existed.
+func (a *adminService) setACL(ctx context.Context, user, ref string, lvl store.Level) (string, bool, error) {
 	if _, err := a.requireAdmin(ctx); err != nil {
-		return err
+		return "", false, err
 	}
 	u, err := a.s.store.UserByName(ctx, user)
 	if err != nil {
-		return a.s.toStatus(ctx, notFound(err, "user %q not found", user))
+		return "", false, a.s.toStatus(ctx, notFound(err, "user %q not found", user))
 	}
 	p, err := a.resolveProject(ctx, ref)
 	if err != nil {
-		return err
+		return "", false, err
 	}
-	err = a.s.store.SetACL(ctx, u.ID, p.ID, lvl)
+	changed := true
+	if lvl == store.LevelNone {
+		changed, err = a.s.store.RevokeACL(ctx, u.ID, p.ID)
+	} else {
+		err = a.s.store.SetACL(ctx, u.ID, p.ID, lvl)
+	}
 	if errors.Is(err, store.ErrNotFound) { // deleted since it was resolved
-		return auth.ProjectNotFound(ref)
+		return "", false, auth.ProjectNotFound(ref)
 	}
-	return a.s.toStatus(ctx, err)
+	if err != nil {
+		return "", false, a.s.toStatus(ctx, err)
+	}
+	return p.Name, changed, nil
 }
 
 func (a *adminService) GrantACL(ctx context.Context, req *sgitv1.GrantACLRequest) (*sgitv1.GrantACLResponse, error) {
@@ -205,17 +215,19 @@ func (a *adminService) GrantACL(ctx context.Context, req *sgitv1.GrantACLRequest
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "level must be read or write, got %q", req.Level)
 	}
-	if err := a.setACL(ctx, req.User, req.Project, lvl); err != nil {
+	name, _, err := a.setACL(ctx, req.User, req.Project, lvl)
+	if err != nil {
 		return nil, err
 	}
-	return &sgitv1.GrantACLResponse{}, nil
+	return &sgitv1.GrantACLResponse{Project: name}, nil
 }
 
 func (a *adminService) RevokeACL(ctx context.Context, req *sgitv1.RevokeACLRequest) (*sgitv1.RevokeACLResponse, error) {
-	if err := a.setACL(ctx, req.User, req.Project, store.LevelNone); err != nil {
+	name, revoked, err := a.setACL(ctx, req.User, req.Project, store.LevelNone)
+	if err != nil {
 		return nil, err
 	}
-	return &sgitv1.RevokeACLResponse{}, nil
+	return &sgitv1.RevokeACLResponse{Project: name, Revoked: revoked}, nil
 }
 
 func (a *adminService) ListUsers(ctx context.Context, _ *sgitv1.ListUsersRequest) (*sgitv1.ListUsersResponse, error) {

@@ -161,9 +161,14 @@ message CreateTokenResponse { string id = 1; string token = 2; string user = 3; 
 message RevokeTokenRequest { string id = 1; }
 message RevokeTokenResponse {}
 message GrantACLRequest { string user = 1; string project = 2; string level = 3; }
-message GrantACLResponse {}
+message GrantACLResponse {
+  string project = 1;  // canonical project name
+}
 message RevokeACLRequest { string user = 1; string project = 2; }
-message RevokeACLResponse {}
+message RevokeACLResponse {
+  string project = 1;  // canonical project name
+  bool revoked = 2;    // false: the user had no explicit grant
+}
 
 message UserInfo {
   string name = 1;

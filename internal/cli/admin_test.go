@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -273,5 +274,43 @@ func TestRepoCreateFlagAfterPositional(t *testing.T) {
 	decode(t, h.ok(dir, "repo", "status", "web2", "--json"), &st)
 	if st.MirrorURL != "file://"+mirror {
 		t.Fatalf("mirror_url = %q", st.MirrorURL)
+	}
+}
+
+// acl output names the project by its canonical name and says when a revoke
+// found no grant; project show marks empty sections alike.
+func TestAdminOutputAccuracy(t *testing.T) {
+	h := newHarness(t)
+	h.seed(seedFiles)
+	dir := t.TempDir()
+	h.ok(dir, "token", "create", "bob")
+	h.ok(dir, "project", "alias", "add", "web", "www")
+	id := h.env.ProjectID("web")
+	ref := "#" + strconv.FormatInt(id, 10)
+	if out := h.ok(dir, "acl", "grant", "bob", ref, "write"); out != "granted bob write access to web\n" {
+		t.Fatalf("grant via id = %q", out)
+	}
+	var js struct{ User, Project, Level string }
+	decode(t, h.ok(dir, "acl", "grant", "bob", "www", "read", "--json"), &js)
+	if js.Project != "web" || js.Level != "read" {
+		t.Fatalf("grant --json = %+v", js)
+	}
+	if out := h.ok(dir, "acl", "revoke", "bob", "www"); out != "revoked bob's access to web\n" {
+		t.Fatalf("revoke = %q", out)
+	}
+	if out := h.ok(dir, "acl", "revoke", "bob", "web"); out != "bob had no explicit access to web; nothing revoked\n" {
+		t.Fatalf("revoke without grant = %q", out)
+	}
+	var rv struct {
+		Project string
+		Revoked bool
+	}
+	decode(t, h.ok(dir, "acl", "revoke", "bob", "web", "--json"), &rv)
+	if rv.Project != "web" || rv.Revoked {
+		t.Fatalf("revoke --json = %+v", rv)
+	}
+	h.ok(dir, "project", "create", "empty")
+	if out := h.ok(dir, "project", "show", "empty"); !strings.Contains(out, "mounts:\n  -\ngrants:\n  -\n") {
+		t.Fatalf("show empty = %q", out)
 	}
 }

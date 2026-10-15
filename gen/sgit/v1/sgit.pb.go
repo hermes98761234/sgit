@@ -2913,6 +2913,7 @@ func (x *GrantACLRequest) GetLevel() string {
 
 type GrantACLResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"` // canonical project name
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2945,6 +2946,13 @@ func (x *GrantACLResponse) ProtoReflect() protoreflect.Message {
 // Deprecated: Use GrantACLResponse.ProtoReflect.Descriptor instead.
 func (*GrantACLResponse) Descriptor() ([]byte, []int) {
 	return file_sgit_v1_sgit_proto_rawDescGZIP(), []int{48}
+}
+
+func (x *GrantACLResponse) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
 }
 
 type RevokeACLRequest struct {
@@ -3001,6 +3009,8 @@ func (x *RevokeACLRequest) GetProject() string {
 
 type RevokeACLResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`  // canonical project name
+	Revoked       bool                   `protobuf:"varint,2,opt,name=revoked,proto3" json:"revoked,omitempty"` // false: the user had no explicit grant
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3033,6 +3043,20 @@ func (x *RevokeACLResponse) ProtoReflect() protoreflect.Message {
 // Deprecated: Use RevokeACLResponse.ProtoReflect.Descriptor instead.
 func (*RevokeACLResponse) Descriptor() ([]byte, []int) {
 	return file_sgit_v1_sgit_proto_rawDescGZIP(), []int{50}
+}
+
+func (x *RevokeACLResponse) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *RevokeACLResponse) GetRevoked() bool {
+	if x != nil {
+		return x.Revoked
+	}
+	return false
 }
 
 type UserInfo struct {
@@ -4857,12 +4881,15 @@ const file_sgit_v1_sgit_proto_rawDesc = "" +
 	"\x0fGrantACLRequest\x12\x12\n" +
 	"\x04user\x18\x01 \x01(\tR\x04user\x12\x18\n" +
 	"\aproject\x18\x02 \x01(\tR\aproject\x12\x14\n" +
-	"\x05level\x18\x03 \x01(\tR\x05level\"\x12\n" +
-	"\x10GrantACLResponse\"@\n" +
+	"\x05level\x18\x03 \x01(\tR\x05level\",\n" +
+	"\x10GrantACLResponse\x12\x18\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\"@\n" +
 	"\x10RevokeACLRequest\x12\x12\n" +
 	"\x04user\x18\x01 \x01(\tR\x04user\x12\x18\n" +
-	"\aproject\x18\x02 \x01(\tR\aproject\"\x13\n" +
-	"\x11RevokeACLResponse\"\x92\x01\n" +
+	"\aproject\x18\x02 \x01(\tR\aproject\"G\n" +
+	"\x11RevokeACLResponse\x12\x18\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\x12\x18\n" +
+	"\arevoked\x18\x02 \x01(\bR\arevoked\"\x92\x01\n" +
 	"\bUserInfo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05email\x18\x02 \x01(\tR\x05email\x12\x14\n" +

@@ -317,23 +317,38 @@ func cmdACL(ctx context.Context, a *app, args []string) error {
 	}
 	user, project := pos[0], pos[1]
 	level := ""
+	revoked := false
 	err = a.admin(ctx, *srv, adminTimeout, func(ctx context.Context, ac sgitv1.AdminClient) error {
 		if verb == "grant" {
 			level = pos[2]
-			_, err := ac.GrantACL(ctx, &sgitv1.GrantACLRequest{User: user, Project: project, Level: level})
+			resp, err := ac.GrantACL(ctx, &sgitv1.GrantACLRequest{User: user, Project: project, Level: level})
+			if err == nil && resp.Project != "" {
+				project = resp.Project
+			}
 			return err
 		}
-		_, err := ac.RevokeACL(ctx, &sgitv1.RevokeACLRequest{User: user, Project: project})
+		resp, err := ac.RevokeACL(ctx, &sgitv1.RevokeACLRequest{User: user, Project: project})
+		if err == nil {
+			revoked = resp.Revoked
+			if resp.Project != "" {
+				project = resp.Project
+			}
+		}
 		return err
 	})
 	if err != nil {
 		return err
 	}
-	return a.emit(map[string]any{"user": user, "project": project, "level": level}, func(w io.Writer) {
-		if verb == "grant" {
+	if verb == "grant" {
+		return a.emit(map[string]any{"user": user, "project": project, "level": level}, func(w io.Writer) {
 			fmt.Fprintf(w, "granted %s %s access to %s\n", user, level, project)
-		} else {
+		})
+	}
+	return a.emit(map[string]any{"user": user, "project": project, "level": level, "revoked": revoked}, func(w io.Writer) {
+		if revoked {
 			fmt.Fprintf(w, "revoked %s's access to %s\n", user, project)
+		} else {
+			fmt.Fprintf(w, "%s had no explicit access to %s; nothing revoked\n", user, project)
 		}
 	})
 }
