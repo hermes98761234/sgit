@@ -10,7 +10,8 @@ func TestNameFromURL(t *testing.T) {
 		"ssh://git@example.com/srv/web":   "web",
 		"file:///tmp/x/api.git":           "api",
 		"/srv/git/tool.git/":              "tool",
-		"https://example.com/":            "example.com",
+		"https://example.com/":            "",
+		"https://example.com":             "",
 		"":                                "",
 	} {
 		if got := nameFromURL(in); got != want {

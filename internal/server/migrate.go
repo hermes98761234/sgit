@@ -41,18 +41,31 @@ func (a *adminService) MigrateIn(ctx context.Context, req *sgitv1.MigrateInReque
 	fps, err := g.FirstParents(ctx, main, "")
 	g.Close()
 	if err != nil {
-		a.s.repos.rollbackNew(req.Name, dir)
+		a.rollbackImport(ctx, req.Name, dir)
 		return nil, a.s.toStatus(ctx, err)
 	}
 	resp := &sgitv1.MigrateInResponse{Repo: req.Name, Folder: ".", Main: main, Commits: int32(len(fps))}
 	if err := a.migrateMount(ctx, req, resp, req.Name, "."); err != nil {
-		a.s.repos.rollbackNew(req.Name, dir)
+		if kept := a.rollbackImport(ctx, req.Name, dir); kept {
+			st := status.Convert(err)
+			err = status.Errorf(st.Code(), "%s (repo %q was kept because a project mount references it)", st.Message(), req.Name)
+		}
 		return nil, err
 	}
 	if req.MirrorUrl != "" {
 		a.s.mirror.Notify(req.Name)
 	}
 	return resp, nil
+}
+
+// rollbackImport undoes the import of name and reports whether the repo had
+// to be kept because the store still references it.
+func (a *adminService) rollbackImport(ctx context.Context, name, dir string) (kept bool) {
+	if err := a.s.repos.rollbackNew(name, dir); err != nil {
+		a.s.log.ErrorContext(ctx, "migrate: rolling back the import failed; repo kept", "repo", name, "err", err)
+		return true
+	}
+	return false
 }
 
 // checkMigrateIn validates the request shape before anything is fetched.
@@ -269,6 +282,9 @@ func (a *adminService) MigrateOut(ctx context.Context, req *sgitv1.MigrateOutReq
 		err = h.Git.PushFF(ctx, req.ToUrl, head, allow)
 	}
 	if errors.Is(err, gitx.ErrRejected) {
+		if req.Force {
+			return nil, status.Errorf(codes.FailedPrecondition, "main of %s moved while pushing; retry", req.ToUrl)
+		}
 		return nil, status.Errorf(codes.FailedPrecondition,
 			"main of %s has diverged from project %q; use --force to overwrite it", req.ToUrl, p.Name)
 	}

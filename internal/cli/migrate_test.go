@@ -64,6 +64,11 @@ func TestMigrateCommands(t *testing.T) {
 		}
 	}
 
+	// a derived name must satisfy the repo-name rule; this fails before dialing
+	if code, _, errs := h.run(dir, "migrate", "in", "https://github.com/acme/MyApp.git"); code != cli.ExitError || !strings.Contains(errs, "cannot derive a name") {
+		t.Errorf("uppercase derived name: exit %d, stderr %q", code, errs)
+	}
+
 	// out
 	dst := filepath.Join(t.TempDir(), "out.git")
 	if err := gitx.InitBare(ctx, dst); err != nil {

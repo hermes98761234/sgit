@@ -18,7 +18,7 @@ Move code between plain git repos and an sgit server in one admin command each w
 - `--into` gives the imported commits new SHAs, because their paths move. Merge commits are flattened to their first-parent line, as sgit does everywhere.
 - `--into` migrates `main` only. `release/*` branches are skipped with a warning.
 - `--into` holds the target repo's land lock for the whole replay. Lands into that repo wait until it finishes.
-- `migrate out` publishes the project's derived history. A project that mounts a whole repo at `.` keeps the source SHAs. Other projects get their translated SHAs, with only the mounted paths.
+- `migrate out` publishes the project's derived history. A project that mounts a whole repo at `.` keeps the source SHAs only for linear, unsigned history; merges are flattened, signatures dropped, and later commits get new SHAs, so `--force` to the original repo rewrites its history. Other projects get their translated SHAs, with only the mounted paths.
 - `migrate out` pushes `main` only.
 
 ## 2. Commands

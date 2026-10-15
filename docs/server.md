@@ -222,8 +222,8 @@ Then use `--mirror https://github.com/acme/web.git`.
 sg migrate in <url> [name] [--into <repo>:<folder>] [--project P --path DIR] [--mirror URL]
 ```
 
-- Without `--into`, the repo is imported as a new repo `name` (its `main` and `release/*` keep their SHAs), like `sg repo import`.
-- With `--into mono:services/api`, the history of `main` is replayed under `services/api/` of the existing repo `mono`: one new commit per original first-parent commit, with the original author, committer, date and message. Commit SHAs change. Signatures are dropped and merges are flattened. The folder must be absent or empty. Lands into `mono` wait while the replay runs. Other branches are not migrated and are listed as skipped.
+- Without `--into`, the repo is imported as a new repo `name` (its `main` and `release/*` keep their SHAs), like `sg repo import`. The new project's commits keep the SHAs only while the history is linear and unsigned: the project engine drops signatures and extra headers and flattens merges, so a merge or signed commit and everything after it get new project SHAs.
+- With `--into mono:services/api`, the history of `main` is replayed under `services/api/` of the existing repo `mono`: one new commit per original first-parent commit, with the original author, committer, date and message. Commit SHAs change. Signatures are dropped and merges are flattened. `--mirror` cannot be combined with `--into`; set the mirror on the target repo. The folder must be absent or empty. Lands into `mono` wait while the replay runs. Other branches are not migrated and are listed as skipped.
 - `name` defaults to the last segment of the URL without `.git`.
 - The code is then mounted at the root of a new project `name`, or with `--project P --path DIR` at `DIR` in the existing project `P`.
 - If the project step fails, a plain import is rolled back. After `--into` the replayed commits stay; mount them with `sg project mount`.
@@ -232,7 +232,7 @@ The command prints what it did:
 
 ```
 migrated https://github.com/acme/api.git into mono:services/api: 42 commits, main 1a2b3c4
-mounted at services/api/ of project mono
+mounted at the project root of project api
 warning: branches not migrated: dev, feature/x
 ```
 
@@ -242,7 +242,7 @@ warning: branches not migrated: dev, feature/x
 sg migrate out <project> --to <url> [--force]
 ```
 
-Pushes the project's `main` to `url`. The project is not changed; run it again to update the target. A project that mounts one whole repo at `.` keeps the repo's commit SHAs; other projects export their project history. The push is fast-forward only; `--force` overwrites a target whose `main` has diverged.
+Pushes the project's `main` to `url`. The project is not changed; run it again to update the target. A project that mounts one whole repo at `.` keeps the repo's commit SHAs only for linear, unsigned history: merges are flattened and signatures dropped, and every commit after the first such one gets a new SHA. Other projects export their project history. Pushing with `--force` to the repo the code came from therefore rewrites that repo's history when it contains merges or signed commits. The push is fast-forward only; `--force` overwrites a target whose `main` has diverged.
 
 ```
 pushed project api to git@github.com:acme/api-export.git (main 1a2b3c4)

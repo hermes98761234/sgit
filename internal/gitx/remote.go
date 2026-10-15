@@ -241,7 +241,7 @@ func RemoteBranches(ctx context.Context, remote, prefix string, allowLocal bool)
 	if err := ValidateRemote(remote, allowLocal); err != nil {
 		return nil, err
 	}
-	out, err := runGit(ctx, nil, append(remoteEnv(allowLocal), "GIT_DIR="+os.DevNull), "ls-remote", "--refs", remote)
+	out, err := runGit(ctx, nil, append(remoteEnv(allowLocal), "GIT_DIR="+os.DevNull), "ls-remote", "--refs", remote, "refs/heads/"+prefix+"*")
 	if err != nil {
 		return nil, err
 	}

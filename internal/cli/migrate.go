@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
+	"regexp"
 	"strings"
 
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
@@ -11,6 +13,9 @@ import (
 
 const migrateUsage = "migrate in <url> [name] [--into <repo>:<folder>] [--project P --path DIR] [--mirror URL] | " +
 	"migrate out <project> --to URL [--force]  [--server S]"
+
+// repoNameRE is the server's repo-name rule; a derived name must satisfy it.
+var repoNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 func cmdMigrate(ctx context.Context, a *app, args []string) error {
 	if len(args) > 0 {
@@ -41,7 +46,7 @@ func migrateIn(ctx context.Context, a *app, args []string) error {
 	req := &sgitv1.MigrateInRequest{FromUrl: pos[0], Project: *project, Path: *path, MirrorUrl: *mirror}
 	if len(pos) == 2 {
 		req.Name = pos[1]
-	} else if req.Name = nameFromURL(pos[0]); req.Name == "" {
+	} else if req.Name = nameFromURL(pos[0]); !repoNameRE.MatchString(req.Name) {
 		return exitf(ExitError, "cannot derive a name from %s; pass one: sg migrate in <url> <name>", pos[0])
 	}
 	if *into != "" {
@@ -118,7 +123,11 @@ func migrateOut(ctx context.Context, a *app, args []string) error {
 
 // nameFromURL returns the last path segment of a git URL without ".git":
 // https://host/acme/api.git and git@host:acme/api both give "api".
+// A URL with a host but no path (https://example.com/) gives "".
 func nameFromURL(u string) string {
+	if p, err := url.Parse(u); err == nil && p.Host != "" && strings.Trim(p.Path, "/") == "" {
+		return ""
+	}
 	u = strings.TrimRight(u, "/")
 	if i := strings.LastIndexAny(u, "/:"); i >= 0 {
 		u = u[i+1:]

@@ -169,7 +169,7 @@ func (m *repoManager) create(ctx context.Context, name, mirrorURL string, sig gi
 		return "", err
 	}
 	if err := m.st.RecordLand(context.WithoutCancel(ctx), name, main, time.Now()); err != nil {
-		m.rollbackNew(name, p)
+		_ = m.rollbackNew(name, p) // kept when mounted; the caller sees the Internal error
 		return "", status.Error(codes.Internal, "recording the land sequence failed")
 	}
 	return main, nil
@@ -230,23 +230,28 @@ func (m *repoManager) importRepo(ctx context.Context, name, from, mirrorURL stri
 		return "", err
 	}
 	if err := m.st.RecordLand(context.WithoutCancel(ctx), name, main, time.Now()); err != nil {
-		m.rollbackNew(name, p)
+		_ = m.rollbackNew(name, p) // kept when mounted; the caller sees the Internal error
 		return "", status.Error(codes.Internal, "recording the land sequence failed")
 	}
 	return main, nil
 }
 
 // rollbackNew undoes a create or import whose land sequence could not be
-// recorded, so a retry starts clean instead of finding AlreadyExists.
-func (m *repoManager) rollbackNew(name, dir string) {
+// recorded, so a retry starts clean instead of finding AlreadyExists. When the
+// store refuses to delete the repo (a project mount references it), the
+// directory is kept so the store rows do not dangle, and the error is returned.
+func (m *repoManager) rollbackNew(name, dir string) error {
 	m.mu.Lock()
 	if h, ok := m.open[name]; ok {
 		delete(m.open, name)
 		h.git.Close()
 	}
 	m.mu.Unlock()
-	_ = m.st.DeleteRepo(context.Background(), name)
+	if err := m.st.DeleteRepo(context.Background(), name); err != nil && !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
 	os.RemoveAll(dir)
+	return nil
 }
 
 // Source opens a source repo for the projection engine.
