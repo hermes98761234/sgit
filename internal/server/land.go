@@ -252,13 +252,22 @@ func (r *projectService) landDraft(ctx context.Context, pr *proj, u store.User, 
 		}
 		return nil, conflictStatus(d.ID, head, conflicts, true, landed)
 	}
+	d.Status, d.UpdatedAt = store.DraftLanded, r.s.cfg.Now()
+	// A draft whose changes are all on main already (an earlier land whose
+	// answer was lost, or the same edit landed another way) is closed as
+	// landed rather than left open. Which commit brought the changes is not
+	// known, so LandedAs stays empty.
+	if !landedAny {
+		d.LandedAs = ""
+		if err := r.s.store.UpdateDraft(ctx, d); err != nil {
+			return nil, r.s.hide(ctx, err)
+		}
+		return nil, status.Errorf(codes.FailedPrecondition, "draft %s changes are already on main", id)
+	}
 	// 5. Catch up and answer with the new project head. The draft is marked
 	// landed in the transaction that records the new project commits; only
 	// when that recorded nothing (a concurrent catch-up got there first) is
-	// it updated on its own. A draft whose changes are all on main already
-	// (an earlier land whose answer was lost, or the same edit landed
-	// another way) is closed the same way rather than left open.
-	d.Status, d.UpdatedAt = store.DraftLanded, r.s.cfg.Now()
+	// it updated on its own.
 	head, marked, err := r.s.projects.CatchUpLanded(ctx, pr.h, d)
 	if err != nil {
 		return nil, r.s.hide(ctx, err)
@@ -269,9 +278,6 @@ func (r *projectService) landDraft(ctx context.Context, pr *proj, u store.User, 
 		if err := r.s.store.UpdateDraft(bg, d); err != nil {
 			r.s.log.ErrorContext(bg, "landed but failed to mark draft", "draft", d.ID, "err", err)
 		}
-	}
-	if !landedAny {
-		return nil, status.Errorf(codes.FailedPrecondition, "draft %s changes are already on main", id)
 	}
 	parent := ""
 	if hc, err := pr.h.Git.ReadCommit(ctx, head); err == nil && hc.Tree == dc.Tree && len(hc.Parents) == 1 {

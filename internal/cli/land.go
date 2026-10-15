@@ -132,15 +132,22 @@ func syncToMain(ctx context.Context, s *session) (syncResult, string, error) {
 }
 
 // reportAlreadyOnMain tells the user that draft id had nothing left to land
-// and that the working copy now matches main.
+// and that the working copy now matches main. When that sync conflicted with
+// later local edits, nothing of this command landed: "landed" is false and
+// the exit code is 3.
 func (a *app) reportAlreadyOnMain(id, main string, res syncResult) error {
-	if err := a.emit(map[string]any{"landed": true, "already_on_main": true, "commit": main, "draft": id, "sync": res}, func(out io.Writer) {
-		fmt.Fprintf(out, "draft %s: these changes are already on main %s (an earlier land went through); working copy synced\n", id, short(main))
+	conflicted := len(res.Conflicts) > 0
+	if err := a.emit(map[string]any{"landed": !conflicted, "already_on_main": true, "commit": main, "draft": id, "sync": res}, func(out io.Writer) {
+		synced := "working copy synced"
+		if conflicted {
+			synced = "syncing the working copy to it conflicted with your later edits"
+		}
+		fmt.Fprintf(out, "draft %s: these changes are already on main %s (an earlier land went through); %s\n", id, short(main), synced)
 		printSync(out, res)
 	}); err != nil {
 		return err
 	}
-	if len(res.Conflicts) > 0 {
+	if conflicted {
 		return exitf(ExitConflict, "%d file(s) have conflicts with main; edit them, then commit", len(res.Conflicts))
 	}
 	return nil

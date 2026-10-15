@@ -287,6 +287,31 @@ func TestCommitLandRetryAfterLostAnswer(t *testing.T) {
 	}
 }
 
+// A lost-answer retry whose sync conflicts with later local edits reports
+// already_on_main but not landed, and exits 3.
+func TestCommitLandRetryAfterLostAnswerConflicts(t *testing.T) {
+	h := newHarness(t)
+	h.seed(seedFiles)
+	w := h.checkout(t.TempDir())
+	writeFile(t, filepath.Join(w, "a.txt"), "landed\n")
+	h.ok(w, "commit", "-m", "lost answer")
+	id := h.draftOf(w)
+	testenv.Must(h.env.Project(h.env.AdminToken).Land(context.Background(), &sgitv1.LandRequest{Project: "web", Id: id}))
+	h.upstream(map[string]string{"src/x.go": "theirs\n"})
+	writeFile(t, filepath.Join(w, "src", "x.go"), "mine\n")
+	code, out, errs := h.run(w, "commit", "-m", "lost answer", "--land", "--json")
+	var res struct {
+		Landed        bool `json:"landed"`
+		AlreadyOnMain bool `json:"already_on_main"`
+		Sync          struct {
+			Conflicts []string `json:"conflicts"`
+		} `json:"sync"`
+	}
+	if err := json.NewDecoder(strings.NewReader(out)).Decode(&res); code != 3 || err != nil || res.Landed || !res.AlreadyOnMain || !contains(res.Sync.Conflicts, "src/x.go") {
+		t.Fatalf("exit %d (%v) %+v\nstdout: %s\nstderr: %s", code, err, res, out, errs)
+	}
+}
+
 // An open draft whose changes reached main another way lands as a no-op:
 // it is closed, not left open, and the working copy syncs.
 func TestCommitLandOpenDraftAlreadyOnMain(t *testing.T) {
@@ -308,8 +333,9 @@ func TestCommitLandOpenDraftAlreadyOnMain(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &res); code != 0 || err != nil || !res.Landed || !res.AlreadyOnMain || res.Draft != id {
 		t.Fatalf("exit %d (%v)\nstdout: %s\nstderr: %s", code, err, out, errs)
 	}
-	if st := h.getDraft(id).Status; st == "open" {
-		t.Fatalf("draft %s left %s", id, st)
+	// Closed as landed, without claiming w2's commit as its own.
+	if d := h.getDraft(id); d.Status != "landed" || d.LandedAs != "" {
+		t.Fatalf("draft %s: status %q, landed_as %q", id, d.Status, d.LandedAs)
 	}
 	if open := h.openDrafts(); len(open) != 0 || h.draftOf(w1) != "" {
 		t.Fatalf("open drafts %v, .sg/draft %q", open, h.draftOf(w1))
