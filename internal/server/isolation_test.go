@@ -1,0 +1,447 @@
+package server_test
+
+import (
+	"context"
+	"io"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+
+	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
+	"github.com/hermes98761234/sgit/internal/daemontest"
+	"github.com/hermes98761234/sgit/internal/objfmt"
+	"github.com/hermes98761234/sgit/internal/testenv"
+	"github.com/klauspost/compress/zstd"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/prototext"
+	"google.golang.org/protobuf/proto"
+)
+
+const hiddenRepo = "zz-hidden-src"
+
+// isoEnv: repo zz-hidden-src with pub/ and secret/, project "web" mounting
+// pub at "app", bob with write on web. Returns env, bob's token, and every
+// source commit SHA.
+func isoEnv(t *testing.T) (*testenv.Env, string, []string) {
+	t.Helper()
+	e := testenv.Start(t)
+	e.CreateRepo(hiddenRepo)
+	e.CommitDirect(hiddenRepo, map[string]string{"pub/a.txt": "public a\n", "secret/k.txt": "top secret\n"}, "seed")
+	e.CommitDirect(hiddenRepo, map[string]string{"secret/k.txt": "rotated secret\n"}, "rotate secret only")
+	e.CreateProject("web")
+	e.Mount("web", "app", hiddenRepo, "pub", false)
+	bob := e.NewUser("bob", "web", "write")
+	return e, bob, sourceSHAs(t, e)
+}
+
+func sourceSHAs(t *testing.T, e *testenv.Env) []string {
+	t.Helper()
+	g := e.Git(hiddenRepo)
+	defer g.Close()
+	var out []string
+	for _, l := range testenv.Must(g.Log(context.Background(), "main", "", 1000)) {
+		out = append(out, l.SHA)
+	}
+	return out
+}
+
+// assertClean fails if a client-facing message mentions the hidden repo, a
+// source path outside the mount, or a source commit SHA.
+func assertClean(t *testing.T, what string, m proto.Message, srcSHAs []string) {
+	t.Helper()
+	text := prototext.Format(m)
+	for _, bad := range append([]string{hiddenRepo, "secret/", "pub/"}, srcSHAs...) {
+		if strings.Contains(text, bad) {
+			t.Fatalf("%s leaks %q:\n%s", what, bad, text)
+		}
+	}
+}
+
+func TestProjectRootListsOnlyMounts(t *testing.T) {
+	ctx := context.Background()
+	e, bob, _ := isoEnv(t)
+	c := e.Project(bob)
+	head := testenv.Must(c.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web"})).Sha
+	g := e.ProjectGit(e.ProjectID("web"))
+	defer g.Close()
+	root := testenv.Must(g.Subtrees(ctx, []string{head}, "."))[0]
+	// The root tree, as a client fetches it, has exactly one entry: the mount.
+	obj := testenv.Must(fetch(t, c, "web", root))[0]
+	if obj.Type != "tree" {
+		t.Fatalf("root = %+v", obj)
+	}
+	dec, _ := zstd.NewReader(nil)
+	defer dec.Close()
+	data := testenv.Must(dec.DecodeAll(obj.ZstdData, nil))
+	entries := testenv.Must(objfmt.ParseTree(data))
+	if len(entries) != 1 || entries[0].Name != "app" || !entries[0].IsTree() {
+		t.Fatalf("root tree entries = %+v, want exactly the tree app", entries)
+	}
+	files := testenv.Must(g.ListFiles(ctx, head))
+	if len(files) != 1 || files["app/a.txt"].SHA == "" {
+		t.Fatalf("project files = %v, want only app/a.txt", files)
+	}
+	if app := testenv.Must(g.Subtrees(ctx, []string{head}, "app"))[0]; app == "" {
+		t.Fatal("mount path missing from the root")
+	}
+}
+
+func TestForeignSHAsAreNotFound(t *testing.T) {
+	ctx := context.Background()
+	e, bob, src := isoEnv(t)
+	c := e.Project(bob)
+	g := e.Git(hiddenRepo)
+	defer g.Close()
+	secretTree := testenv.Must(g.Subtrees(ctx, []string{src[0]}, "secret"))[0]
+	secretBlob := objfmt.BlobSHA([]byte("rotated secret\n"))
+	for _, sha := range append([]string{secretTree, secretBlob}, src...) {
+		if _, err := fetch(t, c, "web", sha); status.Code(err) != codes.NotFound {
+			t.Errorf("GetObjects(%s) = %v", sha, err)
+		}
+		has := testenv.Must(c.HasObjects(ctx, &sgitv1.HasObjectsRequest{Project: "web", Shas: []string{sha}}))
+		if has.Present[0] {
+			t.Errorf("HasObjects(%s) = true", sha)
+		}
+		for name, err := range map[string]error{
+			"ResolveRev": func() error {
+				_, err := c.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web", Rev: sha})
+				return err
+			}(),
+			"Log": func() error { _, err := c.Log(ctx, &sgitv1.LogRequest{Project: "web", Rev: sha}); return err }(),
+			"Diff": func() error {
+				_, err := c.Diff(ctx, &sgitv1.DiffRequest{Project: "web", A: sha, B: "main"})
+				return err
+			}(),
+			"Blame": func() error {
+				_, err := c.Blame(ctx, &sgitv1.BlameRequest{Project: "web", Rev: sha, Path: "app/a.txt"})
+				return err
+			}(),
+			"MergeFile": func() error {
+				_, err := c.MergeFile(ctx, &sgitv1.MergeFileRequest{Project: "web", BaseSha: sha})
+				return err
+			}(),
+		} {
+			if status.Code(err) != codes.NotFound {
+				t.Errorf("%s(%s) = %v", name, sha[:8], err)
+			}
+		}
+	}
+}
+
+func TestUnmountedOnlyCommitNotInLog(t *testing.T) {
+	ctx := context.Background()
+	e, bob, _ := isoEnv(t)
+	lg := testenv.Must(e.Project(bob).Log(ctx, &sgitv1.LogRequest{Project: "web"}))
+	for _, l := range lg.Entries {
+		if l.Subject == "rotate secret only" {
+			t.Fatal("a commit touching only unmounted folders is in the project log")
+		}
+	}
+}
+
+func TestResponsesNeverLeakSources(t *testing.T) {
+	ctx := context.Background()
+	e, bob, src := isoEnv(t)
+	c := e.Project(bob)
+	rr := testenv.Must(c.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web"}))
+	assertClean(t, "ResolveRev", rr, src)
+	assertClean(t, "Log", testenv.Must(c.Log(ctx, &sgitv1.LogRequest{Project: "web"})), src)
+	assertClean(t, "Blame", testenv.Must(c.Blame(ctx, &sgitv1.BlameRequest{Project: "web", Path: "app/a.txt"})), src)
+	assertClean(t, "ListProjects", testenv.Must(c.ListProjects(ctx, &sgitv1.ListProjectsRequest{})), src)
+	sha := e.Upload(bob, "web", []byte("new\n"))[0]
+	d := testenv.Must(c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Project: "web", Base: rr.Sha, Message: "m",
+		Changes: []*sgitv1.Change{testenv.Add("app/n.txt", sha)}}))
+	assertClean(t, "CreateDraft", d, src)
+	assertClean(t, "Diff", testenv.Must(c.Diff(ctx, &sgitv1.DiffRequest{Project: "web", A: d.Base, B: d.Head})), src)
+	resp := testenv.Must(c.Land(ctx, &sgitv1.LandRequest{Project: "web", Id: d.Id}))
+	assertClean(t, "Land", resp, append(src, sourceSHAs(t, e)...))
+	assertClean(t, "ListDrafts", testenv.Must(c.ListDrafts(ctx, &sgitv1.ListDraftsRequest{Project: "web"})), sourceSHAs(t, e))
+	// A conflict detail carries project paths and the project head only.
+	e.CommitDirect(hiddenRepo, map[string]string{"pub/a.txt": "upstream\n"}, "upstream")
+	ours := e.Upload(bob, "web", []byte("mine\n"))[0]
+	_, err := c.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{Project: "web", Base: resp.Commit, Message: "m",
+		Changes: []*sgitv1.Change{testenv.Modify("app/a.txt", ours)}})
+	if status.Code(err) != codes.Aborted {
+		t.Fatalf("conflicting CommitAndLand = %v, want Aborted", err)
+	}
+	assertClean(t, "conflict", status.Convert(err).Proto(), sourceSHAs(t, e))
+}
+
+func TestIsolationThroughWarmDaemon(t *testing.T) {
+	ctx := context.Background()
+	e, bob, _ := isoEnv(t)
+	e.CreateProject("sec")
+	e.Mount("sec", "s", hiddenRepo, "secret", false)
+	d := daemontest.Start(t, e.Addr)
+	secret := objfmt.BlobSHA([]byte("rotated secret\n"))
+	if _, err := fetch(t, d.Project(e.AdminToken), "sec", secret); err != nil {
+		t.Fatal(err)
+	}
+	objs, err := fetch(t, d.Project(bob), "web", secret)
+	if status.Code(err) != codes.NotFound || len(objs) != 0 {
+		t.Fatalf("warm sgd served a foreign object: %v %v", objs, err)
+	}
+	// Asking the warm daemon by the other project's name or id is the same
+	// existence-hiding error as an unknown project.
+	idRef := "#" + strconv.FormatInt(e.ProjectID("sec"), 10)
+	for _, ref := range []string{"sec", idRef} {
+		objs, err := fetch(t, d.Project(bob), ref, secret)
+		if len(objs) != 0 || status.Convert(err).Message() != "project "+strconv.Quote(ref)+" not found or no access" {
+			t.Errorf("warm sgd fetch from %s: %v %v", ref, objs, err)
+		}
+	}
+	if has, err := d.Project(bob).HasObjects(ctx, &sgitv1.HasObjectsRequest{Project: "web", Shas: []string{secret}}); err != nil || has.Present[0] {
+		t.Fatalf("warm sgd HasObjects(foreign) = %v %v", has, err)
+	}
+}
+
+// secEnv extends isoEnv with project "sec" (mounting the secret folder) that
+// bob cannot read, an open admin draft in it, and returns sec's id, the
+// draft and sec's head.
+func secEnv(t *testing.T) (*testenv.Env, string, int64, *sgitv1.Draft, string) {
+	t.Helper()
+	ctx := context.Background()
+	e, bob, _ := isoEnv(t)
+	id := e.CreateProject("sec")
+	head := e.Mount("sec", "s", hiddenRepo, "secret", false)
+	adm := e.Project(e.AdminToken)
+	blob := e.Upload(e.AdminToken, "sec", []byte("draft secret\n"))[0]
+	d := testenv.Must(adm.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Project: "sec", Base: head, Message: "secret draft",
+		Changes: []*sgitv1.Change{testenv.Add("s/new.txt", blob)}}))
+	return e, bob, id, d, head
+}
+
+func uploadTo(ctx context.Context, c sgitv1.ProjectClient, project string, data []byte) error {
+	st, err := c.UploadBlobs(ctx)
+	if err != nil {
+		return err
+	}
+	if err := st.Send(&sgitv1.BlobChunk{Project: project, Data: data, EndOfBlob: true}); err != nil && err != io.EOF {
+		return err
+	}
+	_, err = st.CloseAndRecv()
+	return err
+}
+
+func TestOtherProjectIsUnknownForEveryRPC(t *testing.T) {
+	ctx := context.Background()
+	e, bob, id, d, head := secEnv(t)
+	c := e.Project(bob)
+	idRef := "#" + strconv.FormatInt(id, 10)
+	for _, ref := range []string{"sec", idRef, "nope", "#999"} {
+		want := "project " + strconv.Quote(ref) + " not found or no access"
+		calls := map[string]error{
+			"ResolveRev":  func() error { _, err := c.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: ref}); return err }(),
+			"GetObjects":  func() error { _, err := fetch(t, c, ref, head); return err }(),
+			"HasObjects":  func() error { _, err := c.HasObjects(ctx, &sgitv1.HasObjectsRequest{Project: ref}); return err }(),
+			"UploadBlobs": uploadTo(ctx, c, ref, []byte("planted\n")),
+			"CreateDraft": func() error {
+				_, err := c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Project: ref, Base: head, Message: "m"})
+				return err
+			}(),
+			"UpdateDraft": func() error {
+				_, err := c.UpdateDraft(ctx, &sgitv1.UpdateDraftRequest{Project: ref, Id: d.Id, Base: head, Message: "m"})
+				return err
+			}(),
+			"GetDraft":   func() error { _, err := c.GetDraft(ctx, &sgitv1.GetDraftRequest{Project: ref, Id: d.Id}); return err }(),
+			"ListDrafts": func() error { _, err := c.ListDrafts(ctx, &sgitv1.ListDraftsRequest{Project: ref}); return err }(),
+			"AbandonDraft": func() error {
+				_, err := c.AbandonDraft(ctx, &sgitv1.AbandonDraftRequest{Project: ref, Id: d.Id})
+				return err
+			}(),
+			"Land": func() error { _, err := c.Land(ctx, &sgitv1.LandRequest{Project: ref, Id: d.Id}); return err }(),
+			"CommitAndLand": func() error {
+				_, err := c.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{Project: ref, Base: head, Message: "m"})
+				return err
+			}(),
+			"Log":       func() error { _, err := c.Log(ctx, &sgitv1.LogRequest{Project: ref}); return err }(),
+			"Blame":     func() error { _, err := c.Blame(ctx, &sgitv1.BlameRequest{Project: ref, Path: "s/k.txt"}); return err }(),
+			"Diff":      func() error { _, err := c.Diff(ctx, &sgitv1.DiffRequest{Project: ref, A: head, B: "main"}); return err }(),
+			"MergeFile": func() error { _, err := c.MergeFile(ctx, &sgitv1.MergeFileRequest{Project: ref}); return err }(),
+		}
+		for name, err := range calls {
+			if st := status.Convert(err); st.Code() != codes.NotFound || st.Message() != want {
+				t.Errorf("%s on %s = %v, want NotFound %q", name, ref, err, want)
+			}
+		}
+	}
+	got := testenv.Must(e.Project(e.AdminToken).GetDraft(ctx, &sgitv1.GetDraftRequest{Project: "sec", Id: d.Id}))
+	if got.Status != "open" || got.Version != 1 {
+		t.Fatalf("the other project's draft changed: %+v", got)
+	}
+	has := testenv.Must(e.Project(e.AdminToken).HasObjects(ctx, &sgitv1.HasObjectsRequest{Project: "sec",
+		Shas: []string{objfmt.BlobSHA([]byte("planted\n"))}}))
+	if has.Present[0] {
+		t.Fatal("a blob uploaded by a non-member reached the other project")
+	}
+	for _, p := range testenv.Must(c.ListProjects(ctx, &sgitv1.ListProjectsRequest{})).Projects {
+		if p.Name != "web" {
+			t.Fatalf("ListProjects shows %+v", p)
+		}
+	}
+}
+
+func TestOtherProjectsDraftAndObjectsAreUnknown(t *testing.T) {
+	ctx := context.Background()
+	e, bob, _, d, head := secEnv(t)
+	c := e.Project(bob)
+	draftBlob := objfmt.BlobSHA([]byte("draft secret\n"))
+	secret := objfmt.BlobSHA([]byte("rotated secret\n"))
+	// The other project's draft id, used against our project, names nothing.
+	for name, err := range map[string]error{
+		"GetDraft": func() error { _, err := c.GetDraft(ctx, &sgitv1.GetDraftRequest{Project: "web", Id: d.Id}); return err }(),
+		"Land":     func() error { _, err := c.Land(ctx, &sgitv1.LandRequest{Project: "web", Id: d.Id}); return err }(),
+		"AbandonDraft": func() error {
+			_, err := c.AbandonDraft(ctx, &sgitv1.AbandonDraftRequest{Project: "web", Id: d.Id})
+			return err
+		}(),
+		"ResolveRev": func() error {
+			_, err := c.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web", Rev: d.Id})
+			return err
+		}(),
+		"Log": func() error { _, err := c.Log(ctx, &sgitv1.LogRequest{Project: "web", Rev: d.Id}); return err }(),
+		"Diff": func() error {
+			_, err := c.Diff(ctx, &sgitv1.DiffRequest{Project: "web", A: "main", B: d.Id})
+			return err
+		}(),
+		"Blame": func() error {
+			_, err := c.Blame(ctx, &sgitv1.BlameRequest{Project: "web", Rev: d.Id, Path: "s/new.txt"})
+			return err
+		}(),
+	} {
+		if status.Code(err) != codes.NotFound {
+			t.Errorf("%s(other project's draft) = %v, want NotFound", name, err)
+		}
+	}
+	// The other project's commits, draft head and blobs are not in ours.
+	for _, sha := range []string{head, d.Head, draftBlob, secret} {
+		if _, err := fetch(t, c, "web", sha); status.Code(err) != codes.NotFound {
+			t.Errorf("GetObjects(%s) = %v", sha[:8], err)
+		}
+		if has := testenv.Must(c.HasObjects(ctx, &sgitv1.HasObjectsRequest{Project: "web", Shas: []string{sha}})); has.Present[0] {
+			t.Errorf("HasObjects(%s) = true", sha[:8])
+		}
+	}
+	for _, mf := range []*sgitv1.MergeFileRequest{
+		{Project: "web", OursSha: secret}, {Project: "web", TheirsSha: secret}, {Project: "web", BaseSha: draftBlob, OursSha: draftBlob},
+	} {
+		if resp, err := c.MergeFile(ctx, mf); status.Code(err) != codes.NotFound {
+			t.Errorf("MergeFile(%v) = %q %v, want NotFound", mf, resp.GetContent(), err)
+		}
+	}
+	// A foreign blob SHA cannot be committed into our project (that would
+	// copy it into an object store we can read).
+	base := testenv.Must(c.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web"})).Sha
+	for _, blob := range []string{secret, draftBlob} {
+		_, err := c.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{Project: "web", Base: base, Message: "steal",
+			Changes: []*sgitv1.Change{testenv.Add("app/stolen.txt", blob)}})
+		if status.Code(err) != codes.InvalidArgument {
+			t.Errorf("CommitAndLand with foreign blob %s = %v, want InvalidArgument", blob[:8], err)
+		}
+		_, err = c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Project: "web", Base: base, Message: "steal",
+			Changes: []*sgitv1.Change{testenv.Add("app/stolen.txt", blob)}})
+		if status.Code(err) != codes.InvalidArgument {
+			t.Errorf("CreateDraft with foreign blob %s = %v, want InvalidArgument", blob[:8], err)
+		}
+	}
+	// A foreign commit is not a valid base.
+	for _, b := range []string{head, d.Head} {
+		_, err := c.CreateDraft(ctx, &sgitv1.CreateDraftRequest{Project: "web", Base: b, Message: "m",
+			Changes: []*sgitv1.Change{testenv.Add("app/x.txt", e.Upload(bob, "web", []byte("x\n"))[0])}})
+		if status.Code(err) != codes.InvalidArgument {
+			t.Errorf("CreateDraft on foreign base %s = %v", b[:8], err)
+		}
+	}
+}
+
+func TestWritesCannotEscapeTheMount(t *testing.T) {
+	ctx := context.Background()
+	e, bob, _ := isoEnv(t)
+	c := e.Project(bob)
+	before := e.Files(hiddenRepo, "main")
+	base := testenv.Must(c.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web"})).Sha
+	blob := e.Upload(bob, "web", []byte("pwned\n"))[0]
+	for _, p := range []string{
+		"secret/k.txt", "pub/a.txt", "app/../secret/k.txt", "../secret/k.txt", "app/../../secret/k.txt",
+		"/secret/k.txt", "./app/a.txt", "app//a.txt", "app/./a.txt", "app", ".", "..", "app/.git/config",
+		"app/.sg/config", "app/a.txt/", "x.txt", "App/a.txt",
+	} {
+		_, err := c.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{Project: "web", Base: base, Message: "escape",
+			Changes: []*sgitv1.Change{testenv.Add(p, blob)}})
+		if code := status.Code(err); code != codes.InvalidArgument {
+			t.Errorf("CommitAndLand(%q) = %v, want InvalidArgument", p, err)
+		} else if msg := status.Convert(err).Message(); strings.Contains(msg, hiddenRepo) || strings.Contains(msg, "pub/") && !strings.Contains(p, "pub/") {
+			// The error may echo the caller's own path, nothing else.
+			t.Errorf("CommitAndLand(%q) error names the source: %s", p, msg)
+		}
+		_, err = c.CommitAndLand(ctx, &sgitv1.CommitAndLandRequest{Project: "web", Base: base, Message: "escape",
+			Changes: []*sgitv1.Change{testenv.Delete(p)}})
+		if status.Code(err) != codes.InvalidArgument {
+			t.Errorf("CommitAndLand(delete %q) = %v, want InvalidArgument", p, err)
+		}
+	}
+	after := e.Files(hiddenRepo, "main")
+	if len(after) != len(before) {
+		t.Fatalf("source files changed: %v -> %v", before, after)
+	}
+	for p, v := range before {
+		if after[p] != v {
+			t.Fatalf("source file %s changed: %q -> %q", p, v, after[p])
+		}
+	}
+}
+
+func TestRevisionsCannotReachOutsideTheProjectRepo(t *testing.T) {
+	ctx := context.Background()
+	e, bob, src := isoEnv(t)
+	c := e.Project(bob)
+	srcRepo := filepath.Join(e.DataDir, "repos", hiddenRepo+".git")
+	revs := []string{
+		"../../repos/" + hiddenRepo + ".git/refs/heads/main",
+		"refs/../../../repos/" + hiddenRepo + ".git/refs/heads/main",
+		srcRepo + "/refs/heads/main",
+		"../" + hiddenRepo + ".git/HEAD",
+		"main..." + src[0], src[0] + "..main", src[0][:7], src[0][:12],
+		":/rotate", ":/seed", "main^{/rotate}", "--all", "--git-dir=" + srcRepo,
+		"@{upstream}", "main@{1}",
+	}
+	for _, rev := range revs {
+		rr, err := c.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web", Rev: rev})
+		if err == nil {
+			assertClean(t, "ResolveRev("+rev+")", rr, src)
+			if lg, err := c.Log(ctx, &sgitv1.LogRequest{Project: "web", Rev: rev}); err == nil {
+				assertClean(t, "Log("+rev+")", lg, src)
+			}
+			continue
+		}
+		if code := status.Code(err); code != codes.NotFound && code != codes.InvalidArgument {
+			t.Errorf("ResolveRev(%q) = %v, want NotFound or InvalidArgument", rev, err)
+		}
+		if strings.Contains(err.Error(), hiddenRepo) && !strings.Contains(rev, hiddenRepo) {
+			t.Errorf("ResolveRev(%q) error names the source: %v", rev, err)
+		}
+	}
+	// Commits touching only unmounted folders cannot be found by message,
+	// while a translated commit can (so the search itself works).
+	if rr, err := c.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web", Rev: "main^{/seed}"}); err != nil {
+		t.Errorf("ResolveRev(main^{/seed}) = %v", err)
+	} else {
+		assertClean(t, "ResolveRev(main^{/seed})", rr, src)
+	}
+	for _, rev := range []string{":/rotate", "main^{/rotate}", "main^{/rotated}"} {
+		if _, err := c.ResolveRev(ctx, &sgitv1.ResolveRevRequest{Project: "web", Rev: rev}); status.Code(err) != codes.NotFound {
+			t.Errorf("ResolveRev(%q) = %v, want NotFound", rev, err)
+		}
+	}
+	// Blame and Diff with paths outside every mount see nothing of the source.
+	for _, p := range []string{"secret/k.txt", "pub/a.txt", "app/../secret/k.txt"} {
+		if _, err := c.Blame(ctx, &sgitv1.BlameRequest{Project: "web", Path: p}); err == nil {
+			t.Errorf("Blame(%q) succeeded", p)
+		}
+		if df, err := c.Diff(ctx, &sgitv1.DiffRequest{Project: "web", A: "main", B: "main", Paths: []string{p}}); err == nil {
+			assertClean(t, "Diff("+p+")", df, src)
+		}
+	}
+}
