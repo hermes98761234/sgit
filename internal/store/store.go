@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -172,6 +173,9 @@ CREATE TABLE IF NOT EXISTS land_seq (
 
 // Open opens (creating if needed) the database at path and applies the schema.
 func Open(path string) (*Store, error) {
+	if err := ownerOnly(path); err != nil {
+		return nil, fmt.Errorf("store: %w", err)
+	}
 	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -191,6 +195,26 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("store: migrate: %w", err)
 	}
 	return &Store{db: db}, nil
+}
+
+// ownerOnly creates the database file with mode 0600 before SQLite opens it
+// (SQLite gives the -wal and -shm files the database file's mode) and
+// tightens an existing database and its WAL files to 0600: they hold token
+// hashes and the user list.
+func ownerOnly(path string) error {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	for _, p := range []string{path, path + "-wal", path + "-shm"} {
+		if err := os.Chmod(p, 0o600); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
 }
 
 // preMigrate drops the per-repo acl and drafts tables of databases created

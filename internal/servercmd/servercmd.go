@@ -200,6 +200,12 @@ func runServe(ctx context.Context, args []string, _ io.Writer, stderr io.Writer)
 		fmt.Fprintf(stderr, "serve: %s not initialized; run `sg-server init --data %s`\n", *data, *data)
 		return 1
 	}
+	unlock, err := lockDataDir(*data)
+	if err != nil {
+		fmt.Fprintln(stderr, "serve:", err)
+		return 1
+	}
+	defer unlock()
 	st, err := store.Open(dbPath)
 	if err != nil {
 		fmt.Fprintln(stderr, "serve:", err)
@@ -245,6 +251,28 @@ func runServe(ctx context.Context, args []string, _ io.Writer, stderr io.Writer)
 	<-stopped // Serve returns as soon as stopping begins; wait for the RPCs
 	log.Info("stopped")
 	return 0
+}
+
+// lockDataDir takes an exclusive flock on <data>/sg.lock for the life of the
+// server. Land and mount locks are in-process only, so two servers on one
+// data dir would race on the database and the repos.
+func lockDataDir(data string) (func(), error) {
+	path := filepath.Join(data, "sg.lock")
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, fmt.Errorf("another sg-server is already using data dir %s (%s is locked); stop it first", data, path)
+		}
+		return nil, fmt.Errorf("lock %s: %w", path, err)
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		f.Close()
+	}, nil
 }
 
 func runGenCert(args []string, stdout, stderr io.Writer) int {

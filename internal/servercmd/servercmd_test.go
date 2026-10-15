@@ -129,3 +129,62 @@ func TestServeRejectsBadMaxBlob(t *testing.T) {
 		t.Errorf("flag 0: code=%d err=%q", code, errs)
 	}
 }
+
+// startServe runs serve on a free loopback port until the test ends.
+func startServe(t *testing.T, dir string) string {
+	t.Helper()
+	addr := freePort(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan int, 1)
+	go func() {
+		var out, errb bytes.Buffer
+		done <- Run(ctx, []string{"serve", "--data", dir, "--listen", addr, "--dev-insecure"}, &out, &errb)
+	}()
+	t.Cleanup(func() { cancel(); <-done })
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if code, out, _ := run(t, "health", "--addr", addr, "--dev-insecure"); code == 0 && strings.Contains(out, "SERVING") {
+			return addr
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("server never became healthy")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// A second server on the same data dir would race the first on the database
+// and the repos (the land locks are in-process), so it must refuse to start.
+func TestServeRefusesDataDirInUse(t *testing.T) {
+	dir := t.TempDir()
+	run(t, "init", "--data", dir)
+	startServe(t, dir)
+	// Without the lock the second server would run until ctx ends.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var out, errb bytes.Buffer
+	code := Run(ctx, []string{"serve", "--data", dir, "--listen", freePort(t), "--dev-insecure"}, &out, &errb)
+	errs := errb.String()
+	if code != 1 || !strings.Contains(errs, "another sg-server") || !strings.Contains(errs, dir) {
+		t.Fatalf("second serve: code=%d err=%q", code, errs)
+	}
+}
+
+// sg.db holds token hashes and the user list: owner-only, WAL files too.
+func TestDatabaseFilesOwnerOnly(t *testing.T) {
+	dir := t.TempDir()
+	run(t, "init", "--data", dir)
+	startServe(t, dir)
+	for _, f := range []string{"sg.db", "sg.db-wal", "sg.db-shm"} {
+		st, err := os.Stat(filepath.Join(dir, f))
+		if err != nil {
+			if f != "sg.db" && os.IsNotExist(err) {
+				continue
+			}
+			t.Fatal(err)
+		}
+		if st.Mode().Perm() != 0o600 {
+			t.Errorf("%s mode = %v, want 0600", f, st.Mode().Perm())
+		}
+	}
+}
