@@ -336,3 +336,92 @@ func TestMigrateIntoMountFailureKeepsCommits(t *testing.T) {
 		t.Fatalf("temporary refs left: %s", refs)
 	}
 }
+
+func TestMigrateOut(t *testing.T) {
+	ctx := context.Background()
+	e := testenv.Start(t, allowLocal)
+	ac := e.Admin(e.AdminToken)
+	src, main := srcRepo(t, map[string]string{"a.txt": "a"})
+	testenv.Must(ac.MigrateIn(ctx, &sgitv1.MigrateInRequest{FromUrl: "file://" + src, Name: "app"}))
+	dst := filepath.Join(t.TempDir(), "out.git")
+	if err := gitx.InitBare(ctx, dst); err != nil {
+		t.Fatal(err)
+	}
+	remoteMain := func() string { return testenv.Must(gitx.RemoteRef(ctx, dst, gitx.MainRef, true)) }
+
+	// round trip: the target gets the original history, SHAs unchanged
+	out := testenv.Must(ac.MigrateOut(ctx, &sgitv1.MigrateOutRequest{Project: "app", ToUrl: "file://" + dst}))
+	if out.Project != "app" || out.Pushed != main || out.UpToDate || remoteMain() != main {
+		t.Fatalf("first MigrateOut = %+v, remote %s", out, remoteMain())
+	}
+	if out = testenv.Must(ac.MigrateOut(ctx, &sgitv1.MigrateOutRequest{Project: "app", ToUrl: "file://" + dst})); !out.UpToDate || out.Pushed != main {
+		t.Fatalf("second MigrateOut = %+v", out)
+	}
+	// a new land is caught up and fast-forwarded
+	next := e.CommitDirect("app", map[string]string{"n.txt": "n"}, "next")
+	if out = testenv.Must(ac.MigrateOut(ctx, &sgitv1.MigrateOutRequest{Project: "app", ToUrl: "file://" + dst})); out.Pushed != next || remoteMain() != next {
+		t.Fatalf("after land: %+v, remote %s", out, remoteMain())
+	}
+	// the target diverges: refused, then forced
+	d := gitx.Open(dst)
+	tree := testenv.Must(d.BuildTree(ctx, next, []gitx.Change{{Path: "z", Op: gitx.OpAdd, BlobSHA: testenv.Must(d.WriteBlob(ctx, []byte("z")))}}))
+	sig := gitx.Signature{Name: "Zed", Email: "z@example.com", When: time.Unix(1800000000, 0)}
+	theirs := testenv.Must(d.CommitTree(ctx, tree, []string{next}, "theirs\n", sig, sig))
+	if err := d.UpdateRef(ctx, gitx.MainRef, theirs, next); err != nil {
+		t.Fatal(err)
+	}
+	d.Close()
+	again := e.CommitDirect("app", map[string]string{"m.txt": "m"}, "again")
+	_, err := ac.MigrateOut(ctx, &sgitv1.MigrateOutRequest{Project: "app", ToUrl: "file://" + dst})
+	if status.Code(err) != codes.FailedPrecondition || !strings.Contains(status.Convert(err).Message(), "--force") {
+		t.Fatalf("diverged: %v", err)
+	}
+	if remoteMain() != theirs {
+		t.Fatalf("a refused push changed the target")
+	}
+	if out = testenv.Must(ac.MigrateOut(ctx, &sgitv1.MigrateOutRequest{Project: "app", ToUrl: "file://" + dst, Force: true})); out.Pushed != again || remoteMain() != again {
+		t.Fatalf("forced: %+v, remote %s", out, remoteMain())
+	}
+}
+
+func TestMigrateOutErrors(t *testing.T) {
+	ctx := context.Background()
+	e := testenv.Start(t, allowLocal)
+	ac := e.Admin(e.AdminToken)
+	e.CreateProject("empty")
+	dst := filepath.Join(t.TempDir(), "out.git")
+	if err := gitx.InitBare(ctx, dst); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name string
+		req  *sgitv1.MigrateOutRequest
+		code codes.Code
+	}{
+		{"empty project", &sgitv1.MigrateOutRequest{Project: "empty", ToUrl: "file://" + dst}, codes.FailedPrecondition},
+		{"unknown project", &sgitv1.MigrateOutRequest{Project: "nope", ToUrl: "file://" + dst}, codes.NotFound},
+		{"no url", &sgitv1.MigrateOutRequest{Project: "empty"}, codes.InvalidArgument},
+		{"credentials", &sgitv1.MigrateOutRequest{Project: "empty", ToUrl: "https://u:p@example.com/x.git"}, codes.InvalidArgument},
+		{"scheme", &sgitv1.MigrateOutRequest{Project: "empty", ToUrl: "ftp://example.com/x.git"}, codes.InvalidArgument},
+	}
+	for _, c := range cases {
+		if _, err := ac.MigrateOut(ctx, c.req); status.Code(err) != c.code {
+			t.Errorf("%s: err = %v, want %s", c.name, err, c.code)
+		}
+	}
+	if got := testenv.Must(gitx.RemoteRef(ctx, dst, gitx.MainRef, true)); got != "" {
+		t.Fatalf("target got main %s", got)
+	}
+}
+
+func TestMigrateNeedsAdmin(t *testing.T) {
+	ctx := context.Background()
+	e := testenv.Start(t, allowLocal)
+	ac := e.Admin(e.NewUser("bob", "", ""))
+	if _, err := ac.MigrateIn(ctx, &sgitv1.MigrateInRequest{FromUrl: "https://example.com/x.git", Name: "x"}); status.Code(err) != codes.PermissionDenied {
+		t.Errorf("MigrateIn as non-admin = %v", err)
+	}
+	if _, err := ac.MigrateOut(ctx, &sgitv1.MigrateOutRequest{Project: "x", ToUrl: "https://example.com/x.git"}); status.Code(err) != codes.PermissionDenied {
+		t.Errorf("MigrateOut as non-admin = %v", err)
+	}
+}

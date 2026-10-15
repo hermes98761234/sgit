@@ -10,6 +10,7 @@ import (
 	"strconv"
 
 	sgitv1 "github.com/hermes98761234/sgit/gen/sgit/v1"
+	"github.com/hermes98761234/sgit/internal/auth"
 	"github.com/hermes98761234/sgit/internal/gitx"
 	"github.com/hermes98761234/sgit/internal/store"
 	"google.golang.org/grpc/codes"
@@ -220,4 +221,59 @@ func (s *Server) remoteErr(ctx context.Context, what, url string, err error) err
 		return status.Errorf(codes.FailedPrecondition, "%s %s failed: %s", what, url, gitx.ErrSummary(err))
 	}
 	return s.toStatus(ctx, err)
+}
+
+// MigrateOut pushes a project's main to a standalone git repo (spec §3.4).
+// sgit itself is not changed.
+func (a *adminService) MigrateOut(ctx context.Context, req *sgitv1.MigrateOutRequest) (*sgitv1.MigrateOutResponse, error) {
+	if _, err := a.requireAdmin(ctx); err != nil {
+		return nil, err
+	}
+	if req.ToUrl == "" {
+		return nil, status.Error(codes.InvalidArgument, "migrate out needs a target URL")
+	}
+	allow := a.s.repos.allowLocal
+	if err := gitx.ValidateRemote(req.ToUrl, allow); err != nil {
+		return nil, a.s.toStatus(ctx, err)
+	}
+	p, err := a.resolveProject(ctx, req.Project)
+	if err != nil {
+		return nil, err
+	}
+	h, err := a.s.projects.Get(ctx, p.ID)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, auth.ProjectNotFound(req.Project)
+	}
+	if err != nil {
+		return nil, a.s.toStatus(ctx, err)
+	}
+	head, err := a.s.projects.CatchUp(ctx, h)
+	if err != nil {
+		return nil, a.s.toStatus(ctx, err)
+	}
+	if head == "" {
+		return nil, status.Errorf(codes.FailedPrecondition, "project %q has no commits", p.Name)
+	}
+	remote, err := gitx.RemoteRef(ctx, req.ToUrl, gitx.MainRef, allow)
+	if err != nil {
+		return nil, a.s.remoteErr(ctx, "reading", req.ToUrl, err)
+	}
+	resp := &sgitv1.MigrateOutResponse{Project: p.Name, Pushed: head}
+	if remote == head {
+		resp.UpToDate = true
+		return resp, nil
+	}
+	if req.Force {
+		err = h.Git.Push(ctx, req.ToUrl, head, remote, allow)
+	} else {
+		err = h.Git.PushFF(ctx, req.ToUrl, head, allow)
+	}
+	if errors.Is(err, gitx.ErrRejected) {
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"main of %s has diverged from project %q; use --force to overwrite it", req.ToUrl, p.Name)
+	}
+	if err != nil {
+		return nil, a.s.remoteErr(ctx, "pushing to", req.ToUrl, err)
+	}
+	return resp, nil
 }
