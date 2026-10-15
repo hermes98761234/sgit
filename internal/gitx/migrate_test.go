@@ -113,12 +113,9 @@ func TestReplayUnderKeepsEncodingDropsSignature(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(obj.Data)
-	for _, s := range []string{
-		"\nauthor A U <a@x.org> 1700000000 +0300\ncommitter C <c@x.org> 1700000001 -0500\nencoding ISO-8859-1\n\nsigned msg\n",
-	} {
-		if !strings.Contains(got, s) {
-			t.Fatalf("copy %q lacks %q", got, s)
-		}
+	want := "\nauthor A U <a@x.org> 1700000000 +0300\ncommitter C <c@x.org> 1700000001 -0500\nencoding ISO-8859-1\n\nsigned msg\n"
+	if !strings.Contains(got, want) {
+		t.Fatalf("copy %q lacks %q", got, want)
 	}
 	if strings.Contains(got, "gpgsig") {
 		t.Fatalf("copy kept the signature: %q", got)
@@ -134,7 +131,7 @@ func TestReplayUnderRefusesNonEmptyFolder(t *testing.T) {
 		{Path: "file", Op: OpAdd, BlobSHA: blob(t, r, "f")},
 	})
 	tip := sideCommit(t, r, root, []Change{{Path: "a", Op: OpAdd, BlobSHA: blob(t, r, "a")}}, "a\n", testSig)
-	for _, folder := range []string{"svc", "file"} {
+	for _, folder := range []string{"svc", "file", "file/sub", "file/sub/deep"} {
 		if _, _, err := r.ReplayUnder(ctx, base, tip, folder); !errors.Is(err, ErrFolderNotEmpty) {
 			t.Errorf("folder %q: err = %v, want ErrFolderNotEmpty", folder, err)
 		}

@@ -51,18 +51,40 @@ func (r *Repo) ReplayUnder(ctx context.Context, base, tip, folder string) (strin
 }
 
 // folderFree returns ErrFolderNotEmpty unless folder is absent from tree or
-// is an empty tree there.
+// is an empty tree there, or if a parent component of folder is not a tree.
 func (r *Repo) folderFree(ctx context.Context, tree, folder string) error {
-	out, err := r.run(ctx, nil, nil, "ls-tree", "-z", tree, "--", folder)
+	parts := strings.Split(folder, "/")
+	paths := make([]string, len(parts))
+	for i := range parts {
+		paths[i] = strings.Join(parts[:i+1], "/")
+	}
+	isPrefix := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		isPrefix[p] = true
+	}
+	out, err := r.run(ctx, nil, nil, append([]string{"ls-tree", "-z", tree, "--"}, paths...)...)
 	if err != nil {
 		return err
 	}
 	for _, rec := range strings.Split(string(out), "\x00") {
 		meta, name, ok := strings.Cut(rec, "\t")
-		if !ok || name != folder {
+		if !ok {
 			continue
 		}
-		if f := strings.Fields(meta); len(f) == 3 && f[1] == "tree" && f[2] == EmptyTree {
+		f := strings.Fields(meta)
+		if len(f) != 3 {
+			continue
+		}
+		if name != folder {
+			if !isPrefix[name] {
+				continue
+			}
+			if f[1] != "tree" {
+				return fmt.Errorf("%w: %s is not a folder", ErrFolderNotEmpty, name)
+			}
+			continue
+		}
+		if f[1] == "tree" && f[2] == EmptyTree {
 			return nil
 		}
 		return fmt.Errorf("%w: %s", ErrFolderNotEmpty, folder)
