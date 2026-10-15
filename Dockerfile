@@ -7,13 +7,13 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/sg-server ./cmd/sg
+    go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/sg-server ./cmd/sg ./cmd/sgd
 
 FROM alpine:3.20
 RUN apk add --no-cache git openssh-client ca-certificates \
  && adduser -D -u 10001 -h /home/sg sg \
  && mkdir -p /data && chown sg:sg /data
-COPY --from=build /out/sg-server /out/sg /usr/local/bin/
+COPY --from=build /out/sg-server /out/sg /out/sgd /usr/local/bin/
 COPY --chmod=0755 contrib/sg-git-askpass /usr/local/bin/sg-git-askpass
 COPY --chmod=0755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 USER sg

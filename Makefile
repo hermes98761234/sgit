@@ -1,7 +1,7 @@
 export PATH := $(HOME)/.local/go/bin:$(HOME)/.local/protoc/bin:$(HOME)/go/bin:$(PATH)
 MODULE := github.com/hermes98761234/sgit
 
-.PHONY: gen test vet lint build docker smoke
+.PHONY: gen test vet lint build docker smoke e2e
 
 gen:
 	protoc -I proto \
@@ -26,3 +26,6 @@ docker:
 
 smoke:
 	./scripts/docker-smoke.sh
+
+e2e:
+	./scripts/docker-e2e.sh

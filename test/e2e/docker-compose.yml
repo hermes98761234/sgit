@@ -1,0 +1,80 @@
+# Docker end-to-end test: a plain HTTPS git host, sg-server, the sgd cache and
+# two clients. Run it with scripts/docker-e2e.sh.
+#
+#   git     githttpd: source repos for migrate/import, push targets for
+#           migrate out and mirrors (https://git/<name>.git)
+#   server  sg-server; admin commands run here
+#   cache   sgd in front of server; shares alice's home (socket and cache)
+#   alice   client that goes through the cache
+#   bob     client that talks to the server directly
+name: sgit-e2e
+
+x-sgit: &sgit
+  image: sgit-server:e2e
+  build:
+    context: ../..
+
+services:
+  git:
+    build:
+      context: ../..
+      dockerfile: test/e2e/git.Dockerfile
+    image: sgit-e2e-git:e2e
+    volumes:
+      - gitca:/gitca
+
+  server:
+    <<: *sgit
+    environment:
+      SG_TLS_SELF_SIGNED: "1"
+      SG_TLS_HOSTS: "server,localhost"
+      SG_LOG_LEVEL: debug
+      GIT_SSL_CAINFO: /gitca/cert.pem
+    volumes:
+      - sgdata:/data
+      - gitca:/gitca:ro
+    depends_on:
+      git: {condition: service_healthy}
+
+  cache:
+    <<: *sgit
+    entrypoint: ["sgd", "--upstream", "server:7419", "--ca", "/srv-data/tls/cert.pem",
+                 "--socket", "/home/sg/run/sgd.sock", "--cache-dir", "/home/sg/cache",
+                 "--log-level", "debug"]
+    healthcheck:
+      test: ["CMD", "test", "-S", "/home/sg/run/sgd.sock"]
+      interval: 2s
+      retries: 30
+    volumes:
+      - alicehome:/home/sg
+      - sgdata:/srv-data:ro
+    depends_on:
+      server: {condition: service_healthy}
+
+  alice:
+    <<: *sgit
+    entrypoint: ["sleep", "infinity"]
+    healthcheck: {test: ["CMD", "true"], interval: 2s}
+    environment:
+      SG_SOCKET: /home/sg/run/sgd.sock
+    working_dir: /home/sg
+    volumes:
+      - alicehome:/home/sg
+      - sgdata:/srv-data:ro
+    depends_on:
+      cache: {condition: service_healthy}
+
+  bob:
+    <<: *sgit
+    entrypoint: ["sleep", "infinity"]
+    healthcheck: {test: ["CMD", "true"], interval: 2s}
+    working_dir: /home/sg
+    volumes:
+      - sgdata:/srv-data:ro
+    depends_on:
+      server: {condition: service_healthy}
+
+volumes:
+  sgdata:
+  gitca:
+  alicehome:

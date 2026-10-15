@@ -24,3 +24,4 @@ jobs:
         with:
           go-version-file: go.mod
       - run: ./scripts/docker-smoke.sh
+      - run: ./scripts/docker-e2e.sh

@@ -152,7 +152,7 @@ With `--json`, `create`, `mount`, `unmount`, `alias`, `rename` and `show` print 
 - **`sg repo delete <name> --yes`** refuses without `--yes` and does not contact the server. It is also refused while any project mounts the repo (`repo "<name>" is mounted by project(s) …; delete those projects first (unmounting keeps the repo in their history)`) or has it in its history (`repo "<name>" is in the history of project(s) …; delete those projects first`), because a project rebuild replays that history. Delete those projects first. Otherwise the server removes the repo's mirror state from the database and moves the bare repo to `<data>/deleted/<name>.<unixtime>.git` instead of erasing it. An operator can restore it by moving the directory back to `<data>/repos/<name>.git` and re-creating the repo row (or delete it for good with `rm -rf`). The name can be reused straight away. The delete runs under the repo's land lock, so it never interleaves with a land; lands and draft operations that lose the race fail. The GitHub (or other) mirror remote is never contacted, so its content stays.
 - Existing databases are upgraded automatically on start: the `users` table gains a nullable `deleted_at` column. Databases from before projects lose their per-repo `acl` and `drafts` tables, which are re-created per project; grant access again with `sg acl grant <user> <project>`.
 
-The server image ships `sg` too, so you can administer from inside the container:
+The server image ships `sg` and `sgd` too, so you can administer from inside the container:
 
 ```bash
 docker compose exec sg-server sh -c 'sg login localhost:7419 --ca /data/tls/cert.pem --token "$(cat /data/admin-token)"'
@@ -264,5 +264,6 @@ The same tag creates a GitHub release with `sg`, `sgd` and `sg-server` archives 
 make build   # dist/sg, dist/sgd, dist/sg-server
 make test    # go test -race ./...
 make gen     # regenerate protobuf code (needs protoc, protoc-gen-go, protoc-gen-go-grpc)
-make smoke   # build the image and run the end-to-end test against it
+make smoke   # build the image and run a quick smoke test against it
+make e2e     # every command end to end in Docker: git host, server, sgd and two clients
 ```

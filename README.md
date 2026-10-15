@@ -220,6 +220,7 @@ Measured with v0.2.0 in Docker on one machine (8 CPUs, 31 GB RAM, git 2.45): `sg
 - **Small repos.** A one-file land takes about 60 ms. In large repos, landing still costs time proportional to the repo size: the client scans the working copy, and the server rebuilds the tree.
 - **Many users.** 30 users, each with their own token, landed 10 rounds each on one repo at the same time. All 300 lands succeeded in 17 s, about 18 lands/s, with a p50 of 1.3 s and a p95 of 1.7 s per land. Lands that touch different files never conflict; the server rebases them. When many users edit the same file at the same moment, most of their lands conflict and have to be fixed by hand, as with git.
 - **Robustness.** A randomized "monkey" run made about 6,300 sg calls while killing the server, restarting `sgd` and sending junk to the port. The calls included random edits, garbage arguments and `kill -9` mid-command. No call crashed or broke a working copy. At the end, every working copy matched `main` and `git fsck` was clean.
+- **End to end.** `make e2e` starts a git host, `sg-server`, `sgd` and two clients in separate Docker containers and runs every command over TLS: tokens, users, repos, projects, ACLs, migrate in and out, mirrors, the client workflow with drafts, conflicts and sparse checkouts, and the cache with the server or `sgd` stopped and restarted. It makes 246 checks.
 
 ## Docs
 
