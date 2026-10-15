@@ -90,6 +90,9 @@ func runInit(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer st.Close()
+	if st.PermWarning != nil {
+		fmt.Fprintln(stderr, "init: warning:", st.PermWarning)
+	}
 	n, err := st.CountUsers(ctx)
 	if err != nil {
 		fmt.Fprintln(stderr, "init:", err)
@@ -203,18 +206,24 @@ func runServe(ctx context.Context, args []string, _ io.Writer, stderr io.Writer)
 		fmt.Fprintf(stderr, "serve: %s not initialized; run `sg-server init --data %s`\n", *data, *data)
 		return 1
 	}
-	unlock, err := lockDataDir(*data)
+	unlock, lockWarning, err := lockDataDir(*data)
 	if err != nil {
 		fmt.Fprintln(stderr, "serve:", err)
 		return 1
 	}
 	defer unlock()
+	if lockWarning != nil {
+		log.Warn("data dir not locked; make sure no other sg-server uses it", "err", lockWarning)
+	}
 	st, err := store.Open(dbPath)
 	if err != nil {
 		fmt.Fprintln(stderr, "serve:", err)
 		return 1
 	}
 	defer st.Close()
+	if st.PermWarning != nil {
+		log.Warn("database files not owner-only", "err", st.PermWarning)
+	}
 	srv, err := server.New(server.Config{DataDir: *data, MaxBlobBytes: int64(maxBlobMB) << 20}, st, log)
 	if err != nil {
 		fmt.Fprintln(stderr, "serve:", err)
@@ -258,25 +267,31 @@ func runServe(ctx context.Context, args []string, _ io.Writer, stderr io.Writer)
 
 // lockDataDir takes an exclusive flock on <data>/sg.lock for the life of the
 // server. Land and mount locks are in-process only, so two servers on one
-// data dir would race on the database and the repos.
-func lockDataDir(data string) (func(), error) {
+// data dir would race on the database and the repos. Only a lock held by
+// another process is an error; a filesystem that cannot lock at all
+// (ENOLCK, EOPNOTSUPP) gives a warning and the server runs unlocked.
+func lockDataDir(data string) (unlock func(), warning, err error) {
 	path := filepath.Join(data, "sg.lock")
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, fmt.Errorf("another sg-server is already using data dir %s (%s is locked); stop it first", data, path)
+			return nil, nil, fmt.Errorf("another sg-server is already using data dir %s (%s is locked); stop it first", data, path)
 		}
-		return nil, fmt.Errorf("lock %s: %w", path, err)
+		return func() {}, fmt.Errorf("lock %s: %w", path, err), nil
 	}
 	return func() {
-		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = flock(int(f.Fd()), syscall.LOCK_UN)
 		f.Close()
-	}, nil
+	}, nil, nil
 }
+
+// flock is syscall.Flock; tests replace it to simulate a filesystem
+// without locks.
+var flock = syscall.Flock
 
 func runGenCert(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("gen-cert", flag.ContinueOnError)

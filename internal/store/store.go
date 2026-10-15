@@ -65,7 +65,13 @@ type MirrorState struct {
 	Pending      bool      // the worker saw main ahead of LastMirrored
 }
 
-type Store struct{ db *sql.DB }
+type Store struct {
+	db *sql.DB
+	// PermWarning is set when Open could not tighten the database files
+	// to 0600 (for example, they belong to another user). It is not fatal;
+	// the caller should log it.
+	PermWarning error
+}
 
 const schema = `
 CREATE TABLE IF NOT EXISTS users (
@@ -173,7 +179,8 @@ CREATE TABLE IF NOT EXISTS land_seq (
 
 // Open opens (creating if needed) the database at path and applies the schema.
 func Open(path string) (*Store, error) {
-	if err := ownerOnly(path); err != nil {
+	permWarning, err := ownerOnly(path)
+	if err != nil {
 		return nil, fmt.Errorf("store: %w", err)
 	}
 	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
@@ -194,27 +201,32 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("store: migrate: %w", err)
 	}
-	return &Store{db: db}, nil
+	return &Store{db: db, PermWarning: permWarning}, nil
 }
+
+// chmod is os.Chmod; tests replace it to simulate a refused chmod.
+var chmod = os.Chmod
 
 // ownerOnly creates the database file with mode 0600 before SQLite opens it
 // (SQLite gives the -wal and -shm files the database file's mode) and
 // tightens an existing database and its WAL files to 0600: they hold token
-// hashes and the user list.
-func ownerOnly(path string) error {
+// hashes and the user list. Failing to create the file is an error; a
+// refused chmod is only returned as a warning, so a server running as
+// another user than the files' owner still starts.
+func ownerOnly(path string) (warning, err error) {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := f.Close(); err != nil {
-		return err
+		return nil, err
 	}
 	for _, p := range []string{path, path + "-wal", path + "-shm"} {
-		if err := os.Chmod(p, 0o600); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
+		if err := chmod(p, 0o600); err != nil && !errors.Is(err, os.ErrNotExist) {
+			warning = errors.Join(warning, fmt.Errorf("cannot restrict %s to mode 0600 (it holds token hashes): %w", p, err))
 		}
 	}
-	return nil
+	return warning, nil
 }
 
 // preMigrate drops the per-repo acl and drafts tables of databases created

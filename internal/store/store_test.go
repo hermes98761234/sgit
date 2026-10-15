@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -163,5 +164,24 @@ func TestCreateUserWithToken(t *testing.T) {
 	}
 	if _, err := s.UserByTokenHash(ctx, []byte("h2")); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second token lookup err = %v, want ErrNotFound", err)
+	}
+}
+
+// TestOpenWhenChmodRefused: a database whose files cannot be chmod-ed (owned
+// by another user) still opens; the failure is reported as PermWarning.
+func TestOpenWhenChmodRefused(t *testing.T) {
+	old := chmod
+	chmod = func(string, os.FileMode) error { return os.ErrPermission }
+	t.Cleanup(func() { chmod = old })
+	s, err := Open(filepath.Join(t.TempDir(), "sg.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+	if s.PermWarning == nil || !strings.Contains(s.PermWarning.Error(), "0600") {
+		t.Fatalf("PermWarning = %v", s.PermWarning)
+	}
+	if _, err := s.CountUsers(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }

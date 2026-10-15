@@ -5,10 +5,12 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -196,4 +198,21 @@ func TestHelpExitsZero(t *testing.T) {
 			t.Errorf("%s: exit %d, stdout %q, stderr %q", arg, code, out, errs)
 		}
 	}
+}
+
+// TestServeRunsWhenFilesystemCannotLock: a flock error other than "held by
+// another process" (ENOLCK on some network filesystems, EOPNOTSUPP) is only a
+// warning; the server still starts.
+func TestServeRunsWhenFilesystemCannotLock(t *testing.T) {
+	old := flock
+	flock = func(int, int) error { return syscall.ENOLCK }
+	t.Cleanup(func() { flock = old })
+	dir := t.TempDir()
+	run(t, "init", "--data", dir)
+	unlock, warning, err := lockDataDir(dir)
+	if err != nil || warning == nil || !errors.Is(warning, syscall.ENOLCK) {
+		t.Fatalf("lockDataDir: warning %v, err %v", warning, err)
+	}
+	unlock()
+	startServe(t, dir)
 }
