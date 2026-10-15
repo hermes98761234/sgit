@@ -339,3 +339,30 @@ func TestRecordProjectCommitsLanded(t *testing.T) {
 		t.Fatalf("head = %s %d, want the commit recorded", head, seq)
 	}
 }
+
+// Any other draft-update failure does not fail the catch-up either: the
+// commits are recorded and the caller updates (and logs) the draft itself.
+func TestRecordProjectCommitsLandedDraftErrorKeepsCommits(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	u, _ := s.CreateUser(ctx, "alice", "a@x", false)
+	p, _ := s.CreateProject(ctx, "web", t0)
+	if err := s.InsertDraft(ctx, Draft{ID: "aaaaaaaa", ProjectID: p.ID, OwnerID: u.ID, Status: DraftOpen, CreatedAt: t0, UpdatedAt: t0}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `CREATE TRIGGER no_draft_update BEFORE UPDATE ON drafts BEGIN SELECT RAISE(ABORT, 'injected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	c1 := ProjectCommit{SHA: strings.Repeat("1", 40), Seq: 1, Kind: KindLayout, Sources: map[string]string{}}
+	d := Draft{ID: "aaaaaaaa", ProjectID: p.ID, Status: DraftLanded, LandedAs: c1.SHA, UpdatedAt: t0}
+	marked, err := s.RecordProjectCommitsLanded(ctx, p.ID, []ProjectCommit{c1}, map[string]string{}, d)
+	if err != nil || marked {
+		t.Fatalf("RecordProjectCommitsLanded with a failing draft update = %v, %v", marked, err)
+	}
+	if head, _, _ := s.ProjectHead(ctx, p.ID); head != c1.SHA {
+		t.Fatalf("head = %q, want the commit recorded", head)
+	}
+	if got, _ := s.GetDraft(ctx, p.ID, "aaaaaaaa"); got.Status != DraftOpen {
+		t.Fatalf("draft = %+v, want it untouched", got)
+	}
+}

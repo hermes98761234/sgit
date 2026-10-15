@@ -696,21 +696,33 @@ func TestStopInterruptsFirstMountResumably(t *testing.T) {
 	e.mount(ref, "lib", "core", "src")
 	h := e.project("web")
 	bg := context.Background()
-	done := make(chan struct{})
+	mounted := make(chan struct{})
+	stopped := make(chan bool, 1)
 	go func() { // stop once the first chunk is recorded
-		defer close(done)
-		for {
+		deadline := time.Now().Add(time.Minute)
+		for time.Now().Before(deadline) {
+			select {
+			case <-mounted:
+				stopped <- false
+				return
+			default:
+			}
 			if _, seq, err := e.st.ProjectHead(bg, h.ID); err == nil && seq > 0 {
 				e.eng.Stop()
+				stopped <- true
 				return
 			}
 			time.Sleep(time.Millisecond)
 		}
+		stopped <- false
 	}()
 	_, err := e.eng.Mount(bg, h, store.Mount{Path: "lib", Repo: "core", Folder: "src"}, admin)
-	<-done
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("Mount stopped part way = %v, want context.Canceled", err)
+	close(mounted)
+	if !<-stopped {
+		t.Fatalf("Mount returned (%v) before it could be stopped part way", err)
+	}
+	if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "server shutdown") {
+		t.Fatalf("Mount stopped part way = %v, want an interrupted-by-shutdown Canceled", err)
 	}
 	head1, seq1 := must2(e.st.ProjectHead(bg, h.ID))
 	if seq1 == 0 || seq1 >= 300 {
@@ -724,6 +736,9 @@ func TestStopInterruptsFirstMountResumably(t *testing.T) {
 	}
 	if _, err := e.eng.Mount(bg, h, store.Mount{Path: "x", Repo: "core", Folder: "src"}, admin); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Mount after Stop = %v, want context.Canceled", err)
+	}
+	if ms := must(e.st.Mounts(bg, h.ID)); len(ms) != 1 {
+		t.Fatalf("mounts after a refused mount = %+v", ms)
 	}
 
 	// A restarted server (new engine, same data) resumes the import.
@@ -742,22 +757,52 @@ func TestStopInterruptsFirstMountResumably(t *testing.T) {
 	}
 }
 
+// stopOnSource stops the engine on the first Source call (inside the first
+// mount's import, after the mount row is recorded and before any commit) and
+// waits for the mount's context to be cancelled.
+type stopOnSource struct {
+	srcs srcs
+	eng  *Engine
+	done bool
+}
+
+func (s *stopOnSource) Source(ctx context.Context, repo string) (*gitx.Repo, error) {
+	if !s.done {
+		s.done = true
+		s.eng.Stop()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Minute):
+			return nil, errors.New("mount context not cancelled by Stop")
+		}
+	}
+	return s.srcs.Source(ctx, repo)
+}
+
 // A first mount stopped before it recorded any commit is undone like any
 // other failed first mount, so a retry starts clean.
 func TestStopBeforeAnyCommitUndoesFirstMount(t *testing.T) {
 	e := newEnv(t)
 	e.repo("core")
 	e.history("core", 0, 3)
+	src := &stopOnSource{srcs: e.srcs}
+	e.eng = New(Config{Root: filepath.Join(t.TempDir(), "projects"), Store: e.st, Sources: src, Now: e.now})
+	src.eng = e.eng
+	t.Cleanup(e.eng.CloseAll)
 	h := e.project("web")
-	e.eng.Stop()
 	bg := context.Background()
-	if _, err := e.eng.Mount(bg, h, store.Mount{Path: "lib", Repo: "core", Folder: "src"}, admin); err == nil {
-		t.Fatal("Mount after Stop succeeded")
+	_, err := e.eng.Mount(bg, h, store.Mount{Path: "lib", Repo: "core", Folder: "src"}, admin)
+	if !src.done || !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "server shutdown") {
+		t.Fatalf("Mount stopped before any commit = %v (stopped %v), want a plain Canceled", err, src.done)
 	}
 	if ms := must(e.st.Mounts(bg, h.ID)); len(ms) != 0 {
 		t.Fatalf("mounts = %+v, want none", ms)
 	}
 	if head, _ := must2(e.st.ProjectHead(bg, h.ID)); head != "" {
 		t.Fatalf("head = %s, want none", head)
+	}
+	if cur := must(e.st.ProjectCursors(bg, h.ID)); len(cur) != 0 {
+		t.Fatalf("cursors = %v, want none", cur)
 	}
 }

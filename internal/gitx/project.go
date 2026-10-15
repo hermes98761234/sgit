@@ -329,9 +329,12 @@ func CopyObjects(ctx context.Context, src, dst *Repo, want, have []string) (int,
 		return 0, err
 	}
 	// Like git's fetch.unpackLimit: a few objects are written loose, which
-	// costs no pack fsync and leaves no tiny pack behind per call. Objects
-	// are still checked one by one above, so a copy that stops part way is
-	// completed by the next one.
+	// costs no pack fsync and leaves no tiny pack behind per call. A loose
+	// copy that stops part way can leave a tree in dst without its blobs:
+	// the presence of a tree (or commit) in dst does NOT imply that its
+	// closure is there. Every object is therefore checked on its own above,
+	// so the next copy completes it; never skip the rev-list walk because
+	// dst already has a want tree.
 	cmd := []string{"index-pack", "--stdin"}
 	if n < unpackLimit {
 		cmd = []string{"unpack-objects", "-q"}

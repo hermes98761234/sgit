@@ -167,7 +167,7 @@ func (e *Engine) CatchUp(ctx context.Context, h *Handle) (string, error) {
 // CatchUpLanded is CatchUp after a land: when it records new commits, the
 // same transaction stores landed (a draft just landed) with LandedAs set to
 // the new head. marked reports whether that happened; when it is false
-// (nothing to record, or the draft row is gone) the caller updates the draft.
+// (nothing to record, or the draft update failed) the caller updates the draft.
 func (e *Engine) CatchUpLanded(ctx context.Context, h *Handle, landed store.Draft) (head string, marked bool, err error) {
 	return e.catchUp(ctx, h, &landed)
 }
@@ -461,6 +461,9 @@ func overlaps(a, b string) bool {
 // history of the folder (§5.4); later mounts write one layout commit (§5.5).
 // Re-mounting the same path with the same source only sets the read-only flag.
 func (e *Engine) Mount(ctx context.Context, h *Handle, m store.Mount, actor gitx.Signature) (string, error) {
+	if e.stopped.Err() != nil { // AfterFunc below cancels asynchronously
+		return "", fmt.Errorf("mount refused: server shutting down: %w", context.Canceled)
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	// A first mount can take long; a client giving up must not undo it.
@@ -492,7 +495,9 @@ func (e *Engine) Mount(ctx context.Context, h *Handle, m store.Mount, actor gitx
 		sha, err := e.firstMountLocked(ctx, h, m, actor)
 		if err != nil {
 			bg := context.WithoutCancel(ctx)
-			if e.stopped.Err() != nil {
+			// cancel runs only on return, so a Canceled ctx here means Stop
+			// (the timeout gives DeadlineExceeded).
+			if e.stopped.Err() != nil && errors.Is(ctx.Err(), context.Canceled) {
 				// Interrupted by shutdown: keep the recorded part of the
 				// import (the mount and its cursor), which the next catch-up
 				// continues. With nothing recorded yet, undo it as below.

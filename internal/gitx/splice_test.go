@@ -21,6 +21,9 @@ func TestSpliceTreeEqualsBuildTree(t *testing.T) {
 		{Path: "a/b/side.txt", Op: OpAdd, BlobSHA: blob(t, r, "side2")},
 		{Path: "a/b/c/deep.txt", Op: OpAdd, BlobSHA: blob(t, r, "deep")},
 		{Path: "a/b/c/run.sh", Op: OpAdd, BlobSHA: blob(t, r, "#!/bin/sh"), Mode: "100755"},
+		{Path: "isfile", Op: OpAdd, BlobSHA: blob(t, r, "a file where a folder is mounted")},
+		{Path: "islink", Op: OpAdd, BlobSHA: blob(t, r, "target"), Mode: "120000"},
+		{Path: "p/link", Op: OpAdd, BlobSHA: blob(t, r, "../top.txt"), Mode: "120000"},
 	})
 	n := blob(t, r, "new")
 	type folderChanges struct {
@@ -41,6 +44,12 @@ func TestSpliceTreeEqualsBuildTree(t *testing.T) {
 		{"nested folder emptied", []folderChanges{{"a/b/c", []Change{
 			{Path: "deep.txt", Op: OpDelete}, {Path: "run.sh", Op: OpDelete}}}}},
 		{"mode change", []folderChanges{{"a/b/c", []Change{{Path: "deep.txt", Op: OpModify, BlobSHA: n, Mode: "100755"}}}}},
+		{"file at the folder", []folderChanges{{"isfile", []Change{{Path: "f.txt", Op: OpAdd, BlobSHA: n}}}}},
+		{"symlink at the folder", []folderChanges{{"islink", []Change{{Path: "f.txt", Op: OpAdd, BlobSHA: n}}}}},
+		{"symlink at a parent", []folderChanges{{"islink/sub", []Change{{Path: "f.txt", Op: OpAdd, BlobSHA: n}}}}},
+		{"to symlink", []folderChanges{{"a/b/c", []Change{{Path: "deep.txt", Op: OpModify, BlobSHA: n, Mode: "120000"}}}}},
+		{"symlink retargeted", []folderChanges{{"p", []Change{{Path: "link", Op: OpModify, BlobSHA: n, Mode: "120000"}}}}},
+		{"symlink to file", []folderChanges{{"p", []Change{{Path: "link", Op: OpModify, BlobSHA: n}}}}},
 		{"missing folder", []folderChanges{{"missing/x", []Change{{Path: "f.txt", Op: OpAdd, BlobSHA: n}}}}},
 		{"two folders", []folderChanges{
 			{"d2", []Change{{Path: "z.txt", Op: OpDelete}, {Path: "w.txt", Op: OpAdd, BlobSHA: n}}},

@@ -418,20 +418,26 @@ func (s *Store) RecordProjectCommits(ctx context.Context, id int64, commits []Pr
 // RecordProjectCommitsLanded is RecordProjectCommits plus the update of a
 // just-landed draft in the same transaction (one commit instead of two on the
 // land path). marked is false, with the commits still recorded, when the
-// draft row is gone; the caller then reports it as UpdateDraft would.
+// draft update fails (row gone or any other error); the caller then updates
+// the draft itself and logs a failure, as before.
 func (s *Store) RecordProjectCommitsLanded(ctx context.Context, id int64, commits []ProjectCommit, cursors map[string]string, landed Draft) (marked bool, err error) {
 	return s.recordProjectCommits(ctx, id, commits, cursors, nil, &landed)
 }
 
 func (s *Store) recordProjectCommits(ctx context.Context, id int64, commits []ProjectCommit, cursors map[string]string, mc *MountChange, landed *Draft) (bool, error) {
 	err := s.recordTx(ctx, id, commits, cursors, mc, landed)
-	if landed != nil && errors.Is(err, errDraftGone) {
+	if landed != nil && errors.Is(err, errDraftUpdate) {
+		// The draft is secondary: record the commits anyway and let the
+		// caller update (and on failure log) the draft on its own, as it did
+		// before the two were merged.
 		return false, s.recordTx(ctx, id, commits, cursors, mc, nil)
 	}
 	return landed != nil && err == nil, err
 }
 
-var errDraftGone = errors.New("store: landed draft row is gone")
+// errDraftUpdate marks a failed landed-draft update (row gone or any other
+// statement error) inside recordTx.
+var errDraftUpdate = errors.New("store: updating the landed draft")
 
 func (s *Store) recordTx(ctx context.Context, id int64, commits []ProjectCommit, cursors map[string]string, mc *MountChange, landed *Draft) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -483,10 +489,8 @@ func (s *Store) recordTx(ctx context.Context, id int64, commits []ProjectCommit,
 		}
 	}
 	if landed != nil {
-		if err := updateDraft(ctx, tx, *landed); errors.Is(err, ErrNotFound) {
-			return errDraftGone
-		} else if err != nil {
-			return err
+		if err := updateDraft(ctx, tx, *landed); err != nil {
+			return fmt.Errorf("%w: %w", errDraftUpdate, err)
 		}
 	}
 	return tx.Commit()
